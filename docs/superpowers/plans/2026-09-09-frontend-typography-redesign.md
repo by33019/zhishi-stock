@@ -173,14 +173,14 @@ Expected: 页面无水平溢出，`consoleErrors`、`consoleWarnings`、`browser
 - 质量检查：`typographyViolations`、`consoleErrors`、`consoleWarnings`、`browserDiagnostics` 与 `pageErrors` 均为空。
 - 人工目检：AI 空状态与报告、市场桌面与移动端、个股详情和登录页层级清晰，无文字截断；移动行情表使用卡片内部滚动。
 
-- [ ] **Step 5: 提交验证脚本和计划记录**
+- [x] **Step 5: 提交验证脚本和计划记录**
 
 ```bash
 git add frontend/scripts/visual-check.mjs docs/superpowers/plans/2026-09-09-frontend-typography-redesign.md
 git commit -m "测试：完善字体可读性浏览器回归"
 ```
 
-- [ ] **Step 6: 推送 GitHub**
+- [x] **Step 6: 推送 GitHub**
 
 Run: `git push origin main`
 
