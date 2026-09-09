@@ -27,4 +27,12 @@
   --ai-panel-width: 390px;
   --font-sans: 'Manrope Variable', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --font-serif: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', serif;
+  --text-caption: 12px;
+  --text-label: 13px;
+  --text-body: 14px;
+  --text-body-lg: 15px;
+  --text-card-title: 18px;
+  --text-section-title: 20px;
+  --text-page-title: clamp(36px, 2.6vw, 42px);
+  --text-display-title: clamp(40px, 3vw, 48px);
 }
