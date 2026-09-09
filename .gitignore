@@ -31,3 +31,6 @@ coverage/
 output/
 .cache/
 *.local
+
+# 本地设计协作草稿
+.superpowers/
