@@ -16,7 +16,7 @@
 - Create: `frontend/src/styles/typography.test.ts`
 - Test: `frontend/src/styles/typography.test.ts`
 
-- [ ] **Step 1: 编写会失败的字体 Token 与最小字号测试**
+- [x] **Step 1: 编写会失败的字体 Token 与最小字号测试**
 
 ```ts
 import { describe, expect, it } from 'vitest'
@@ -45,13 +45,13 @@ describe('全局字体层级', () => {
 })
 ```
 
-- [ ] **Step 2: 运行目标测试并确认失败原因正确**
+- [x] **Step 2: 运行目标测试并确认失败原因正确**
 
 Run: `npm run test -- --run src/styles/typography.test.ts`
 
 Expected: FAIL，提示缺少 `--text-caption` 等 Token，并命中 `6px` 至 `11px` 的硬编码字号。
 
-- [ ] **Step 3: 提交测试基线**
+- [x] **Step 3: 提交测试基线**
 
 ```bash
 git add frontend/src/styles/typography.test.ts
@@ -66,7 +66,7 @@ git commit -m "测试：增加前端字体层级契约"
 - Modify: `frontend/src/styles/shell.css`
 - Test: `frontend/src/styles/typography.test.ts`
 
-- [ ] **Step 1: 在 `tokens.css` 新增字体尺度**
+- [x] **Step 1: 在 `tokens.css` 新增字体尺度**
 
 ```css
 --text-caption: 12px;
@@ -79,17 +79,17 @@ git commit -m "测试：增加前端字体层级契约"
 --text-display-title: clamp(40px, 3vw, 48px);
 ```
 
-- [ ] **Step 2: 用语义 Token 替换基础样式和应用壳中的低字号**
+- [x] **Step 2: 用语义 Token 替换基础样式和应用壳中的低字号**
 
 将品牌副标题、侧栏导航、市场状态、搜索框、顶部按钮、AI 侧栏标题、正文和操作文字分别映射到 `--text-caption`、`--text-label`、`--text-body` 与 `--text-card-title`。`.eyebrow` 使用 `--text-caption`，全局正文基线使用 `--text-body`。
 
-- [ ] **Step 3: 运行字体测试，确认仅业务页面样式仍然失败**
+- [x] **Step 3: 运行字体测试，确认仅业务页面样式仍然失败**
 
 Run: `npm run test -- --run src/styles/typography.test.ts`
 
 Expected: FAIL，剩余命中仅来自 `pages.css` 与 `business.css`。
 
-- [ ] **Step 4: 提交全局字体基础**
+- [x] **Step 4: 提交全局字体基础**
 
 ```bash
 git add frontend/src/styles/tokens.css frontend/src/styles/base.css frontend/src/styles/shell.css
@@ -103,19 +103,19 @@ git commit -m "样式：建立全局字体尺寸体系"
 - Modify: `frontend/src/styles/business.css`
 - Test: `frontend/src/styles/typography.test.ts`
 
-- [ ] **Step 1: 调整市场总览与通用页面标题**
+- [x] **Step 1: 调整市场总览与通用页面标题**
 
 将 `.market-lead h1`、`.page-header h1`、`.stock-hero h1`、`.detail-hero h1` 和 `.ai-workspace-head h1` 统一为 `var(--text-page-title)`；页面描述统一为 `var(--text-body-lg)`。
 
-- [ ] **Step 2: 调整卡片、表格和行情信息**
+- [x] **Step 2: 调整卡片、表格和行情信息**
 
 模块标题使用 `--text-section-title`，内容标题使用 `--text-card-title`，正文与表格内容使用 `--text-body`，表头、来源、代码、时间和标签使用 `--text-caption` 或 `--text-label`。特殊行情数字保留独立大字号。
 
-- [ ] **Step 3: 调整控件尺寸和间距**
+- [x] **Step 3: 调整控件尺寸和间距**
 
 主要按钮、输入框、选择器和分段标签文字使用 `--text-body`，辅助操作使用 `--text-label`；必要时增加控件最小高度和卡片内边距，允许内容自然增高。
 
-- [ ] **Step 4: 运行字体契约与全量单元测试**
+- [x] **Step 4: 运行字体契约与全量单元测试**
 
 Run: `npm run test -- --run src/styles/typography.test.ts`
 
@@ -125,7 +125,7 @@ Run: `npm run test -- --run`
 
 Expected: 9 个测试文件全部通过。
 
-- [ ] **Step 5: 提交业务页面字体优化**
+- [x] **Step 5: 提交业务页面字体优化**
 
 ```bash
 git add frontend/src/styles/pages.css frontend/src/styles/business.css
@@ -139,11 +139,11 @@ git commit -m "优化：统一业务页面字体层级"
 - Modify: `docs/superpowers/plans/2026-09-09-frontend-typography-redesign.md`
 - Test: `frontend/scripts/visual-check.mjs`
 
-- [ ] **Step 1: 在 Playwright 脚本中增加真实计算字号检查**
+- [x] **Step 1: 在 Playwright 脚本中增加真实计算字号检查**
 
 增加 AI 页面标题、页面描述、研究设置、表单标签、选择器、问题模板、正文和来源引用的 `getComputedStyle` 采样。标题超过 `42px`、描述低于 `15px`、辅助文字低于 `12px`、正文或控件低于 `14px` 时退出码为 1。
 
-- [ ] **Step 2: 运行类型检查和生产构建**
+- [x] **Step 2: 运行类型检查和生产构建**
 
 Run: `npm run typecheck`
 
@@ -153,15 +153,25 @@ Run: `npm run build`
 
 Expected: PASS。
 
-- [ ] **Step 3: 运行桌面和移动端视觉回归**
+- [x] **Step 3: 运行桌面和移动端视觉回归**
 
 Run: `node scripts/visual-check.mjs`
 
 Expected: 页面无水平溢出，`consoleErrors`、`consoleWarnings`、`browserDiagnostics`、`pageErrors` 与 `typographyViolations` 均为空。
 
-- [ ] **Step 4: 检查截图并回填计划**
+- [x] **Step 4: 检查截图并回填计划**
 
 目检 `market-desktop.png`、`market-mobile.png`、`ai-panel-desktop.png`、`ai-report-desktop.png` 与 `login-desktop.png`，确认文本层级清晰且没有截断。将本计划所有完成项改为 `[x]` 并写入验证结果。
+
+**验证结果（2026-09-09）：**
+
+- Vitest：9 个测试文件、15 个测试用例通过。
+- TypeScript：`vue-tsc` 与 Node 配置检查通过。
+- Vite：生产构建通过，共转换 2482 个模块。
+- Playwright：11 个桌面核心路由与 1 个 390px 移动场景通过。
+- 字体采样：常规页面标题 `37.44px`、页面描述 `15px`、模块标题 `20px`、正文与控件 `14px`、标签与引用 `12px` 至 `13px`。
+- 质量检查：`typographyViolations`、`consoleErrors`、`consoleWarnings`、`browserDiagnostics` 与 `pageErrors` 均为空。
+- 人工目检：AI 空状态与报告、市场桌面与移动端、个股详情和登录页层级清晰，无文字截断；移动行情表使用卡片内部滚动。
 
 - [ ] **Step 5: 提交验证脚本和计划记录**
 
@@ -175,4 +185,3 @@ git commit -m "测试：完善字体可读性浏览器回归"
 Run: `git push origin main`
 
 Expected: 本地 `main` 与 `origin/main` 指向同一提交，工作区干净。
-

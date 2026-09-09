@@ -537,7 +537,7 @@
 .service-status > div > p { display: grid; grid-template-columns: 1fr 60px 70px; align-items: center; gap: 8px; margin: 0; padding: 12px 0; border-top: 1px solid var(--line); font-size: var(--text-body); }
 .service-status p span { display: flex; align-items: center; gap: 7px; color: var(--ink-soft); }
 .service-status p b { color: var(--down); }
-.service-status p small { color: var(--ink-faint); text-align: right; }
+.service-status p small { color: var(--ink-faint); font-size: var(--text-caption); text-align: right; }
 .job-status > div > p { display: grid; grid-template-columns: 8px 1fr auto; align-items: center; gap: 9px; margin: 0; padding: 11px 0; border-top: 1px solid var(--line); }
 .job-status p i { width: 6px; height: 6px; border-radius: 50%; }
 .job-status p i.success { background: var(--down); }

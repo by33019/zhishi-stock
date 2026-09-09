@@ -135,6 +135,7 @@
 .section-heading > a:hover { color: var(--gold); }
 
 .status-label {
+  flex: 0 0 auto;
   padding: 4px 7px;
   border: 1px solid #e5caaa;
   border-radius: 5px;
@@ -142,6 +143,7 @@
   color: #9e5c36;
   font-size: var(--text-caption);
   font-weight: 750;
+  white-space: nowrap;
 }
 
 .breadth-content { display: grid; grid-template-columns: minmax(140px, 1.1fr) 0.9fr; align-items: center; gap: 8px; }
@@ -152,7 +154,7 @@
 .breadth-content dl { margin: 0; }
 .breadth-content dl > div { display: flex; justify-content: space-between; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
 .breadth-content dl > div:last-child { border-bottom: 0; }
-.breadth-content dt { display: flex; align-items: center; gap: 6px; color: var(--ink-soft); font-size: var(--text-body); }
+.breadth-content dt { display: flex; align-items: center; gap: 6px; color: var(--ink-soft); font-size: var(--text-body); white-space: nowrap; }
 .breadth-content dd { margin: 0; font-size: var(--text-body); font-weight: 750; }
 .breadth-content dt i { width: 6px; height: 6px; border-radius: 50%; }
 .breadth-content dt i.up { background: var(--up); }
@@ -197,7 +199,7 @@
 .event-radar { padding: 20px; }
 
 .quote-table-wrap { overflow-x: auto; }
-.quote-table { width: 100%; border-collapse: collapse; }
+.quote-table { width: 100%; min-width: 640px; border-collapse: collapse; }
 .quote-table th {
   padding: 8px 10px;
   border-top: 1px solid var(--line-strong);
