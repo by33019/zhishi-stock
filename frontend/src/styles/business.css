@@ -380,14 +380,22 @@
 .watch-price { display: flex; align-items: baseline; gap: 8px; margin-top: 16px; }
 .watch-price strong { font-size: 25px; }
 .watch-price span { font-size: var(--text-body); font-weight: 800; }
-.watch-cards svg { width: 100%; height: 45px; margin: 12px 0; opacity: 0.78; }
+.watch-sparkline { width: 100%; height: 45px; margin: 12px 0; opacity: 0.78; }
 .watch-cards dl { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0; }
 .watch-cards dl > div { padding: 8px; background: var(--paper); }
 .watch-cards dt { color: var(--ink-faint); font-size: var(--text-caption); }
 .watch-cards dd { margin: 3px 0 0; font-size: var(--text-body); font-weight: 700; }
-.watch-cards article > footer { display: flex; align-items: center; gap: 6px; margin-top: 14px; padding-top: 11px; border-top: 1px solid var(--line); }
-.watch-cards article > footer a { margin-right: auto; color: var(--ink-soft); font-size: var(--text-label); font-weight: 700; }
-.watch-cards article > footer button { min-height: 34px; display: flex; align-items: center; gap: 5px; padding: 0 9px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--ink-soft); font-size: var(--text-label); }
+.watch-cards article > footer { display: flex; align-items: center; gap: 12px; margin-top: 14px; padding-top: 11px; border-top: 1px solid var(--line); }
+.watch-detail-link { margin-right: auto; color: var(--ink-soft); font-size: var(--text-label); font-weight: 700; text-underline-offset: 4px; transition: color 160ms ease; }
+.watch-detail-link:hover { color: var(--ink); text-decoration: underline; }
+.watch-card-actions { flex: 0 0 auto; display: inline-flex; align-items: stretch; min-height: 36px; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: rgba(244, 240, 231, 0.68); }
+.watch-card-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; padding: 0 10px; border: 0; border-radius: 0; background: transparent; color: var(--ink-soft); font-size: var(--text-label); font-weight: 700; cursor: pointer; transition: color 160ms ease, background-color 160ms ease; }
+.watch-card-action--ai { color: #84602d; }
+.watch-card-action--ai:hover { background: var(--gold-soft); color: #67471e; }
+.watch-card-action--remove { width: 38px; padding: 0; border-left: 1px solid var(--line); color: var(--ink-faint); }
+.watch-card-action--remove:hover { background: rgba(151, 78, 65, 0.1); color: #8f5147; }
+.watch-card-action:focus-visible,
+.watch-detail-link:focus-visible { position: relative; z-index: 1; outline: 2px solid var(--gold); outline-offset: -2px; }
 
 .ai-workspace-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 30px; margin-bottom: 24px; }
 .ai-workspace-head > div:first-child { max-width: 790px; }

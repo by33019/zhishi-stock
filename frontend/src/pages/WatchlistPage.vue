@@ -24,9 +24,31 @@ const watchlist = computed(() => activeGroup.value === '重点观察' ? rankingR
           <article v-for="stock in watchlist" :key="stock.securityId">
             <header><RouterLink :to="`/stocks/${stock.securityId}`"><strong>{{ stock.securityName }}</strong><span>{{ stock.exchangeCode }}.{{ stock.securityCode }}</span></RouterLink><button type="button"><MoreHorizontal :size="16" /></button></header>
             <div class="watch-price"><strong>{{ stock.latestPrice }}</strong><span :class="trendClass(stock.changeRate)">{{ formatChangeRate(stock.changeRate) }}</span></div>
-            <svg viewBox="0 0 200 48" preserveAspectRatio="none"><polyline fill="none" :class="trendClass(stock.changeRate)" stroke="currentColor" stroke-width="2" :points="stock.sparkline.map((point, i) => `${i * 33.3},${44 - ((point - Math.min(...stock.sparkline)) / (Math.max(...stock.sparkline) - Math.min(...stock.sparkline) || 1)) * 38}`).join(' ')" /></svg>
+            <svg class="watch-sparkline" viewBox="0 0 200 48" preserveAspectRatio="none"><polyline fill="none" :class="trendClass(stock.changeRate)" stroke="currentColor" stroke-width="2" :points="stock.sparkline.map((point, i) => `${i * 33.3},${44 - ((point - Math.min(...stock.sparkline)) / (Math.max(...stock.sparkline) - Math.min(...stock.sparkline) || 1)) * 38}`).join(' ')" /></svg>
             <dl><div><dt>成交额</dt><dd>{{ formatMoney(stock.tradeAmount) }}</dd></div><div><dt>换手率</dt><dd>{{ formatChangeRate(stock.turnoverRate) }}</dd></div></dl>
-            <footer><RouterLink :to="`/stocks/${stock.securityId}`">查看详情</RouterLink><button type="button"><Sparkles :size="13" /> AI 解读</button><button type="button" aria-label="移出自选"><Trash2 :size="13" /></button></footer>
+            <footer>
+              <RouterLink class="watch-detail-link" :to="`/stocks/${stock.securityId}`">查看详情</RouterLink>
+              <div
+                class="watch-card-actions"
+                data-testid="watch-card-actions"
+                role="group"
+                aria-label="股票快捷操作"
+              >
+                <button class="watch-card-action watch-card-action--ai" data-action="ai" type="button">
+                  <Sparkles :size="15" />
+                  <span>AI 解读</span>
+                </button>
+                <button
+                  class="watch-card-action watch-card-action--remove"
+                  data-action="remove"
+                  type="button"
+                  aria-label="移出自选"
+                  title="移出自选"
+                >
+                  <Trash2 :size="15" />
+                </button>
+              </div>
+            </footer>
           </article>
         </div>
       </div>
