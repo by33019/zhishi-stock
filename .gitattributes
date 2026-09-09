@@ -1,0 +1,11 @@
+# 统一文本文件换行符，避免 Windows 与 Linux 产生无意义差异
+* text=auto eol=lf
+
+# 二进制文件不执行文本转换
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.woff binary
+*.woff2 binary

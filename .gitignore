@@ -1,0 +1,33 @@
+# 操作系统与编辑器
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+
+# 本地配置与敏感信息
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# 日志与临时文件
+*.log
+logs/
+tmp/
+temp/
+
+# Java / Maven / Gradle
+target/
+.mvn/timing.properties
+.gradle/
+build/
+
+# Node / Vue
+node_modules/
+dist/
+coverage/
+output/
+.cache/
+*.local
