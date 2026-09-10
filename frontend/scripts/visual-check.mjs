@@ -146,6 +146,36 @@ await openPage(desktopPage, '/login', '.login-page')
 if (await desktopPage.locator('input[type="password"]').count() !== 1) {
   throw new Error('登录页未呈现唯一密码输入框')
 }
+await inspectTypography(desktopPage, '/login', [
+  { label: '登录品牌标题', selector: '.login-story h1', min: 40, max: 48 },
+  { label: '登录品牌描述', selector: '.login-story__content > p', min: 15 },
+  { label: '登录表单标题', selector: '.login-form h2', min: 28, max: 34 },
+  { label: '登录表单标签', selector: '.login-form > label', min: 13 },
+  { label: '登录输入内容', selector: '.login-form input[type="text"]', min: 14 },
+])
+
+const loginDesktopMetrics = await desktopPage.evaluate(() => {
+  const story = document.querySelector('.login-story')
+  const card = document.querySelector('.login-card')
+  const input = document.querySelector('.login-input')
+  if (!story || !card || !input) throw new Error('登录页统一画布结构缺失')
+
+  const cardRect = card.getBoundingClientRect()
+  const storyBackground = window.getComputedStyle(story).backgroundColor
+  const inputHeight = input.getBoundingClientRect().height
+
+  return { cardWidth: cardRect.width, storyBackground, inputHeight }
+})
+
+if (loginDesktopMetrics.storyBackground !== 'rgba(0, 0, 0, 0)') {
+  throw new Error(`登录品牌区仍存在独立背景：${loginDesktopMetrics.storyBackground}`)
+}
+if (loginDesktopMetrics.cardWidth < 400 || loginDesktopMetrics.cardWidth > 450) {
+  throw new Error(`登录卡片宽度不符合设计：${loginDesktopMetrics.cardWidth}px`)
+}
+if (loginDesktopMetrics.inputHeight < 48) {
+  throw new Error(`登录输入框高度不足：${loginDesktopMetrics.inputHeight}px`)
+}
 await desktopPage.screenshot({ path: resolve(outputDir, 'login-desktop.png'), fullPage: true })
 await desktop.close()
 
@@ -166,6 +196,31 @@ await mobilePage.locator('.sidebar.is-open').waitFor({ state: 'detached' }).catc
   if (await mobilePage.locator('.sidebar.is-open').count()) throw new Error('移动导航未能关闭')
 })
 await mobilePage.screenshot({ path: resolve(outputDir, 'market-mobile.png'), fullPage: true })
+
+await openPage(mobilePage, '/login', '.login-card')
+const loginMobileMetrics = await mobilePage.evaluate(() => {
+  const stage = document.querySelector('.login-stage')
+  const card = document.querySelector('.login-card')
+  const submit = document.querySelector('.login-submit')
+  if (!stage || !card || !submit) throw new Error('移动端登录结构缺失')
+
+  return {
+    stageColumns: window.getComputedStyle(stage).gridTemplateColumns.split(' ').length,
+    cardWidth: card.getBoundingClientRect().width,
+    submitHeight: submit.getBoundingClientRect().height,
+  }
+})
+
+if (loginMobileMetrics.stageColumns !== 1) {
+  throw new Error(`移动端登录页未切换为单列：${loginMobileMetrics.stageColumns} 列`)
+}
+if (loginMobileMetrics.cardWidth > 354) {
+  throw new Error(`移动端登录卡片超出安全宽度：${loginMobileMetrics.cardWidth}px`)
+}
+if (loginMobileMetrics.submitHeight < 44) {
+  throw new Error(`移动端登录按钮触控高度不足：${loginMobileMetrics.submitHeight}px`)
+}
+await mobilePage.screenshot({ path: resolve(outputDir, 'login-mobile.png'), fullPage: true })
 await mobile.close()
 
 await browser.close()
