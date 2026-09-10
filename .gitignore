@@ -34,3 +34,4 @@ output/
 
 # 本地设计协作草稿
 .superpowers/
+.worktrees/
