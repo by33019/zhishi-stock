@@ -4,11 +4,11 @@
 
 **Goal:** 将现有深浅对半分栏登录页重构为统一暖色研究画布，在保留品牌叙事的同时突出登录任务并完善响应式与无障碍体验。
 
-**Architecture:** 继续使用单一 `LoginPage.vue` 和现有 `BrandMark.vue`，只重组页面语义结构及页面本地状态，不引入新的组件层或状态管理。字段使用 `.login-field` 容器，通过稳定 `for/id` 关联兄弟关系中的标签与输入框，密码可见性按钮保持在字段标签之外。登录页视觉规则集中在 `business.css`，Playwright 脚本提供可计算的统一背景、控件尺寸、移动布局和主操作可达性断言。
+**Architecture:** 继续使用单一 `LoginPage.vue` 和现有 `BrandMark.vue`，只重组页面语义结构及页面本地状态，不引入新的组件层或状态管理。字段使用 `.login-field` 容器，通过稳定 `for/id` 关联兄弟关系中的标签与输入框，密码可见性按钮保持在字段标签之外。登录页视觉规则集中在 `business.css`，Playwright 脚本提供可计算的统一背景、控件尺寸、移动布局和主操作可达性断言；生产运行时不注入仅用于设计捕获的外部 Figma 脚本，避免非业务网络错误。
 
 **Tech Stack:** Vue 3、TypeScript、Lucide Vue、CSS、Vitest、Vue Test Utils、Playwright、Vite。
 
-**协议约束：** 真实协议路由未建设前，用户协议与隐私政策保持非交互文本；禁止使用 `href="#"` 或指向不存在路由的伪链接，后续仅在真实路由上线时恢复交互。
+**无效入口约束：** 真实注册、找回密码和协议路由未建设前，相关文案保持非交互状态；禁止使用 `href="#"` 或指向不存在路由的伪链接，后续仅在真实路由上线时恢复交互。
 
 ---
 
@@ -18,6 +18,7 @@
 - 修改 `frontend/src/pages/LoginPage.test.ts`：验证统一结构、字段 `for/id` 关联、按钮标签边界、协议文本、市场入口和密码切换行为。
 - 修改 `frontend/src/styles/business.css`：替换旧登录页分栏样式，新增统一背景、卡片、动效和响应式规则。
 - 修改 `frontend/scripts/visual-check.mjs`：增加登录页桌面与移动端布局、字号和控件尺寸验收。
+- 修改 `frontend/index.html`：移除非生产必需的 Figma `capture.js` 外部注入，保持浏览器控制台干净。
 
 ### Task 1: 重构登录页语义结构与交互
 
@@ -67,7 +68,10 @@ describe('登录页', () => {
     expect(wrapper.get('.login-back').attributes('href')).toBe('/market')
     expect(wrapper.findAll('input[autocomplete="username"]')).toHaveLength(1)
     expect(wrapper.findAll('input[autocomplete="current-password"]')).toHaveLength(1)
-    expect(wrapper.findAll('.login-agreement a')).toHaveLength(0)
+    expect(wrapper.findAll('.login-form a')).toHaveLength(0)
+    expect(wrapper.findAll('.login-static-action')).toHaveLength(2)
+    expect(wrapper.get('.login-form__header .login-static-action').text()).toBe('注册入口即将开放')
+    expect(wrapper.get('.form-meta .login-static-action').text()).toBe('找回密码即将开放')
   })
 
   it('切换密码可见状态并同步可访问名称', async () => {
@@ -172,7 +176,7 @@ const showPassword = ref(false)
         <header class="login-form__header">
           <span class="eyebrow">WELCOME BACK</span>
           <h2>登录研究工作台</h2>
-          <p>还没有账号？<a href="#">免费注册</a></p>
+          <p>还没有账号？<span class="login-static-action">注册入口即将开放</span></p>
         </header>
 
         <div class="login-field">
@@ -202,7 +206,7 @@ const showPassword = ref(false)
 
         <div class="form-meta">
           <label><input type="checkbox" /> 保持登录</label>
-          <a href="#">忘记密码？</a>
+          <span class="login-static-action">找回密码即将开放</span>
         </div>
 
         <button class="login-submit" type="submit">
@@ -318,7 +322,7 @@ Expected: FAIL，错误信息包含“登录品牌区仍存在独立背景”或
 .login-card::before { content: ''; position: absolute; left: 38px; top: 0; width: 72px; height: 3px; border-radius: 0 0 3px 3px; background: var(--gold); }
 .login-form__header h2 { margin: 10px 0 7px; font-family: var(--font-serif); font-size: 31px; font-weight: 620; }
 .login-form__header p { margin: 0; color: var(--ink-faint); font-size: var(--text-body); }
-.login-form__header a { color: #9a6b22; font-weight: 750; }
+.login-static-action { color: var(--ink-faint); font-weight: 650; }
 .login-field { margin-top: 23px; }
 .login-field > label { display: block; color: var(--ink-soft); font-size: var(--text-label); font-weight: 750; }
 .login-input { height: 50px; display: flex; align-items: center; gap: 9px; margin-top: 8px; padding: 0 13px; border: 1px solid var(--line); border-radius: 11px; background: rgba(255, 253, 247, 0.78); color: var(--ink-faint); transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease; }
@@ -332,14 +336,11 @@ Expected: FAIL，错误信息包含“登录品牌区仍存在独立背景”或
 .login-form .form-meta { display: flex; align-items: center; justify-content: space-between; margin: 16px 0 24px; color: var(--ink-faint); font-size: var(--text-caption); }
 .login-form .form-meta label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
 .login-form .form-meta input { width: 15px; height: 15px; accent-color: var(--nav); }
-.login-form .form-meta a { color: var(--ink-soft); font-weight: 750; }
 .login-submit { width: 100%; height: 48px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: 11px; background: var(--nav); color: var(--white); font-size: var(--text-body); font-weight: 780; cursor: pointer; box-shadow: 0 10px 24px rgba(11, 41, 38, 0.16); transition: background-color 160ms ease, box-shadow 160ms ease, transform 160ms ease; }
 .login-submit:hover { background: var(--nav-raised); box-shadow: 0 14px 28px rgba(11, 41, 38, 0.2); transform: translateY(-1px); }
 .login-submit:active { transform: translateY(0); }
 .login-back:focus-visible,
-.login-form__header a:focus-visible,
 .login-input button:focus-visible,
-.login-form .form-meta a:focus-visible,
 .login-form .form-meta input:focus-visible,
 .login-submit:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
 .login-agreement { margin: 15px 0 0; color: var(--ink-faint); font-size: var(--text-caption); line-height: 1.6; text-align: center; }
@@ -370,14 +371,14 @@ Expected: FAIL，错误信息包含“登录品牌区仍存在独立背景”或
   .login-capabilities { display: grid; }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 767px) {
   .login-page { min-height: 100svh; overflow-y: auto; padding: 24px; }
   .login-stage { grid-template-columns: 1fr; gap: 30px; width: min(580px, 100%); padding: 42px 0 34px; }
   .login-story__content h1 { margin-block: 12px 15px; font-size: clamp(34px, 10vw, 40px); }
   .login-story__content > p { line-height: 1.7; }
   .login-capabilities { display: flex; margin-top: 22px; }
   .login-capabilities li { min-height: 34px; }
-  .login-card { padding: 32px; border-radius: 20px; box-shadow: 0 18px 46px rgba(36, 49, 43, 0.12); }
+  .login-card { padding: 32px; border-radius: 20px; box-shadow: none; }
   .login-trust { width: min(580px, 100%); align-items: flex-start; flex-direction: column; gap: 7px; }
   .login-orbit--large { right: -280px; top: -250px; }
   .login-orbit--small { display: none; }
@@ -429,6 +430,7 @@ const loginMobileMetrics = await mobilePage.evaluate(() => {
     viewportHeight,
     documentHeight: document.documentElement.scrollHeight,
     submitScrollDistance: Math.max(0, submitRect.bottom - viewportHeight),
+    cardBoxShadow: window.getComputedStyle(card).boxShadow,
   }
 })
 report.layoutMetrics.push({ path: '/login', viewport: '390x844', ...loginMobileMetrics })
@@ -445,7 +447,29 @@ if (loginMobileMetrics.submitHeight < 44) {
 if (loginMobileMetrics.submitScrollDistance > 120) {
   throw new Error(`移动端完整显示登录按钮所需滚动距离过长：${loginMobileMetrics.submitScrollDistance}px > 120px`)
 }
+if (loginMobileMetrics.cardBoxShadow !== 'none') {
+  throw new Error(`移动端登录卡片不应保留明显悬浮阴影：${loginMobileMetrics.cardBoxShadow}`)
+}
 await mobilePage.screenshot({ path: resolve(outputDir, 'login-mobile.png'), fullPage: true })
+
+await mobilePage.setViewportSize({ width: 767, height: 900 })
+const loginBreakpointMetrics = await mobilePage.evaluate(() => {
+  const stage = document.querySelector('.login-stage')
+  const card = document.querySelector('.login-card')
+  if (!stage || !card) throw new Error('临界宽度下登录布局缺失')
+  return {
+    stageColumns: window.getComputedStyle(stage).gridTemplateColumns.split(' ').length,
+    cardBoxShadow: window.getComputedStyle(card).boxShadow,
+  }
+})
+report.layoutMetrics.push({ path: '/login', viewport: '767x900', ...loginBreakpointMetrics })
+
+if (loginBreakpointMetrics.stageColumns !== 1) {
+  throw new Error(`767px 临界宽度下登录页未切换为单列：${loginBreakpointMetrics.stageColumns} 列`)
+}
+if (loginBreakpointMetrics.cardBoxShadow !== 'none') {
+  throw new Error(`767px 临界宽度下登录卡片不应保留明显悬浮阴影：${loginBreakpointMetrics.cardBoxShadow}`)
+}
 ```
 
 - [ ] **Step 6: 运行组件测试和浏览器视觉检查**
@@ -456,7 +480,7 @@ Expected: `5` 条登录页测试全部 PASS。
 
 Run: `cd frontend && node scripts/visual-check.mjs`
 
-Expected: 命令退出码为 `0`；报告中的 `layoutMetrics` 记录移动端提交按钮位置、视口高度、文档高度及按钮完整进入视口所需滚动距离，后者不超过 `120px`；`typographyViolations`、`consoleErrors`、`consoleWarnings`、`browserDiagnostics` 和 `pageErrors` 均为空数组；生成新的 `login-desktop.png` 和 `login-mobile.png`。
+Expected: 命令退出码为 `0`；报告中的 `layoutMetrics` 记录移动端提交按钮位置、视口高度、文档高度及按钮完整进入视口所需滚动距离，后者不超过 `120px`；卡片阴影为 `none`，`767px` 临界宽度为单列；`typographyViolations`、`consoleErrors`、`consoleWarnings`、`browserDiagnostics` 和 `pageErrors` 均为空数组；生成新的 `login-desktop.png` 和 `login-mobile.png`。
 
 - [ ] **Step 7: 人工复核截图**
 
@@ -478,6 +502,7 @@ git commit -m "优化：重构登录页一体化视觉"
 - Verify: `frontend/src/pages/LoginPage.test.ts`
 - Verify: `frontend/src/styles/business.css`
 - Verify: `frontend/scripts/visual-check.mjs`
+- Verify: `frontend/index.html`
 
 - [ ] **Step 1: 运行全部单元测试**
 

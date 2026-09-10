@@ -35,7 +35,10 @@ describe('登录页', () => {
     expect(wrapper.get('.login-back').attributes('href')).toBe('/market')
     expect(wrapper.findAll('input[autocomplete="username"]')).toHaveLength(1)
     expect(wrapper.findAll('input[autocomplete="current-password"]')).toHaveLength(1)
-    expect(wrapper.findAll('.login-agreement a')).toHaveLength(0)
+    expect(wrapper.findAll('.login-form a')).toHaveLength(0)
+    expect(wrapper.findAll('.login-static-action')).toHaveLength(2)
+    expect(wrapper.get('.login-form__header .login-static-action').text()).toBe('注册入口即将开放')
+    expect(wrapper.get('.form-meta .login-static-action').text()).toBe('找回密码即将开放')
   })
 
   it('切换密码可见状态并同步可访问名称', async () => {

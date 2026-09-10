@@ -217,6 +217,7 @@ const loginMobileMetrics = await mobilePage.evaluate(() => {
     viewportHeight,
     documentHeight: document.documentElement.scrollHeight,
     submitScrollDistance: Math.max(0, submitRect.bottom - viewportHeight),
+    cardBoxShadow: window.getComputedStyle(card).boxShadow,
   }
 })
 report.layoutMetrics.push({ path: '/login', viewport: '390x844', ...loginMobileMetrics })
@@ -233,7 +234,30 @@ if (loginMobileMetrics.submitHeight < 44) {
 if (loginMobileMetrics.submitScrollDistance > 120) {
   throw new Error(`移动端完整显示登录按钮所需滚动距离过长：${loginMobileMetrics.submitScrollDistance}px > 120px`)
 }
+if (loginMobileMetrics.cardBoxShadow !== 'none') {
+  throw new Error(`移动端登录卡片不应保留明显悬浮阴影：${loginMobileMetrics.cardBoxShadow}`)
+}
 await mobilePage.screenshot({ path: resolve(outputDir, 'login-mobile.png'), fullPage: true })
+
+await mobilePage.setViewportSize({ width: 767, height: 900 })
+const loginBreakpointMetrics = await mobilePage.evaluate(() => {
+  const stage = document.querySelector('.login-stage')
+  const card = document.querySelector('.login-card')
+  if (!stage || !card) throw new Error('临界宽度下登录布局缺失')
+
+  return {
+    stageColumns: window.getComputedStyle(stage).gridTemplateColumns.split(' ').length,
+    cardBoxShadow: window.getComputedStyle(card).boxShadow,
+  }
+})
+report.layoutMetrics.push({ path: '/login', viewport: '767x900', ...loginBreakpointMetrics })
+
+if (loginBreakpointMetrics.stageColumns !== 1) {
+  throw new Error(`767px 临界宽度下登录页未切换为单列：${loginBreakpointMetrics.stageColumns} 列`)
+}
+if (loginBreakpointMetrics.cardBoxShadow !== 'none') {
+  throw new Error(`767px 临界宽度下登录卡片不应保留明显悬浮阴影：${loginBreakpointMetrics.cardBoxShadow}`)
+}
 await mobile.close()
 
 await browser.close()

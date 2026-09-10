@@ -45,7 +45,7 @@ const showPassword = ref(false)
         <header class="login-form__header">
           <span class="eyebrow">WELCOME BACK</span>
           <h2>登录研究工作台</h2>
-          <p>还没有账号？<a href="#">免费注册</a></p>
+          <p>还没有账号？<span class="login-static-action">注册入口即将开放</span></p>
         </header>
 
         <div class="login-field">
@@ -75,7 +75,7 @@ const showPassword = ref(false)
 
         <div class="form-meta">
           <label><input type="checkbox" /> 保持登录</label>
-          <a href="#">忘记密码？</a>
+          <span class="login-static-action">找回密码即将开放</span>
         </div>
 
         <button class="login-submit" type="submit">
