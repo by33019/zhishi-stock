@@ -23,13 +23,19 @@ describe('登录页', () => {
     expect(wrapper.find('.login-canvas').exists()).toBe(true)
     expect(wrapper.find('.login-form-wrap').exists()).toBe(false)
     expect(wrapper.get('.login-atmosphere').attributes('aria-hidden')).toBe('true')
+    expect(wrapper.findAll('.login-topbar')).toHaveLength(1)
+    expect(wrapper.findAll('.login-stage')).toHaveLength(1)
+    expect(wrapper.findAll('.login-story')).toHaveLength(1)
+    expect(wrapper.findAll('form.login-card')).toHaveLength(1)
+    expect(wrapper.findAll('.login-trust')).toHaveLength(1)
     expect(wrapper.findAll('h1')).toHaveLength(1)
     expect(wrapper.text()).toContain('让每个判断')
     expect(wrapper.text()).toContain('登录研究工作台')
     expect(wrapper.text()).toContain('AI 仅提供研究辅助')
     expect(wrapper.get('.login-back').attributes('href')).toBe('/market')
-    expect(wrapper.find('input[autocomplete="username"]').exists()).toBe(true)
-    expect(wrapper.find('input[autocomplete="current-password"]').exists()).toBe(true)
+    expect(wrapper.findAll('input[autocomplete="username"]')).toHaveLength(1)
+    expect(wrapper.findAll('input[autocomplete="current-password"]')).toHaveLength(1)
+    expect(wrapper.findAll('.login-agreement a[href="#"]')).toHaveLength(0)
   })
 
   it('切换密码可见状态并同步可访问名称', async () => {
@@ -44,5 +50,10 @@ describe('登录页', () => {
 
     expect(passwordInput.attributes('type')).toBe('text')
     expect(visibilityButton.attributes('aria-label')).toBe('隐藏密码')
+
+    await visibilityButton.trigger('click')
+
+    expect(passwordInput.attributes('type')).toBe('password')
+    expect(visibilityButton.attributes('aria-label')).toBe('显示密码')
   })
 })

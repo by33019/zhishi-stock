@@ -82,7 +82,7 @@ const showPassword = ref(false)
           登录
           <ArrowRight :size="17" />
         </button>
-        <p class="login-agreement">登录即表示你同意<a href="#">《用户协议》</a>和<a href="#">《隐私政策》</a></p>
+        <p class="login-agreement">登录即表示你同意《用户协议》和《隐私政策》</p>
       </form>
     </section>
 
