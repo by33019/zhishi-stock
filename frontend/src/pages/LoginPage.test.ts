@@ -35,7 +35,7 @@ describe('登录页', () => {
     expect(wrapper.get('.login-back').attributes('href')).toBe('/market')
     expect(wrapper.findAll('input[autocomplete="username"]')).toHaveLength(1)
     expect(wrapper.findAll('input[autocomplete="current-password"]')).toHaveLength(1)
-    expect(wrapper.findAll('.login-agreement a[href="#"]')).toHaveLength(0)
+    expect(wrapper.findAll('.login-agreement a')).toHaveLength(0)
   })
 
   it('切换密码可见状态并同步可访问名称', async () => {
@@ -55,5 +55,28 @@ describe('登录页', () => {
 
     expect(passwordInput.attributes('type')).toBe('password')
     expect(visibilityButton.attributes('aria-label')).toBe('显示密码')
+  })
+
+  it('手机号或用户名标签通过明确的 for/id 关联输入框', () => {
+    const wrapper = mountLoginPage()
+    const input = wrapper.get('input[autocomplete="username"]')
+
+    expect(input.attributes('id')).toBe('login-username')
+    expect(wrapper.find('label[for="login-username"]').exists()).toBe(true)
+  })
+
+  it('登录密码标签通过明确的 for/id 关联输入框', () => {
+    const wrapper = mountLoginPage()
+    const input = wrapper.get('input[autocomplete="current-password"]')
+
+    expect(input.attributes('id')).toBe('login-password')
+    expect(wrapper.find('label[for="login-password"]').exists()).toBe(true)
+  })
+
+  it('密码可见性按钮不被字段标签包裹', () => {
+    const wrapper = mountLoginPage()
+    const visibilityButton = wrapper.get('[data-testid="password-visibility"]')
+
+    expect(visibilityButton.element.closest('label')).toBeNull()
   })
 })

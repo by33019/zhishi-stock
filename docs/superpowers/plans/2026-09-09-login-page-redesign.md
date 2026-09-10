@@ -4,16 +4,18 @@
 
 **Goal:** 将现有深浅对半分栏登录页重构为统一暖色研究画布，在保留品牌叙事的同时突出登录任务并完善响应式与无障碍体验。
 
-**Architecture:** 继续使用单一 `LoginPage.vue` 和现有 `BrandMark.vue`，只重组页面语义结构及页面本地状态，不引入新的组件层或状态管理。登录页视觉规则集中替换 `business.css` 中现有登录样式，Playwright 脚本新增可计算的统一背景、控件尺寸和移动布局断言。
+**Architecture:** 继续使用单一 `LoginPage.vue` 和现有 `BrandMark.vue`，只重组页面语义结构及页面本地状态，不引入新的组件层或状态管理。字段使用 `.login-field` 容器，通过稳定 `for/id` 关联兄弟关系中的标签与输入框，密码可见性按钮保持在字段标签之外。登录页视觉规则集中在 `business.css`，Playwright 脚本提供可计算的统一背景、控件尺寸、移动布局和主操作可达性断言。
 
 **Tech Stack:** Vue 3、TypeScript、Lucide Vue、CSS、Vitest、Vue Test Utils、Playwright、Vite。
+
+**协议约束：** 真实协议路由未建设前，用户协议与隐私政策保持非交互文本；禁止使用 `href="#"` 或指向不存在路由的伪链接，后续仅在真实路由上线时恢复交互。
 
 ---
 
 ## 文件结构
 
 - 修改 `frontend/src/pages/LoginPage.vue`：统一画布页面结构、密码可见状态和无障碍名称。
-- 修改 `frontend/src/pages/LoginPage.test.ts`：验证统一结构、关键内容、市场入口和密码切换行为。
+- 修改 `frontend/src/pages/LoginPage.test.ts`：验证统一结构、字段 `for/id` 关联、按钮标签边界、协议文本、市场入口和密码切换行为。
 - 修改 `frontend/src/styles/business.css`：替换旧登录页分栏样式，新增统一背景、卡片、动效和响应式规则。
 - 修改 `frontend/scripts/visual-check.mjs`：增加登录页桌面与移动端布局、字号和控件尺寸验收。
 
@@ -23,7 +25,7 @@
 - Modify: `frontend/src/pages/LoginPage.test.ts`
 - Modify: `frontend/src/pages/LoginPage.vue`
 
-- [ ] **Step 1: 写入统一画布和密码切换失败测试**
+- [ ] **Step 1: 写入统一画布、字段语义和密码切换失败测试**
 
 将 `frontend/src/pages/LoginPage.test.ts` 替换为：
 
@@ -53,13 +55,19 @@ describe('登录页', () => {
     expect(wrapper.find('.login-canvas').exists()).toBe(true)
     expect(wrapper.find('.login-form-wrap').exists()).toBe(false)
     expect(wrapper.get('.login-atmosphere').attributes('aria-hidden')).toBe('true')
+    expect(wrapper.findAll('.login-topbar')).toHaveLength(1)
+    expect(wrapper.findAll('.login-stage')).toHaveLength(1)
+    expect(wrapper.findAll('.login-story')).toHaveLength(1)
+    expect(wrapper.findAll('form.login-card')).toHaveLength(1)
+    expect(wrapper.findAll('.login-trust')).toHaveLength(1)
     expect(wrapper.findAll('h1')).toHaveLength(1)
     expect(wrapper.text()).toContain('让每个判断')
     expect(wrapper.text()).toContain('登录研究工作台')
     expect(wrapper.text()).toContain('AI 仅提供研究辅助')
     expect(wrapper.get('.login-back').attributes('href')).toBe('/market')
-    expect(wrapper.find('input[autocomplete="username"]').exists()).toBe(true)
-    expect(wrapper.find('input[autocomplete="current-password"]').exists()).toBe(true)
+    expect(wrapper.findAll('input[autocomplete="username"]')).toHaveLength(1)
+    expect(wrapper.findAll('input[autocomplete="current-password"]')).toHaveLength(1)
+    expect(wrapper.findAll('.login-agreement a')).toHaveLength(0)
   })
 
   it('切换密码可见状态并同步可访问名称', async () => {
@@ -74,6 +82,34 @@ describe('登录页', () => {
 
     expect(passwordInput.attributes('type')).toBe('text')
     expect(visibilityButton.attributes('aria-label')).toBe('隐藏密码')
+
+    await visibilityButton.trigger('click')
+
+    expect(passwordInput.attributes('type')).toBe('password')
+    expect(visibilityButton.attributes('aria-label')).toBe('显示密码')
+  })
+
+  it('手机号或用户名标签通过明确的 for/id 关联输入框', () => {
+    const wrapper = mountLoginPage()
+    const input = wrapper.get('input[autocomplete="username"]')
+
+    expect(input.attributes('id')).toBe('login-username')
+    expect(wrapper.find('label[for="login-username"]').exists()).toBe(true)
+  })
+
+  it('登录密码标签通过明确的 for/id 关联输入框', () => {
+    const wrapper = mountLoginPage()
+    const input = wrapper.get('input[autocomplete="current-password"]')
+
+    expect(input.attributes('id')).toBe('login-password')
+    expect(wrapper.find('label[for="login-password"]').exists()).toBe(true)
+  })
+
+  it('密码可见性按钮不被字段标签包裹', () => {
+    const wrapper = mountLoginPage()
+    const visibilityButton = wrapper.get('[data-testid="password-visibility"]')
+
+    expect(visibilityButton.element.closest('label')).toBeNull()
   })
 })
 ```
@@ -82,7 +118,7 @@ describe('登录页', () => {
 
 Run: `cd frontend && npm test -- --run src/pages/LoginPage.test.ts`
 
-Expected: FAIL，错误信息包含无法找到 `.login-canvas` 或 `[data-testid="password-visibility"]`。
+Expected: FAIL，错误信息包含无法找到 `.login-canvas`、输入框缺少 `login-username` / `login-password`，或密码可见性按钮仍位于字段 `label` 内。
 
 - [ ] **Step 3: 实现统一画布模板和密码切换语义**
 
@@ -139,19 +175,19 @@ const showPassword = ref(false)
           <p>还没有账号？<a href="#">免费注册</a></p>
         </header>
 
-        <label>
-          手机号或用户名
+        <div class="login-field">
+          <label for="login-username">手机号或用户名</label>
           <div class="login-input">
             <UserRound :size="17" />
-            <input type="text" placeholder="请输入手机号或用户名" autocomplete="username" />
+            <input id="login-username" type="text" placeholder="请输入手机号或用户名" autocomplete="username" />
           </div>
-        </label>
+        </div>
 
-        <label>
-          登录密码
+        <div class="login-field">
+          <label for="login-password">登录密码</label>
           <div class="login-input">
             <LockKeyhole :size="17" />
-            <input :type="showPassword ? 'text' : 'password'" placeholder="请输入密码" autocomplete="current-password" />
+            <input id="login-password" :type="showPassword ? 'text' : 'password'" placeholder="请输入密码" autocomplete="current-password" />
             <button
               data-testid="password-visibility"
               type="button"
@@ -162,7 +198,7 @@ const showPassword = ref(false)
               <Eye v-else :size="17" />
             </button>
           </div>
-        </label>
+        </div>
 
         <div class="form-meta">
           <label><input type="checkbox" /> 保持登录</label>
@@ -173,7 +209,7 @@ const showPassword = ref(false)
           登录
           <ArrowRight :size="17" />
         </button>
-        <p class="login-agreement">登录即表示你同意<a href="#">《用户协议》</a>和<a href="#">《隐私政策》</a></p>
+        <p class="login-agreement">登录即表示你同意《用户协议》和《隐私政策》</p>
       </form>
     </section>
 
@@ -189,7 +225,7 @@ const showPassword = ref(false)
 
 Run: `cd frontend && npm test -- --run src/pages/LoginPage.test.ts`
 
-Expected: `1` 个测试文件、`2` 条测试全部 PASS。
+Expected: `1` 个测试文件、`5` 条测试全部 PASS。
 
 - [ ] **Step 5: 提交结构与测试**
 
@@ -213,7 +249,7 @@ await inspectTypography(desktopPage, '/login', [
   { label: '登录品牌标题', selector: '.login-story h1', min: 40, max: 48 },
   { label: '登录品牌描述', selector: '.login-story__content > p', min: 15 },
   { label: '登录表单标题', selector: '.login-form h2', min: 28, max: 34 },
-  { label: '登录表单标签', selector: '.login-form > label', min: 13 },
+  { label: '登录表单标签', selector: '.login-field > label', min: 13 },
   { label: '登录输入内容', selector: '.login-form input[type="text"]', min: 14 },
 ])
 
@@ -282,9 +318,9 @@ Expected: FAIL，错误信息包含“登录品牌区仍存在独立背景”或
 .login-card::before { content: ''; position: absolute; left: 38px; top: 0; width: 72px; height: 3px; border-radius: 0 0 3px 3px; background: var(--gold); }
 .login-form__header h2 { margin: 10px 0 7px; font-family: var(--font-serif); font-size: 31px; font-weight: 620; }
 .login-form__header p { margin: 0; color: var(--ink-faint); font-size: var(--text-body); }
-.login-form__header a,
-.login-agreement a { color: #9a6b22; font-weight: 750; }
-.login-form > label { display: block; margin-top: 23px; color: var(--ink-soft); font-size: var(--text-label); font-weight: 750; }
+.login-form__header a { color: #9a6b22; font-weight: 750; }
+.login-field { margin-top: 23px; }
+.login-field > label { display: block; color: var(--ink-soft); font-size: var(--text-label); font-weight: 750; }
 .login-input { height: 50px; display: flex; align-items: center; gap: 9px; margin-top: 8px; padding: 0 13px; border: 1px solid var(--line); border-radius: 11px; background: rgba(255, 253, 247, 0.78); color: var(--ink-faint); transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease; }
 .login-input:hover { border-color: var(--line-strong); }
 .login-input:focus-within { border-color: var(--nav-raised); background: var(--white); box-shadow: 0 0 0 3px rgba(189, 139, 56, 0.16); }
@@ -293,18 +329,19 @@ Expected: FAIL，错误信息包含“登录品牌区仍存在独立背景”或
 .login-form input:-webkit-autofill { -webkit-text-fill-color: var(--ink); box-shadow: 0 0 0 1000px var(--white) inset; }
 .login-input button { width: 32px; height: 32px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--ink-faint); cursor: pointer; }
 .login-input button:hover { background: var(--paper-muted); color: var(--ink); }
-.form-meta { display: flex; align-items: center; justify-content: space-between; margin: 16px 0 24px; color: var(--ink-faint); font-size: var(--text-caption); }
-.form-meta label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
-.form-meta input { width: 15px; height: 15px; accent-color: var(--nav); }
-.form-meta a { color: var(--ink-soft); font-weight: 750; }
+.login-form .form-meta { display: flex; align-items: center; justify-content: space-between; margin: 16px 0 24px; color: var(--ink-faint); font-size: var(--text-caption); }
+.login-form .form-meta label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+.login-form .form-meta input { width: 15px; height: 15px; accent-color: var(--nav); }
+.login-form .form-meta a { color: var(--ink-soft); font-weight: 750; }
 .login-submit { width: 100%; height: 48px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: 11px; background: var(--nav); color: var(--white); font-size: var(--text-body); font-weight: 780; cursor: pointer; box-shadow: 0 10px 24px rgba(11, 41, 38, 0.16); transition: background-color 160ms ease, box-shadow 160ms ease, transform 160ms ease; }
 .login-submit:hover { background: var(--nav-raised); box-shadow: 0 14px 28px rgba(11, 41, 38, 0.2); transform: translateY(-1px); }
 .login-submit:active { transform: translateY(0); }
 .login-back:focus-visible,
+.login-form__header a:focus-visible,
 .login-input button:focus-visible,
-.form-meta a:focus-visible,
-.login-submit:focus-visible,
-.login-agreement a:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+.login-form .form-meta a:focus-visible,
+.login-form .form-meta input:focus-visible,
+.login-submit:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
 .login-agreement { margin: 15px 0 0; color: var(--ink-faint); font-size: var(--text-caption); line-height: 1.6; text-align: center; }
 .login-trust { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding-top: 18px; border-top: 1px solid rgba(16, 40, 36, 0.1); color: var(--ink-faint); font-size: var(--text-caption); }
 .login-trust span { display: inline-flex; align-items: center; gap: 7px; }
@@ -370,7 +407,7 @@ Expected: FAIL，错误信息包含“登录品牌区仍存在独立背景”或
 
 - [ ] **Step 5: 为移动端登录页增加浏览器验收**
 
-在 `frontend/scripts/visual-check.mjs` 的移动端市场页截图之后、关闭 `mobile` context 之前加入：
+在 `frontend/scripts/visual-check.mjs` 的 `report` 初始化中加入 `layoutMetrics: []`，并在移动端市场页截图之后、关闭 `mobile` context 之前加入：
 
 ```js
 await openPage(mobilePage, '/login', '.login-card')
@@ -380,12 +417,21 @@ const loginMobileMetrics = await mobilePage.evaluate(() => {
   const submit = document.querySelector('.login-submit')
   if (!stage || !card || !submit) throw new Error('移动端登录结构缺失')
 
+  const submitRect = submit.getBoundingClientRect()
+  const viewportHeight = window.innerHeight
+
   return {
     stageColumns: window.getComputedStyle(stage).gridTemplateColumns.split(' ').length,
     cardWidth: card.getBoundingClientRect().width,
     submitHeight: submit.getBoundingClientRect().height,
+    submitTop: submitRect.top,
+    submitBottom: submitRect.bottom,
+    viewportHeight,
+    documentHeight: document.documentElement.scrollHeight,
+    submitScrollDistance: Math.max(0, submitRect.bottom - viewportHeight),
   }
 })
+report.layoutMetrics.push({ path: '/login', viewport: '390x844', ...loginMobileMetrics })
 
 if (loginMobileMetrics.stageColumns !== 1) {
   throw new Error(`移动端登录页未切换为单列：${loginMobileMetrics.stageColumns} 列`)
@@ -396,6 +442,9 @@ if (loginMobileMetrics.cardWidth > 354) {
 if (loginMobileMetrics.submitHeight < 44) {
   throw new Error(`移动端登录按钮触控高度不足：${loginMobileMetrics.submitHeight}px`)
 }
+if (loginMobileMetrics.submitScrollDistance > 120) {
+  throw new Error(`移动端完整显示登录按钮所需滚动距离过长：${loginMobileMetrics.submitScrollDistance}px > 120px`)
+}
 await mobilePage.screenshot({ path: resolve(outputDir, 'login-mobile.png'), fullPage: true })
 ```
 
@@ -403,11 +452,11 @@ await mobilePage.screenshot({ path: resolve(outputDir, 'login-mobile.png'), full
 
 Run: `cd frontend && npm test -- --run src/pages/LoginPage.test.ts`
 
-Expected: `2` 条登录页测试全部 PASS。
+Expected: `5` 条登录页测试全部 PASS。
 
 Run: `cd frontend && node scripts/visual-check.mjs`
 
-Expected: 命令退出码为 `0`；报告中的 `typographyViolations`、`consoleErrors`、`consoleWarnings`、`browserDiagnostics` 和 `pageErrors` 均为空数组；生成新的 `login-desktop.png` 和 `login-mobile.png`。
+Expected: 命令退出码为 `0`；报告中的 `layoutMetrics` 记录移动端提交按钮位置、视口高度、文档高度及按钮完整进入视口所需滚动距离，后者不超过 `120px`；`typographyViolations`、`consoleErrors`、`consoleWarnings`、`browserDiagnostics` 和 `pageErrors` 均为空数组；生成新的 `login-desktop.png` 和 `login-mobile.png`。
 
 - [ ] **Step 7: 人工复核截图**
 
@@ -464,4 +513,4 @@ Expected: `main` 相对远程只包含本次本地提交，工作区没有未暂
 
 Run: `git push origin main`
 
-Expected: 本次“统一登录页内容结构”和“重构登录页一体化视觉”提交成功推送到 `origin/main`。
+Expected: 本次登录页结构、视觉与语义回归提交成功推送到 `origin/main`。

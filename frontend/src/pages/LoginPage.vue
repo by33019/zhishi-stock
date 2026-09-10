@@ -48,19 +48,19 @@ const showPassword = ref(false)
           <p>还没有账号？<a href="#">免费注册</a></p>
         </header>
 
-        <label>
-          手机号或用户名
+        <div class="login-field">
+          <label for="login-username">手机号或用户名</label>
           <div class="login-input">
             <UserRound :size="17" />
-            <input type="text" placeholder="请输入手机号或用户名" autocomplete="username" />
+            <input id="login-username" type="text" placeholder="请输入手机号或用户名" autocomplete="username" />
           </div>
-        </label>
+        </div>
 
-        <label>
-          登录密码
+        <div class="login-field">
+          <label for="login-password">登录密码</label>
           <div class="login-input">
             <LockKeyhole :size="17" />
-            <input :type="showPassword ? 'text' : 'password'" placeholder="请输入密码" autocomplete="current-password" />
+            <input id="login-password" :type="showPassword ? 'text' : 'password'" placeholder="请输入密码" autocomplete="current-password" />
             <button
               data-testid="password-visibility"
               type="button"
@@ -71,7 +71,7 @@ const showPassword = ref(false)
               <Eye v-else :size="17" />
             </button>
           </div>
-        </label>
+        </div>
 
         <div class="form-meta">
           <label><input type="checkbox" /> 保持登录</label>

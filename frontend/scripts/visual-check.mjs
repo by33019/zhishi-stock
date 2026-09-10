@@ -8,6 +8,7 @@ const outputDir = resolve('output/playwright')
 const browser = await chromium.launch()
 const report = {
   pages: [],
+  layoutMetrics: [],
   typographySamples: [],
   typographyViolations: [],
   consoleErrors: [],
@@ -150,7 +151,7 @@ await inspectTypography(desktopPage, '/login', [
   { label: '登录品牌标题', selector: '.login-story h1', min: 40, max: 48 },
   { label: '登录品牌描述', selector: '.login-story__content > p', min: 15 },
   { label: '登录表单标题', selector: '.login-form h2', min: 28, max: 34 },
-  { label: '登录表单标签', selector: '.login-form > label', min: 13 },
+  { label: '登录表单标签', selector: '.login-field > label', min: 13 },
   { label: '登录输入内容', selector: '.login-form input[type="text"]', min: 14 },
 ])
 
@@ -204,12 +205,21 @@ const loginMobileMetrics = await mobilePage.evaluate(() => {
   const submit = document.querySelector('.login-submit')
   if (!stage || !card || !submit) throw new Error('移动端登录结构缺失')
 
+  const submitRect = submit.getBoundingClientRect()
+  const viewportHeight = window.innerHeight
+
   return {
     stageColumns: window.getComputedStyle(stage).gridTemplateColumns.split(' ').length,
     cardWidth: card.getBoundingClientRect().width,
     submitHeight: submit.getBoundingClientRect().height,
+    submitTop: submitRect.top,
+    submitBottom: submitRect.bottom,
+    viewportHeight,
+    documentHeight: document.documentElement.scrollHeight,
+    submitScrollDistance: Math.max(0, submitRect.bottom - viewportHeight),
   }
 })
+report.layoutMetrics.push({ path: '/login', viewport: '390x844', ...loginMobileMetrics })
 
 if (loginMobileMetrics.stageColumns !== 1) {
   throw new Error(`移动端登录页未切换为单列：${loginMobileMetrics.stageColumns} 列`)
@@ -219,6 +229,9 @@ if (loginMobileMetrics.cardWidth > 354) {
 }
 if (loginMobileMetrics.submitHeight < 44) {
   throw new Error(`移动端登录按钮触控高度不足：${loginMobileMetrics.submitHeight}px`)
+}
+if (loginMobileMetrics.submitScrollDistance > 120) {
+  throw new Error(`移动端完整显示登录按钮所需滚动距离过长：${loginMobileMetrics.submitScrollDistance}px > 120px`)
 }
 await mobilePage.screenshot({ path: resolve(outputDir, 'login-mobile.png'), fullPage: true })
 await mobile.close()
