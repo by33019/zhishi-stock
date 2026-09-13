@@ -1,0 +1,10 @@
+.git
+.worktrees
+**/target
+**/.m2-cache
+frontend/node_modules
+frontend/dist
+frontend/.cache
+.env
+.env.*
+!.env.example

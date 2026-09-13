@@ -12,6 +12,7 @@ $expectedFiles = @(
     'flyway/V5__create_watchlist_domain.sql',
     'flyway/V6__create_ai_domain.sql',
     'flyway/V7__create_job_and_outbox_domain.sql',
+    'flyway/V8__create_market_overview_snapshot.sql',
     'checks/preflight_existing_schema.sql',
     'checks/post_migration_validation.sql',
     'README.md'
@@ -39,7 +40,8 @@ $expectedMigrationNames = @(
     'V4__create_news_domain.sql',
     'V5__create_watchlist_domain.sql',
     'V6__create_ai_domain.sql',
-    'V7__create_job_and_outbox_domain.sql'
+    'V7__create_job_and_outbox_domain.sql',
+    'V8__create_market_overview_snapshot.sql'
 )
 
 if (($migrationFiles.Name -join ',') -ne ($expectedMigrationNames -join ',')) {
@@ -70,7 +72,8 @@ $newTables = @(
     'stock_news_relation', 'user_watchlist_group', 'user_watchlist_item',
     'ai_session', 'ai_task', 'ai_task_target', 'ai_context_snapshot',
     'ai_message', 'ai_report', 'ai_evidence', 'ai_feedback', 'ai_usage',
-    'job_execution_summary', 'data_quality_issue', 'event_outbox'
+    'job_execution_summary', 'data_quality_issue', 'event_outbox',
+    'market_overview_snapshot'
 )
 
 foreach ($table in $legacyTables) {
@@ -125,7 +128,7 @@ foreach ($entry in $forbiddenPatterns.GetEnumerator()) {
     }
 }
 
-$newDomainSql = ($migrationFiles | Where-Object { $_.Name -match '^V[3-7]__' } | ForEach-Object {
+$newDomainSql = ($migrationFiles | Where-Object { $_.Name -match '^V[3-8]__' } | ForEach-Object {
     Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8
 }) -join "`n"
 

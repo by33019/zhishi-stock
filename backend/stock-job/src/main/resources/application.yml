@@ -1,0 +1,22 @@
+spring:
+  application:
+    name: stock-job
+  main:
+    web-application-type: none
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/stock_system?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+    username: ${DB_USERNAME:stock}
+    password: ${DB_PASSWORD:}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+  jackson:
+    time-zone: Asia/Shanghai
+
+stock:
+  market:
+    scenario: ${MARKET_SCENARIO:NORMAL}
+    collect-initial-delay-ms: ${MARKET_COLLECT_INITIAL_DELAY_MS:1000}
+    collect-delay-ms: ${MARKET_COLLECT_DELAY_MS:60000}

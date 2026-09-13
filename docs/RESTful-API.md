@@ -260,7 +260,7 @@ Authorization: Bearer <accessToken>
 
 | 编号 | 请求方式 | URL | 权限 | 请求参数 | 返回参数 | 接口说明 |
 | --- | --- | --- | --- | --- | --- | --- |
-| MKT-01 | `GET` | `/markets/overview` | `PUBLIC` | Query：`market=CN` | `marketStatus`、`tradeDate`、`domesticIndices`、`overseasIndices`、`breadth`、`limitStatistics`、`turnoverTrend`、`hotSectors`、`dataTime`、`dataStatus` | 市场首页聚合接口，所有子数据携带各自截止时间；聚合失败时允许部分返回 |
+| MKT-01 | `GET` | `/markets/overview` | `PUBLIC` | Query：`market=CN` | `marketCode`、`marketStatus`、`tradeDate`、`indices`（通过 `region` 区分境内外）、`breadth`、`turnover`、`sectors`、`rankings`、`news`、`dataTime`、`dataStatus`、`componentStatus`、`lastSuccessfulSyncAt`、`snapshotVersion` | 市场首页聚合接口，聚合失败时允许部分返回；首个里程碑由确定性模拟 Provider 供数 |
 | MKT-02 | `GET` | `/markets/{marketCode}/status` | `PUBLIC` | Path：`marketCode`，MVP 为 `CN`；Query：可选 `date` | `marketCode`、`tradeDate`、`isTradingDay`、`sessionStatus`、`currentSession`、`nextSessionAt`、`calendarSourceTime` | 查询开市、集合竞价、连续竞价、午间休市、收盘状态 |
 | MKT-03 | `GET` | `/markets/{marketCode}/breadth` | `PUBLIC` | Query：可选 `snapshotTime` | `riseCount`、`fallCount`、`flatCount`、`suspendedCount`、`limitUpCount`、`limitDownCount`、`totalCount`、行情数据状态字段 | 返回同一快照口径的市场广度，不混用不同批次行情 |
 | MKT-04 | `GET` | `/markets/{marketCode}/turnover-trend` | `PUBLIC` | Query：`range`，取值 `TODAY`、`5D`、`20D`；可选 `interval` | 点位数组：`time`、`tradeAmount`、`tradeVolume`；另含 `unit`、`dataCutoffAt` | 返回市场成交量额趋势；盘中以分钟聚合，跨日以日维度聚合 |

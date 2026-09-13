@@ -1,0 +1,104 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      TZ: Asia/Shanghai
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+  redis:
+    image: redis:8.2-alpine
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - redis-data:/data
+
+  flyway:
+    image: flyway/flyway:11-alpine
+    command:
+      - -url=jdbc:mysql://mysql:3306/${MYSQL_DATABASE}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+      - -user=${MYSQL_USER}
+      - -password=${MYSQL_PASSWORD}
+      - -connectRetries=60
+      - migrate
+    depends_on:
+      mysql:
+        condition: service_healthy
+    volumes:
+      - ./sql/flyway:/flyway/sql:ro
+
+  stock-api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      args:
+        APP_MODULE: stock-backend
+    environment: &stock-environment
+      TZ: Asia/Shanghai
+      SPRING_PROFILES_ACTIVE: dev
+      DB_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+      DB_USERNAME: ${MYSQL_USER}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      MARKET_SCENARIO: ${MARKET_SCENARIO:-NORMAL}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      DEMO_USERNAME: ${DEMO_USERNAME:-demo}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-Stock@123}
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  stock-job:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      args:
+        APP_MODULE: stock-job
+    environment:
+      <<: *stock-environment
+      SPRING_PROFILES_ACTIVE: dev
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "${FRONTEND_PORT:-8088}:80"
+    depends_on:
+      stock-api:
+        condition: service_healthy
+
+volumes:
+  mysql-data:
+  redis-data:
