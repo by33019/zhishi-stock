@@ -1,5 +1,6 @@
-import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import { createRouter, createWebHistory, type RouteLocationRaw, type RouteRecordRaw } from 'vue-router'
 
+import { useAuthStore } from '@/stores/auth'
 import type { AccessLevel } from '@/types/domain'
 
 declare module 'vue-router' {
@@ -43,6 +44,35 @@ export const router = createRouter({
   routes,
   scrollBehavior: () => ({ top: 0 }),
 })
+
+interface AccessState {
+  readonly authenticated: boolean
+  readonly isAdmin: boolean
+  restore(): Promise<void> | void
+}
+
+interface AccessTarget {
+  readonly meta: { readonly access?: AccessLevel }
+  readonly fullPath: string
+  readonly name?: unknown
+}
+
+export async function guardRoute(
+  to: AccessTarget,
+  auth: AccessState = useAuthStore(),
+): Promise<true | RouteLocationRaw> {
+  const access = to.meta.access ?? 'PUBLIC'
+  if (access === 'PUBLIC') return true
+
+  await auth.restore()
+  if (!auth.authenticated) {
+    return { name: 'login', query: { redirect: to.fullPath } }
+  }
+  if (access === 'ADMIN' && !auth.isAdmin) return { name: 'market' }
+  return true
+}
+
+router.beforeEach((to) => guardRoute(to))
 
 router.afterEach((to) => {
   document.title = `${to.meta.title} · 知势`

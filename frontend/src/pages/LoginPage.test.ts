@@ -1,5 +1,16 @@
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const auth = vi.hoisted(() => ({ login: vi.fn() }))
+const navigation = vi.hoisted(() => ({ push: vi.fn() }))
+
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => auth }))
+vi.mock('vue-router', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('vue-router')>()),
+  useRoute: () => ({ query: { redirect: '/watchlist' } }),
+  useRouter: () => navigation,
+}))
 
 import LoginPage from './LoginPage.vue'
 
@@ -17,6 +28,10 @@ function mountLoginPage() {
 }
 
 describe('登录页', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
   it('在统一研究画布中组织品牌叙事与登录任务', () => {
     const wrapper = mountLoginPage()
 
@@ -81,5 +96,35 @@ describe('登录页', () => {
     const visibilityButton = wrapper.get('[data-testid="password-visibility"]')
 
     expect(visibilityButton.element.closest('label')).toBeNull()
+  })
+
+  it('提交真实凭据后返回被拦截的原页面', async () => {
+    auth.login.mockResolvedValue(undefined)
+    const wrapper = mountLoginPage()
+    await wrapper.get('input[autocomplete="username"]').setValue('demo')
+    await wrapper.get('input[autocomplete="current-password"]').setValue('Stock@123')
+
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(auth.login).toHaveBeenCalledWith('demo', 'Stock@123')
+    expect(navigation.push).toHaveBeenCalledWith('/watchlist')
+  })
+
+  it('展示账户锁定错误及 traceId', async () => {
+    auth.login.mockRejectedValue({
+      code: 'ACCOUNT_LOCKED',
+      message: '账户已临时锁定',
+      traceId: 'trace-locked',
+    })
+    const wrapper = mountLoginPage()
+    await wrapper.get('input[autocomplete="username"]').setValue('demo')
+    await wrapper.get('input[autocomplete="current-password"]').setValue('bad-password')
+
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.get('[role="alert"]').text()).toContain('账户已临时锁定')
+    expect(wrapper.get('[role="alert"]').text()).toContain('trace-locked')
   })
 })

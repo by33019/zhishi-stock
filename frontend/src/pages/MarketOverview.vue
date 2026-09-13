@@ -4,15 +4,32 @@ import type { EChartsOption } from 'echarts'
 import { computed, onMounted, ref } from 'vue'
 
 import BaseChart from '@/components/BaseChart.vue'
-import { getMarketOverview } from '@/services/mockApi'
+import { getMarketOverview } from '@/services/marketApi'
 import type { MarketOverview } from '@/types/domain'
 import { formatChangeRate, formatDateTime, formatMoney, trendClass } from '@/utils/format'
 
 const market = ref<MarketOverview>()
+const loading = ref(true)
+const error = ref<{ message: string; traceId?: string }>()
 
-onMounted(async () => {
-  market.value = (await getMarketOverview()).data
-})
+async function loadMarket() {
+  loading.value = true
+  error.value = undefined
+  try {
+    market.value = await getMarketOverview()
+  } catch (cause) {
+    const failure = cause as { message?: string; traceId?: string }
+    market.value = undefined
+    error.value = {
+      message: failure.message ?? '市场行情暂不可用',
+      traceId: failure.traceId,
+    }
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadMarket)
 
 const breadthRatio = computed(() => {
   if (!market.value) return 0
@@ -68,7 +85,13 @@ const turnoverOption = computed<EChartsOption>(() => ({
 </script>
 
 <template>
-  <div v-if="market" class="market-page page-enter">
+  <section v-if="error" class="market-state-panel" role="alert">
+    <h1>市场数据暂时无法加载</h1>
+    <p>{{ error.message }}</p>
+    <small v-if="error.traceId">追踪编号：{{ error.traceId }}</small>
+    <button data-testid="market-retry" type="button" @click="loadMarket">重新加载</button>
+  </section>
+  <div v-else-if="market" class="market-page page-enter">
     <section class="market-lead">
       <div>
         <span class="eyebrow">MARKET PULSE · CN</span>
@@ -77,6 +100,14 @@ const turnoverOption = computed<EChartsOption>(() => ({
       </div>
       <div class="market-lead__aside">
         <div class="data-time"><Clock3 :size="15" /> 数据截止 {{ formatDateTime(market.dataTime) }}</div>
+        <div
+          v-if="market.dataStatus !== 'REALTIME'"
+          class="market-data-status"
+          data-testid="market-data-status"
+        >
+          {{ market.dataStatus === 'DELAYED' ? '行情存在延迟' : '当前展示最近有效快照' }}
+          · 最近同步 {{ formatDateTime(market.lastSuccessfulSyncAt) }}
+        </div>
         <button type="button"><Sparkles :size="16" /> 生成市场解读</button>
       </div>
     </section>
@@ -131,7 +162,10 @@ const turnoverOption = computed<EChartsOption>(() => ({
           <div><span class="section-index">03</span><div><h2>热点板块</h2><p>资金与涨幅交叉观察</p></div></div>
           <RouterLink to="/sectors">全部板块 <ChevronRight :size="14" /></RouterLink>
         </header>
-        <div class="sector-list">
+        <p v-if="market.componentStatus.sectors === 'UNAVAILABLE'" class="component-unavailable">
+          热点板块暂不可用，其他行情仍可正常浏览。
+        </p>
+        <div v-else-if="market.sectors.length" class="sector-list">
           <RouterLink v-for="(sector, index) in market.sectors" :key="sector.sectorId" :to="`/sectors/${sector.sectorId}`">
             <span class="sector-rank">0{{ index + 1 }}</span>
             <span class="sector-name"><strong>{{ sector.sectorName }}</strong><small>领涨 {{ sector.leadingStock }}</small></span>
@@ -139,6 +173,7 @@ const turnoverOption = computed<EChartsOption>(() => ({
             <b :class="trendClass(sector.changeRate)" class="mono">{{ formatChangeRate(sector.changeRate) }}</b>
           </RouterLink>
         </div>
+        <p v-else class="component-unavailable">暂无热点板块数据。</p>
       </article>
     </section>
 
@@ -180,7 +215,7 @@ const turnoverOption = computed<EChartsOption>(() => ({
       </article>
     </section>
   </div>
-  <div v-else class="page-loading" aria-label="正在加载市场数据">
+  <div v-else-if="loading" class="page-loading" aria-label="正在加载市场数据">
     <span /><span /><span />
   </div>
 </template>

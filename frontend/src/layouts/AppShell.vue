@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   Layers3,
   ListFilter,
+  LogOut,
   Menu,
   Newspaper,
   PanelRightOpen,
@@ -15,14 +16,24 @@ import {
 } from '@lucide/vue'
 import { storeToRefs } from 'pinia'
 import { RouterLink, RouterView } from 'vue-router'
+import { useRouter } from 'vue-router'
 
 import AiResearchPanel from '@/components/AiResearchPanel.vue'
 import BrandMark from '@/components/BrandMark.vue'
 import GlobalSearch from '@/components/GlobalSearch.vue'
 import { useUiStore } from '@/stores/ui'
+import { useAuthStore } from '@/stores/auth'
 
 const ui = useUiStore()
 const { aiPanelOpen, mobileNavOpen } = storeToRefs(ui)
+const auth = useAuthStore()
+const { authenticated, user } = storeToRefs(auth)
+const router = useRouter()
+
+async function logout() {
+  await auth.logout()
+  await router.push('/market')
+}
 
 const navigation = [
   { label: '市场总览', to: '/market', icon: LayoutDashboard },
@@ -75,7 +86,13 @@ const navigation = [
             <PanelRightOpen :size="17" />
             <span>AI 助手</span>
           </button>
-          <RouterLink class="user-entry" to="/login"><CircleUserRound :size="21" /><span>研究员</span></RouterLink>
+          <div v-if="authenticated" class="user-session">
+            <span class="user-entry"><CircleUserRound :size="21" /><span>{{ user?.displayName }}</span></span>
+            <button data-testid="logout-button" type="button" aria-label="退出登录" @click="logout">
+              <LogOut :size="16" />
+            </button>
+          </div>
+          <RouterLink v-else class="user-entry" to="/login"><CircleUserRound :size="21" /><span>登录</span></RouterLink>
         </div>
       </header>
 

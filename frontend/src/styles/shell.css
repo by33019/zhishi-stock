@@ -346,6 +346,30 @@
   font-weight: 650;
 }
 
+.user-session {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.user-session > button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+.user-session > button:hover {
+  background: var(--paper-soft);
+  color: var(--ink);
+}
+
 .page-stage {
   width: min(100%, 1510px);
   margin: 0 auto;

@@ -1,10 +1,42 @@
 <script setup lang="ts">
 import { ArrowRight, Check, Eye, EyeOff, LockKeyhole, ShieldCheck, UserRound } from '@lucide/vue'
 import { ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 
 import BrandMark from '@/components/BrandMark.vue'
+import { useAuthStore } from '@/stores/auth'
 
 const showPassword = ref(false)
+const account = ref('')
+const password = ref('')
+const submitting = ref(false)
+const errorMessage = ref('')
+const traceId = ref('')
+const auth = useAuthStore()
+const route = useRoute()
+const router = useRouter()
+
+async function submit() {
+  errorMessage.value = ''
+  traceId.value = ''
+  if (!account.value.trim() || !password.value) {
+    errorMessage.value = '请输入账号和密码'
+    return
+  }
+  submitting.value = true
+  try {
+    await auth.login(account.value.trim(), password.value)
+    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/market'
+    await router.push(redirect)
+  } catch (error) {
+    const failure = error as { code?: string; message?: string; traceId?: string }
+    errorMessage.value = failure.message
+      ?? (failure.code === 'ACCOUNT_LOCKED' ? '账户已临时锁定' : '登录失败，请稍后重试')
+    traceId.value = failure.traceId ?? ''
+  } finally {
+    submitting.value = false
+  }
+}
 </script>
 
 <template>
@@ -41,7 +73,7 @@ const showPassword = ref(false)
         </ul>
       </article>
 
-      <form class="login-form login-card" @submit.prevent>
+      <form class="login-form login-card" @submit.prevent="submit">
         <header class="login-form__header">
           <span class="eyebrow">WELCOME BACK</span>
           <h2>登录研究工作台</h2>
@@ -52,7 +84,7 @@ const showPassword = ref(false)
           <label for="login-username">手机号或用户名</label>
           <div class="login-input">
             <UserRound :size="17" />
-            <input id="login-username" type="text" placeholder="请输入手机号或用户名" autocomplete="username" />
+            <input v-model="account" id="login-username" type="text" placeholder="请输入手机号或用户名" autocomplete="username" />
           </div>
         </div>
 
@@ -60,7 +92,7 @@ const showPassword = ref(false)
           <label for="login-password">登录密码</label>
           <div class="login-input">
             <LockKeyhole :size="17" />
-            <input id="login-password" :type="showPassword ? 'text' : 'password'" placeholder="请输入密码" autocomplete="current-password" />
+            <input v-model="password" id="login-password" :type="showPassword ? 'text' : 'password'" placeholder="请输入密码" autocomplete="current-password" />
             <button
               data-testid="password-visibility"
               type="button"
@@ -78,8 +110,12 @@ const showPassword = ref(false)
           <span class="login-static-action">找回密码即将开放</span>
         </div>
 
-        <button class="login-submit" type="submit">
-          登录
+        <p v-if="errorMessage" class="login-error" role="alert">
+          {{ errorMessage }}<small v-if="traceId">追踪编号：{{ traceId }}</small>
+        </p>
+
+        <button class="login-submit" type="submit" :disabled="submitting">
+          {{ submitting ? '登录中…' : '登录' }}
           <ArrowRight :size="17" />
         </button>
         <p class="login-agreement">登录即表示你同意《用户协议》和《隐私政策》</p>

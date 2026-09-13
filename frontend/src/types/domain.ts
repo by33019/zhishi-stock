@@ -80,6 +80,9 @@ export interface MarketOverview {
   sectors: SectorQuote[]
   rankings: QuoteRow[]
   news: NewsItem[]
+  componentStatus: Record<string, DataStatus>
+  lastSuccessfulSyncAt: string
+  snapshotVersion: string
 }
 
 export interface KlinePoint {

@@ -62,6 +62,16 @@ const marketOverview: MarketOverview = {
   ],
   rankings: rankingRows,
   news,
+  componentStatus: {
+    indices: 'REALTIME',
+    breadth: 'REALTIME',
+    turnover: 'REALTIME',
+    sectors: 'REALTIME',
+    rankings: 'REALTIME',
+    news: 'REALTIME',
+  },
+  lastSuccessfulSyncAt: now,
+  snapshotVersion: 'mock-cn-20260908-143218',
 }
 
 const stockDetail: StockDetail = {
