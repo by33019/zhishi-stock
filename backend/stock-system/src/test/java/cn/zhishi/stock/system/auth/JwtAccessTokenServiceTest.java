@@ -19,7 +19,8 @@ class JwtAccessTokenServiceTest {
   void signsAndVerifiesAccessTokenClaims() {
     var clock = Clock.fixed(NOW, ZoneOffset.UTC);
     var service = new JwtAccessTokenService(SECRET, clock, Duration.ofMinutes(15));
-    var user = new UserAccount(1001L, "demo", "hash", UserAccount.Status.ACTIVE, "演示用户");
+    var user = new UserAccount(
+        1001L, "demo", "hash", UserAccount.Status.ACTIVE, "演示用户", 7);
 
     var token = service.issue(user, Set.of("market:read", "watchlist:read"));
     var principal = service.verify(token.value());
@@ -30,6 +31,7 @@ class JwtAccessTokenServiceTest {
     assertThat(principal.permissions()).containsExactlyInAnyOrder("market:read", "watchlist:read");
     assertThat(principal.jti()).isEqualTo(token.jti());
     assertThat(principal.expiresAt()).isEqualTo(NOW.plusSeconds(900));
+    assertThat(principal.tokenVersion()).isEqualTo(7);
   }
 
   @Test

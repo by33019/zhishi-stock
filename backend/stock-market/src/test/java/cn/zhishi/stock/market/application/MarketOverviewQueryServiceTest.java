@@ -53,6 +53,19 @@ class MarketOverviewQueryServiceTest {
         .hasMessageContaining("CN");
   }
 
+  @Test
+  void mapsArchiveFailureToMarketUnavailable() {
+    MarketOverviewStore store = market -> Optional.empty();
+    MarketOverviewArchive archive = market -> {
+      throw new IllegalStateException("database unavailable");
+    };
+
+    assertThatThrownBy(() -> new MarketOverviewQueryService(store, archive).getOverview("CN"))
+        .isInstanceOf(MarketDataUnavailableException.class)
+        .hasMessageContaining("CN")
+        .hasCauseInstanceOf(IllegalStateException.class);
+  }
+
   private static MarketOverview snapshot(String version) {
     var now = OffsetDateTime.of(2026, 9, 11, 9, 30, 0, 0, ZoneOffset.ofHours(8));
     return new MarketOverview(

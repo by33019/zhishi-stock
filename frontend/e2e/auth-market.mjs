@@ -1,3 +1,4 @@
+// 快速 UI 流程测试：使用受控 API fixture，不替代真实 Compose 纵向验收。
 import assert from 'node:assert/strict'
 
 import { chromium } from 'playwright'
@@ -37,7 +38,7 @@ try {
         : fulfillError(route, 401, 'INVALID_REFRESH_TOKEN', '刷新令牌无效')
     }
     if (path === '/api/v1/users/me') {
-      return fulfill(route, { userId: 1, username: 'demo', displayName: '开发测试用户', status: 'ACTIVE' })
+      return fulfill(route, { userId: '9900000000003', username: 'demo', displayName: '开发测试用户', status: 'ACTIVE' })
     }
     if (path === '/api/v1/auth/logout') {
       refreshSessionActive = false
@@ -72,7 +73,7 @@ try {
   await page.waitForURL(/\/login\?redirect=/)
   assert.equal(refreshSessionActive, false)
 
-  console.log('Playwright 验收通过：游客市场、受限路由、登录回跳、刷新恢复、退出撤销')
+  console.log('Playwright UI 流程通过：游客市场、受限路由、登录回跳、刷新恢复、退出撤销')
 } finally {
   await browser?.close()
   await viteServer.close()
@@ -94,7 +95,7 @@ function tokenResponse(withUser) {
     accessToken: 'e2e-access-token',
     accessExpiresInSeconds: 900,
     refreshExpiresInSeconds: 604800,
-    user: withUser ? { userId: 1, username: 'demo', displayName: '开发测试用户' } : null,
+    user: withUser ? { userId: '9900000000003', username: 'demo', displayName: '开发测试用户' } : null,
     permissions: ['user:self:read'],
   }
 }

@@ -5,5 +5,6 @@ public record SysUserRecord(
         String username,
         String passwordHash,
         String displayName,
-        int status) {
+        int status,
+        int tokenVersion) {
 }

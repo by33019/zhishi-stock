@@ -5,7 +5,17 @@ public record UserAccount(
         String username,
         String passwordHash,
         Status status,
-        String displayName) {
+        String displayName,
+        int tokenVersion) {
+
+    public UserAccount(
+            long id,
+            String username,
+            String passwordHash,
+            Status status,
+            String displayName) {
+        this(id, username, passwordHash, status, displayName, 0);
+    }
 
     public enum Status {
         ACTIVE,

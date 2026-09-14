@@ -4,11 +4,17 @@ import java.util.Optional;
 
 public interface RefreshSessionStore {
 
+    enum RotationOutcome {
+        SUCCESS,
+        REUSED,
+        INVALID
+    }
+
     Optional<RefreshTokenRecord> findByTokenHash(String tokenHash);
 
     void save(RefreshTokenRecord record);
 
-    void rotate(RefreshTokenRecord previous, RefreshTokenRecord next);
+    RotationOutcome rotate(RefreshTokenRecord previous, RefreshTokenRecord next);
 
     void revokeFamily(String familyId);
 }

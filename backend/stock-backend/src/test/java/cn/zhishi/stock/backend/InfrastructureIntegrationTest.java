@@ -11,11 +11,17 @@ import cn.zhishi.stock.market.domain.MarketOverviewStore;
 import cn.zhishi.stock.market.domain.QuoteProvider;
 import cn.zhishi.stock.system.auth.AuthErrorCode;
 import cn.zhishi.stock.system.auth.AuthException;
+import cn.zhishi.stock.system.auth.AuthenticationService;
 import cn.zhishi.stock.system.auth.RefreshSessionService;
 import cn.zhishi.stock.system.auth.UserAccount;
 import cn.zhishi.stock.system.auth.UserAccountRepository;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -36,7 +42,7 @@ import org.testcontainers.utility.DockerImageName;
         "spring.flyway.enabled=true"
 })
 @ActiveProfiles("test")
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class InfrastructureIntegrationTest {
 
     @Container
@@ -62,6 +68,7 @@ class InfrastructureIntegrationTest {
     @Autowired StringRedisTemplate redis;
     @Autowired UserAccountRepository accounts;
     @Autowired RefreshSessionService sessions;
+    @Autowired AuthenticationService authentication;
     @Autowired QuoteProvider provider;
     @Autowired MarketOverviewStore store;
     @Autowired MarketOverviewArchive archive;
@@ -97,5 +104,86 @@ class InfrastructureIntegrationTest {
                 .isInstanceOfSatisfying(AuthException.class,
                         exception -> assertThat(exception.code())
                                 .isEqualTo(AuthErrorCode.INVALID_REFRESH_TOKEN));
+    }
+
+    @Test
+    void concurrentRefreshAllowsOnlyOneSuccessAndReplayRevokesItsSuccessor() throws Exception {
+        UserAccount user = accounts.findByUsername("demo").orElseThrow();
+        String refreshToken = sessions.start(user, accounts.findPermissions(user.id())).refreshToken();
+        int competitors = 12;
+        var ready = new CountDownLatch(competitors);
+        var start = new CountDownLatch(1);
+        var pool = Executors.newFixedThreadPool(competitors);
+        List<Future<Object>> futures = new ArrayList<>();
+        try {
+            for (int index = 0; index < competitors; index++) {
+                futures.add(pool.submit(() -> {
+                    ready.countDown();
+                    start.await();
+                    try {
+                        return sessions.rotate(refreshToken);
+                    } catch (AuthException exception) {
+                        return exception.code();
+                    }
+                }));
+            }
+            ready.await();
+            start.countDown();
+            List<Object> results = futures.stream().map(future -> {
+                try {
+                    return future.get();
+                } catch (Exception exception) {
+                    throw new AssertionError(exception);
+                }
+            }).toList();
+            List<cn.zhishi.stock.system.auth.RefreshResult> successes = results.stream()
+                    .filter(cn.zhishi.stock.system.auth.RefreshResult.class::isInstance)
+                    .map(cn.zhishi.stock.system.auth.RefreshResult.class::cast)
+                    .toList();
+
+            assertThat(successes).hasSize(1);
+            assertThat(results).contains(AuthErrorCode.REFRESH_TOKEN_REUSED);
+            assertThatThrownBy(() -> sessions.rotate(successes.get(0).refreshToken()))
+                    .isInstanceOf(AuthException.class);
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
+    void concurrentPasswordFailuresStillLockTheAccountAtFiveAttempts() throws Exception {
+        UserAccount user = accounts.findByUsername("demo").orElseThrow();
+        redis.delete("auth:login-attempt:" + user.id());
+        int competitors = 8;
+        var ready = new CountDownLatch(competitors);
+        var start = new CountDownLatch(1);
+        var pool = Executors.newFixedThreadPool(competitors);
+        try {
+            List<Future<?>> futures = new ArrayList<>();
+            for (int index = 0; index < competitors; index++) {
+                futures.add(pool.submit(() -> {
+                    ready.countDown();
+                    start.await();
+                    try {
+                        authentication.login("demo", "wrong-password");
+                    } catch (AuthException ignored) {
+                        // 每个错误请求都必须被原子计数。
+                    }
+                    return null;
+                }));
+            }
+            ready.await();
+            start.countDown();
+            for (Future<?> future : futures) {
+                future.get();
+            }
+
+            assertThatThrownBy(() -> authentication.login("demo", "Stock@123"))
+                    .isInstanceOfSatisfying(AuthException.class,
+                            exception -> assertThat(exception.code())
+                                    .isEqualTo(AuthErrorCode.ACCOUNT_LOCKED));
+        } finally {
+            pool.shutdownNow();
+        }
     }
 }

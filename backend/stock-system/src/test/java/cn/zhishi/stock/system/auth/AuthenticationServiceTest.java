@@ -2,6 +2,9 @@ package cn.zhishi.stock.system.auth;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -14,6 +17,7 @@ import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 class AuthenticationServiceTest {
 
@@ -52,6 +56,17 @@ class AuthenticationServiceTest {
       @Override
       public void save(long userId, LoginAttemptState state) {
         attempts.put(userId, state);
+      }
+
+      @Override
+      public boolean recordFailure(
+          long userId, Instant now, int maximumFailures, Duration lockDuration) {
+        LoginAttemptState current = attempts.getOrDefault(userId, new LoginAttemptState(0, null));
+        if (current.isLocked(now)) return true;
+        int failures = current.lockedUntil() == null ? current.failures() + 1 : 1;
+        Instant lockedUntil = failures >= maximumFailures ? now.plus(lockDuration) : null;
+        attempts.put(userId, new LoginAttemptState(failures, lockedUntil));
+        return lockedUntil != null;
       }
 
       @Override
@@ -108,5 +123,34 @@ class AuthenticationServiceTest {
         .isInstanceOf(AuthException.class)
         .extracting(error -> ((AuthException) error).code())
         .isEqualTo(AuthErrorCode.ACCOUNT_DISABLED);
+  }
+
+  @Test
+  void unknownAccountStillPerformsPasswordHashCheck() {
+    UserAccountRepository missingAccounts = new UserAccountRepository() {
+      @Override
+      public Optional<UserAccount> findByUsername(String username) {
+        return Optional.empty();
+      }
+
+      @Override
+      public Set<String> findPermissions(long userId) {
+        return Set.of();
+      }
+    };
+    PasswordEncoder encoder = mock(PasswordEncoder.class);
+    when(encoder.encode(org.mockito.ArgumentMatchers.anyString())).thenReturn("dummy-hash");
+    var authentication = new AuthenticationService(
+        missingAccounts,
+        mock(LoginAttemptStore.class),
+        encoder,
+        mock(TokenIssuer.class),
+        Clock.fixed(NOW, ZoneId.of("Asia/Shanghai")),
+        5,
+        Duration.ofMinutes(15));
+
+    assertThatThrownBy(() -> authentication.login("missing", "candidate"))
+        .isInstanceOf(AuthException.class);
+    verify(encoder).matches("candidate", "dummy-hash");
   }
 }

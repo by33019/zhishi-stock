@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { apiRequest, clearAccessToken, setAccessToken } from './apiClient'
+import { apiRequest, clearAccessToken, refreshAccessToken, setAccessToken } from './apiClient'
 
 function response(status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -12,6 +12,7 @@ function response(status: number, body: unknown) {
 describe('REST Client', () => {
   afterEach(() => {
     clearAccessToken()
+    vi.useRealTimers()
     vi.unstubAllGlobals()
   })
 
@@ -71,5 +72,23 @@ describe('REST Client', () => {
       traceId: 'trace-locked',
       fieldErrors: { account: '请稍后重试' },
     })
+  })
+
+  it('刷新会话请求超时后返回统一错误，避免路由恢复无限等待', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('aborted', 'AbortError'))
+        })
+      }),
+    ))
+
+    const rejection = expect(refreshAccessToken()).rejects.toMatchObject({
+      code: 'REQUEST_TIMEOUT',
+      status: 0,
+    })
+    await vi.advanceTimersByTimeAsync(10_000)
+    await rejection
   })
 })

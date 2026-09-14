@@ -24,7 +24,7 @@ describe('认证 Store', () => {
       accessToken: 'access-token',
       accessExpiresInSeconds: 900,
       refreshExpiresInSeconds: 604800,
-      user: { userId: 1, username: 'demo', displayName: '开发测试用户' },
+      user: { userId: '9900000000003', username: 'demo', displayName: '开发测试用户' },
       permissions: ['user:self:read'],
     })
     const store = useAuthStore()
@@ -44,7 +44,7 @@ describe('认证 Store', () => {
       permissions: ['user:self:read'],
     })
     client.apiRequest.mockResolvedValueOnce({
-      userId: 1,
+      userId: '9900000000003',
       username: 'demo',
       displayName: '开发测试用户',
       status: 'ACTIVE',

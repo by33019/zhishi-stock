@@ -13,7 +13,8 @@ public interface SysUserMapper {
                    username,
                    password AS passwordHash,
                    COALESCE(NULLIF(nick_name, ''), NULLIF(real_name, ''), username) AS displayName,
-                   status
+                   status,
+                   token_version AS tokenVersion
             FROM sys_user
             WHERE username = #{username} AND deleted = 1
             LIMIT 1
@@ -25,7 +26,8 @@ public interface SysUserMapper {
                    username,
                    password AS passwordHash,
                    COALESCE(NULLIF(nick_name, ''), NULLIF(real_name, ''), username) AS displayName,
-                   status
+                   status,
+                   token_version AS tokenVersion
             FROM sys_user
             WHERE id = #{userId} AND deleted = 1
             LIMIT 1

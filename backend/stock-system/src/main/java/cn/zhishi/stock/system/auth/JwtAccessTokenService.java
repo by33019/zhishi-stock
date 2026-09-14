@@ -35,6 +35,7 @@ public class JwtAccessTokenService implements AccessTokenFactory {
                 .subject(Long.toString(user.id()))
                 .claim("username", user.username())
                 .claim("permissions", List.copyOf(permissions))
+                .claim("tokenVersion", user.tokenVersion())
                 .id(jti)
                 .issuedAt(Date.from(issuedAt))
                 .expiration(Date.from(expiresAt))
@@ -61,7 +62,8 @@ public class JwtAccessTokenService implements AccessTokenFactory {
                     claims.get("username", String.class),
                     Set.copyOf(permissions),
                     claims.getId(),
-                    claims.getExpiration().toInstant());
+                    claims.getExpiration().toInstant(),
+                    claims.get("tokenVersion", Integer.class));
         } catch (RuntimeException exception) {
             throw new InvalidAccessTokenException(exception);
         }

@@ -32,8 +32,10 @@ import java.time.ZoneId;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.Ordered;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -45,6 +47,13 @@ public class BackendConfiguration {
     @Bean
     TraceIdFilter traceIdFilter() {
         return new TraceIdFilter();
+    }
+
+    @Bean
+    FilterRegistrationBean<TraceIdFilter> traceIdFilterRegistration(TraceIdFilter filter) {
+        FilterRegistrationBean<TraceIdFilter> registration = new FilterRegistrationBean<>(filter);
+        registration.setOrder(Ordered.HIGHEST_PRECEDENCE);
+        return registration;
     }
 
     @Bean
@@ -82,8 +91,9 @@ public class BackendConfiguration {
     @Bean
     JwtAuthenticationFilter jwtAuthenticationFilter(
             JwtAccessTokenService tokens,
-            AccessTokenBlacklist blacklist) {
-        return new JwtAuthenticationFilter(tokens, blacklist);
+            AccessTokenBlacklist blacklist,
+            UserAccountRepository accounts) {
+        return new JwtAuthenticationFilter(tokens, blacklist, accounts);
     }
 
     @Bean

@@ -5,9 +5,14 @@ import static org.mockito.Mockito.mock;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 
 import cn.zhishi.stock.system.auth.AccessTokenBlacklist;
 import cn.zhishi.stock.system.auth.JwtAccessTokenService;
+import cn.zhishi.stock.system.auth.UserAccountRepository;
+import cn.zhishi.stock.backend.web.TraceIdFilter;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Clock;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
@@ -24,16 +29,24 @@ class SecurityConfigurationTest {
     new WebApplicationContextRunner()
         .withUserConfiguration(SecurityConfiguration.class, TestEndpoints.class)
         .withBean(JwtAuthenticationFilter.class, () -> new JwtAuthenticationFilter(
-            mock(JwtAccessTokenService.class), mock(AccessTokenBlacklist.class)))
+            mock(JwtAccessTokenService.class), mock(AccessTokenBlacklist.class),
+            mock(UserAccountRepository.class)))
+        .withBean(ObjectMapper.class, () -> new ObjectMapper().findAndRegisterModules())
+        .withBean(Clock.class, Clock::systemUTC)
+        .withBean(TraceIdFilter.class, TraceIdFilter::new)
         .run(context -> {
           assertThat(context).hasNotFailed();
           var mvc = MockMvcBuilders.webAppContextSetup(context)
               .apply(springSecurity())
+              .addFilters(context.getBean(TraceIdFilter.class))
               .build();
           mvc.perform(get("/api/v1/markets/overview"))
               .andExpect(status().isOk());
           mvc.perform(get("/api/v1/users/me"))
-              .andExpect(status().isUnauthorized());
+              .andExpect(status().isUnauthorized())
+              .andExpect(jsonPath("$.success").value(false))
+              .andExpect(jsonPath("$.code").value("UNAUTHORIZED"))
+              .andExpect(jsonPath("$.traceId").isNotEmpty());
         });
   }
 

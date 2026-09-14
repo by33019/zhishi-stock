@@ -53,7 +53,8 @@ class AuthControllerContractTest {
 
   @Test
   void loginReturnsAccessTokenAndHttpOnlyRefreshCookie() throws Exception {
-    var user = new UserAccount(1001L, "demo", "hash", UserAccount.Status.ACTIVE, "演示用户");
+    var user = new UserAccount(
+        9_900_000_000_003L, "demo", "hash", UserAccount.Status.ACTIVE, "演示用户");
     when(authentication.login("demo", "Stock@123"))
         .thenReturn(new LoginTokens(
             "access-token", "refresh-token", 900, Set.of("market:read"), user));
@@ -71,6 +72,8 @@ class AuthControllerContractTest {
             org.hamcrest.Matchers.containsString("SameSite=Strict"))))
         .andExpect(jsonPath("$.data.accessToken").value("access-token"))
         .andExpect(jsonPath("$.data.accessExpiresInSeconds").value(900))
+        .andExpect(jsonPath("$.data.user.userId").isString())
+        .andExpect(jsonPath("$.data.user.userId").value("9900000000003"))
         .andExpect(jsonPath("$.data.user.username").value("demo"))
         .andExpect(jsonPath("$.data.permissions[0]").value("market:read"));
   }
@@ -90,6 +93,25 @@ class AuthControllerContractTest {
   }
 
   @Test
+  void missingRefreshCookieUsesUnifiedErrorEnvelope() throws Exception {
+    mvc.perform(post("/api/v1/auth/token/refresh"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.success").value(false))
+        .andExpect(jsonPath("$.code").value("INVALID_REFRESH_TOKEN"))
+        .andExpect(jsonPath("$.traceId").isNotEmpty());
+  }
+
+  @Test
+  void malformedLoginJsonUsesUnifiedErrorEnvelope() throws Exception {
+    mvc.perform(post("/api/v1/auth/login")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("{not-json"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.success").value(false))
+        .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+  }
+
+  @Test
   void mapsLockedAccountToStableErrorCode() throws Exception {
     when(authentication.login("demo", "wrong-password"))
         .thenThrow(new AuthException(AuthErrorCode.ACCOUNT_LOCKED, "账户已锁定"));
@@ -105,6 +127,23 @@ class AuthControllerContractTest {
   }
 
   @Test
+  void unexpectedServiceFailureUsesGenericEnvelopeWithoutLeakingDetails() throws Exception {
+    when(authentication.login("demo", "Stock@123"))
+        .thenThrow(new IllegalStateException("database-password=secret"));
+
+    mvc.perform(post("/api/v1/auth/login")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""
+                {"account":"demo","password":"Stock@123"}
+                """))
+        .andExpect(status().isInternalServerError())
+        .andExpect(jsonPath("$.success").value(false))
+        .andExpect(jsonPath("$.code").value("INTERNAL_ERROR"))
+        .andExpect(jsonPath("$.message").value("服务暂时不可用"))
+        .andExpect(jsonPath("$.traceId").isNotEmpty());
+  }
+
+  @Test
   void rejectsInvalidLoginFieldsWithFieldErrors() throws Exception {
     mvc.perform(post("/api/v1/auth/login")
             .contentType(MediaType.APPLICATION_JSON)
@@ -113,8 +152,8 @@ class AuthControllerContractTest {
                 """))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
-        .andExpect(jsonPath("$.data.account").exists())
-        .andExpect(jsonPath("$.data.password").exists());
+        .andExpect(jsonPath("$.data.fieldErrors.account").exists())
+        .andExpect(jsonPath("$.data.fieldErrors.password").exists());
   }
 
   @Test
@@ -147,7 +186,8 @@ class AuthControllerContractTest {
     mvc.perform(get("/api/v1/auth/session-status").principal(security))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.authenticated").value(true))
-        .andExpect(jsonPath("$.data.userId").value(1001))
+        .andExpect(jsonPath("$.data.userId").isString())
+        .andExpect(jsonPath("$.data.userId").value("1001"))
         .andExpect(jsonPath("$.data.tokenExpiresAt").value("2026-09-11T02:15:00Z"));
   }
 }

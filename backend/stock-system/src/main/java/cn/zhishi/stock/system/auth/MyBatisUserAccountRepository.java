@@ -38,6 +38,7 @@ public class MyBatisUserAccountRepository implements UserAccountRepository {
                 record.username(),
                 record.passwordHash(),
                 status,
-                record.displayName());
+                record.displayName(),
+                record.tokenVersion());
     }
 }

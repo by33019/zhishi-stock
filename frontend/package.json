@@ -7,7 +7,9 @@
     "dev": "vite --configLoader runner --host 0.0.0.0",
     "build": "npm run typecheck && vite build --configLoader runner",
     "preview": "vite preview --configLoader runner --host 0.0.0.0",
-    "e2e": "node e2e/auth-market.mjs",
+    "e2e": "npm run e2e:ui",
+    "e2e:ui": "node e2e/auth-market.mjs",
+    "e2e:real": "node e2e/auth-market.real.mjs",
     "test": "vitest --configLoader runner",
     "typecheck": "vue-tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json"
   },

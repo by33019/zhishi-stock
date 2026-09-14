@@ -13,7 +13,7 @@ class MyBatisUserAccountRepositoryTest {
   void mapsLegacyUserStatusAndRbacPermissions() {
     SysUserMapper mapper = mock(SysUserMapper.class);
     when(mapper.findByUsername("demo"))
-        .thenReturn(new SysUserRecord(1001L, "demo", "bcrypt", "演示用户", 1));
+        .thenReturn(new SysUserRecord(1001L, "demo", "bcrypt", "演示用户", 1, 7));
     when(mapper.findPermissions(1001L))
         .thenReturn(List.of("market:read", "watchlist:read", "market:read"));
     var repository = new MyBatisUserAccountRepository(mapper);
@@ -21,6 +21,7 @@ class MyBatisUserAccountRepositoryTest {
     var account = repository.findByUsername("demo").orElseThrow();
 
     assertThat(account.status()).isEqualTo(UserAccount.Status.ACTIVE);
+    assertThat(account.tokenVersion()).isEqualTo(7);
     assertThat(repository.findPermissions(1001L))
         .containsExactly("market:read", "watchlist:read");
   }

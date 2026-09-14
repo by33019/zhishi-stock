@@ -13,7 +13,6 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.Set;
 import org.springframework.beans.factory.annotation.Value;
@@ -62,7 +61,7 @@ public class AuthController {
         UserAccount user = tokens.user();
         UserSummary summary = user == null
                 ? new UserSummary(null, body.account(), body.account())
-                : new UserSummary(user.id(), user.username(), user.displayName());
+                : new UserSummary(Long.toString(user.id()), user.username(), user.displayName());
         TokenResponse data = new TokenResponse(
                 tokens.accessToken(),
                 tokens.expiresInSeconds(),
@@ -112,7 +111,7 @@ public class AuthController {
         return ApiResponse.success(
                 new SessionStatusResponse(
                         true,
-                        principal.userId(),
+                        Long.toString(principal.userId()),
                         principal.expiresAt().toString(),
                         true),
                 TraceIdFilter.current(request),
@@ -155,7 +154,7 @@ public class AuthController {
             Set<String> permissions) {
     }
 
-    public record UserSummary(Long userId, String username, String displayName) {
+    public record UserSummary(String userId, String username, String displayName) {
     }
 
     public record LogoutResponse(boolean loggedOut, int revokedSessionCount) {
@@ -163,7 +162,7 @@ public class AuthController {
 
     public record SessionStatusResponse(
             boolean authenticated,
-            long userId,
+            String userId,
             String tokenExpiresAt,
             boolean tokenVersionValid) {
     }

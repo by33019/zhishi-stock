@@ -12,11 +12,17 @@ import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestCookieException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     private final Clock clock;
 
@@ -58,7 +64,7 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<ApiResponse<Map<String, String>>> validation(
+    public ResponseEntity<ApiResponse<ValidationErrors>> validation(
             MethodArgumentNotValidException exception,
             HttpServletRequest request) {
         Map<String, String> errors = new LinkedHashMap<>();
@@ -67,8 +73,52 @@ public class GlobalExceptionHandler {
         return ResponseEntity.badRequest().body(ApiResponse.failure(
                 "VALIDATION_FAILED",
                 "请求参数校验失败",
-                errors,
+                new ValidationErrors(errors),
                 TraceIdFilter.current(request),
                 OffsetDateTime.now(clock)));
+    }
+
+    @ExceptionHandler(MissingRequestCookieException.class)
+    public ResponseEntity<ApiResponse<Void>> missingRefreshCookie(
+            MissingRequestCookieException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(ApiResponse.failure(
+                "INVALID_REFRESH_TOKEN",
+                "刷新令牌缺失或无效",
+                null,
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ApiResponse<Void>> unreadableRequest(
+            HttpMessageNotReadableException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.badRequest().body(ApiResponse.failure(
+                "INVALID_REQUEST",
+                "请求体格式无效",
+                null,
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ApiResponse<Void>> unexpected(
+            Exception exception,
+            HttpServletRequest request) {
+        String traceId = TraceIdFilter.current(request);
+        LOGGER.error(
+                "未处理的接口异常：traceId={}，type={}",
+                traceId,
+                exception.getClass().getName());
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(ApiResponse.failure(
+                "INTERNAL_ERROR",
+                "服务暂时不可用",
+                null,
+                traceId,
+                OffsetDateTime.now(clock)));
+    }
+
+    public record ValidationErrors(Map<String, String> fieldErrors) {
     }
 }

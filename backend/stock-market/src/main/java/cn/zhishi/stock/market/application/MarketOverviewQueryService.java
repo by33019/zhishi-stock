@@ -16,8 +16,18 @@ public class MarketOverviewQueryService {
 
     public MarketOverview getOverview(String marketCode) {
         return store.find(marketCode)
-                .orElseGet(() -> archive.findLatest(marketCode)
-                        .map(MarketOverview::asStale)
-                        .orElseThrow(() -> new MarketDataUnavailableException(marketCode)));
+                .orElseGet(() -> findArchived(marketCode));
+    }
+
+    private MarketOverview findArchived(String marketCode) {
+        try {
+            return archive.findLatest(marketCode)
+                    .map(MarketOverview::asStale)
+                    .orElseThrow(() -> new MarketDataUnavailableException(marketCode));
+        } catch (MarketDataUnavailableException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw new MarketDataUnavailableException(marketCode, exception);
+        }
     }
 }

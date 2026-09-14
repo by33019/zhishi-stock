@@ -35,7 +35,7 @@ public class CurrentUserController {
                 .orElseThrow(() -> new IllegalStateException("当前用户不存在"));
         return success(
                 new UserProfile(
-                        account.id(),
+                        Long.toString(account.id()),
                         account.username(),
                         account.displayName(),
                         account.status().name()),
@@ -47,12 +47,14 @@ public class CurrentUserController {
             Authentication authentication,
             HttpServletRequest request) {
         AccessTokenPrincipal principal = principal(authentication);
+        UserAccount account = accounts.findById(principal.userId())
+                .orElseThrow(() -> new IllegalStateException("当前用户不存在"));
         return success(
                 new PermissionSummary(
                         List.of(),
                         accounts.findPermissions(principal.userId()),
                         List.of(),
-                        1),
+                        account.tokenVersion()),
                 request);
     }
 
@@ -68,7 +70,7 @@ public class CurrentUserController {
     }
 
     public record UserProfile(
-            long userId,
+            String userId,
             String username,
             String displayName,
             String status) {

@@ -15,6 +15,7 @@ public class AuthenticationService {
     private final Clock clock;
     private final int maximumFailures;
     private final Duration lockDuration;
+    private final String dummyPasswordHash;
 
     public AuthenticationService(
             UserAccountRepository accounts,
@@ -31,11 +32,15 @@ public class AuthenticationService {
         this.clock = clock;
         this.maximumFailures = maximumFailures;
         this.lockDuration = lockDuration;
+        this.dummyPasswordHash = passwordEncoder.encode("unknown-account-timing-protection");
     }
 
     public LoginTokens login(String username, String password) {
-        UserAccount user = accounts.findByUsername(username)
-                .orElseThrow(this::invalidCredentials);
+        UserAccount user = accounts.findByUsername(username).orElse(null);
+        if (user == null) {
+            passwordEncoder.matches(password, dummyPasswordHash);
+            throw invalidCredentials();
+        }
         if (user.status() == UserAccount.Status.DISABLED) {
             throw new AuthException(AuthErrorCode.ACCOUNT_DISABLED, "账户已停用");
         }
@@ -49,7 +54,7 @@ public class AuthenticationService {
             throw new AuthException(AuthErrorCode.ACCOUNT_LOCKED, "登录失败次数过多，请稍后重试");
         }
         if (!passwordEncoder.matches(password, user.passwordHash())) {
-            recordFailure(user.id(), current, now);
+            recordFailure(user.id(), now);
         }
 
         attempts.clear(user.id());
@@ -57,15 +62,10 @@ public class AuthenticationService {
         return tokenIssuer.issue(user, permissions);
     }
 
-    private void recordFailure(long userId, LoginAttemptState current, Instant now) {
-        int failures = current.lockedUntil() != null && !current.isLocked(now)
-                ? 1
-                : current.failures() + 1;
-        if (failures >= maximumFailures) {
-            attempts.save(userId, new LoginAttemptState(failures, now.plus(lockDuration)));
+    private void recordFailure(long userId, Instant now) {
+        if (attempts.recordFailure(userId, now, maximumFailures, lockDuration)) {
             throw new AuthException(AuthErrorCode.ACCOUNT_LOCKED, "登录失败次数过多，请稍后重试");
         }
-        attempts.save(userId, new LoginAttemptState(failures, null));
         throw invalidCredentials();
     }
 

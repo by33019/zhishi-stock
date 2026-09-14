@@ -24,16 +24,17 @@ class CurrentUserControllerContractTest {
   @Test
   void returnsCurrentUserAndPermissionsFromAuthenticatedPrincipal() throws Exception {
     UserAccountRepository accounts = mock(UserAccountRepository.class);
-    when(accounts.findById(1001L)).thenReturn(Optional.of(new UserAccount(
-        1001L, "demo", "hash", UserAccount.Status.ACTIVE, "演示用户")));
-    when(accounts.findPermissions(1001L)).thenReturn(Set.of("market:read", "watchlist:read"));
+    long userId = 9_900_000_000_003L;
+    when(accounts.findById(userId)).thenReturn(Optional.of(new UserAccount(
+        userId, "demo", "hash", UserAccount.Status.ACTIVE, "演示用户", 7)));
+    when(accounts.findPermissions(userId)).thenReturn(Set.of("market:read", "watchlist:read"));
     Clock clock = Clock.fixed(
         Instant.parse("2026-09-11T02:00:00Z"), ZoneId.of("Asia/Shanghai"));
     MockMvc mvc = MockMvcBuilders.standaloneSetup(new CurrentUserController(accounts, clock))
         .addFilters(new TraceIdFilter())
         .build();
     var principal = new AccessTokenPrincipal(
-        1001L,
+        userId,
         "demo",
         Set.of("market:read", "watchlist:read"),
         "jti-1",
@@ -42,12 +43,14 @@ class CurrentUserControllerContractTest {
 
     mvc.perform(get("/api/v1/users/me").principal(authentication))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.data.userId").value(1001))
+        .andExpect(jsonPath("$.data.userId").isString())
+        .andExpect(jsonPath("$.data.userId").value("9900000000003"))
         .andExpect(jsonPath("$.data.username").value("demo"))
         .andExpect(jsonPath("$.data.displayName").value("演示用户"));
 
     mvc.perform(get("/api/v1/users/me/permissions").principal(authentication))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.data.permissionCodes.length()").value(2));
+        .andExpect(jsonPath("$.data.permissionCodes.length()").value(2))
+        .andExpect(jsonPath("$.data.tokenVersion").value(7));
   }
 }

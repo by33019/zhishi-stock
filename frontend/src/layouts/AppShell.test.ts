@@ -62,7 +62,7 @@ describe('AppShell', () => {
     client.apiRequest.mockResolvedValue({ loggedOut: true })
     const pinia = createPinia()
     const auth = useAuthStore(pinia)
-    auth.user = { userId: 1, username: 'demo', displayName: '开发测试用户' }
+    auth.user = { userId: '9900000000003', username: 'demo', displayName: '开发测试用户' }
     const wrapper = mount(AppShell, {
       global: {
         plugins: [pinia],

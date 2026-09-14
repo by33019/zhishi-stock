@@ -62,9 +62,8 @@ export async function guardRoute(
   auth: AccessState = useAuthStore(),
 ): Promise<true | RouteLocationRaw> {
   const access = to.meta.access ?? 'PUBLIC'
-  if (access === 'PUBLIC') return true
-
   await auth.restore()
+  if (access === 'PUBLIC') return true
   if (!auth.authenticated) {
     return { name: 'login', query: { redirect: to.fullPath } }
   }

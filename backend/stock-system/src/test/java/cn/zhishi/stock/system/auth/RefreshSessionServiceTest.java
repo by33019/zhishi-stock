@@ -80,9 +80,17 @@ class RefreshSessionServiceTest {
       }
 
       @Override
-      public void rotate(RefreshTokenRecord previous, RefreshTokenRecord next) {
+      public RotationOutcome rotate(RefreshTokenRecord previous, RefreshTokenRecord next) {
+        RefreshTokenRecord current = records.get(previous.tokenHash());
+        if (current == null || current.status() == RefreshTokenRecord.Status.REVOKED) {
+          return RotationOutcome.INVALID;
+        }
+        if (current.status() == RefreshTokenRecord.Status.ROTATED) {
+          return RotationOutcome.REUSED;
+        }
         records.put(previous.tokenHash(), previous.withStatus(RefreshTokenRecord.Status.ROTATED));
         records.put(next.tokenHash(), next);
+        return RotationOutcome.SUCCESS;
       }
 
       @Override

@@ -45,6 +45,22 @@ describe('应用路由', () => {
     expect(result).toEqual({ name: 'login', query: { redirect: '/watchlist?group=1' } })
   })
 
+  it('公开页面也只通过 Store 尝试恢复已有 Cookie 会话', async () => {
+    const auth = {
+      authenticated: false,
+      isAdmin: false,
+      restore: vi.fn().mockResolvedValue(undefined),
+    }
+
+    const result = await guardRoute(
+      { meta: { access: 'PUBLIC' }, fullPath: '/market', name: 'market' },
+      auth,
+    )
+
+    expect(auth.restore).toHaveBeenCalledOnce()
+    expect(result).toBe(true)
+  })
+
   it('非管理员不能进入 ADMIN 页面', async () => {
     const result = await guardRoute(
       { meta: { access: 'ADMIN' }, fullPath: '/admin', name: 'admin' },

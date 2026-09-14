@@ -4,6 +4,8 @@ import cn.zhishi.stock.system.auth.AccessTokenBlacklist;
 import cn.zhishi.stock.system.auth.AccessTokenPrincipal;
 import cn.zhishi.stock.system.auth.InvalidAccessTokenException;
 import cn.zhishi.stock.system.auth.JwtAccessTokenService;
+import cn.zhishi.stock.system.auth.UserAccount;
+import cn.zhishi.stock.system.auth.UserAccountRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -20,12 +22,15 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtAccessTokenService tokens;
     private final AccessTokenBlacklist blacklist;
+    private final UserAccountRepository accounts;
 
     public JwtAuthenticationFilter(
             JwtAccessTokenService tokens,
-            AccessTokenBlacklist blacklist) {
+            AccessTokenBlacklist blacklist,
+            UserAccountRepository accounts) {
         this.tokens = tokens;
         this.blacklist = blacklist;
+        this.accounts = accounts;
     }
 
     @Override
@@ -44,6 +49,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         try {
             AccessTokenPrincipal principal = tokens.verify(token);
             if (blacklist.contains(principal.jti())) {
+                return;
+            }
+            UserAccount account = accounts.findById(principal.userId()).orElse(null);
+            if (account == null
+                    || account.status() != UserAccount.Status.ACTIVE
+                    || account.tokenVersion() != principal.tokenVersion()) {
                 return;
             }
             var authorities = principal.permissions().stream()

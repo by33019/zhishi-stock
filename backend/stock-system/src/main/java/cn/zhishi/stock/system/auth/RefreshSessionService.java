@@ -64,7 +64,14 @@ public class RefreshSessionService {
                 user.id(),
                 now.plus(refreshTtl),
                 RefreshTokenRecord.Status.ACTIVE);
-        sessions.rotate(current, next);
+        RefreshSessionStore.RotationOutcome outcome = sessions.rotate(current, next);
+        if (outcome == RefreshSessionStore.RotationOutcome.REUSED) {
+            sessions.revokeFamily(current.familyId());
+            throw new AuthException(AuthErrorCode.REFRESH_TOKEN_REUSED, "检测到刷新令牌重放，会话已撤销");
+        }
+        if (outcome != RefreshSessionStore.RotationOutcome.SUCCESS) {
+            throw invalidRefreshToken();
+        }
         return result(accessTokens.issue(user, permissions), nextToken, permissions);
     }
 

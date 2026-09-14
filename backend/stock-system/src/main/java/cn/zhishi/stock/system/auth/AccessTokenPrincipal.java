@@ -9,7 +9,17 @@ public record AccessTokenPrincipal(
         String username,
         Set<String> permissions,
         String jti,
-        Instant expiresAt) implements Principal {
+        Instant expiresAt,
+        int tokenVersion) implements Principal {
+
+    public AccessTokenPrincipal(
+            long userId,
+            String username,
+            Set<String> permissions,
+            String jti,
+            Instant expiresAt) {
+        this(userId, username, permissions, jti, expiresAt, 0);
+    }
 
     @Override
     public String getName() {

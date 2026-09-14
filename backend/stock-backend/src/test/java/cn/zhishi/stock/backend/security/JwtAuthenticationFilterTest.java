@@ -1,14 +1,18 @@
 package cn.zhishi.stock.backend.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import cn.zhishi.stock.system.auth.AccessTokenBlacklist;
 import cn.zhishi.stock.system.auth.JwtAccessTokenService;
 import cn.zhishi.stock.system.auth.UserAccount;
+import cn.zhishi.stock.system.auth.UserAccountRepository;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -43,7 +47,9 @@ class JwtAuthenticationFilterTest {
       public void add(String jti, Instant expiresAt) {
       }
     };
-    var filter = new JwtAuthenticationFilter(tokens, blacklist);
+    UserAccountRepository accounts = mock(UserAccountRepository.class);
+    when(accounts.findById(user.id())).thenReturn(Optional.of(user));
+    var filter = new JwtAuthenticationFilter(tokens, blacklist, accounts);
     var request = new MockHttpServletRequest("GET", "/api/v1/users/me");
     request.addHeader("Authorization", "Bearer " + accessToken.value());
 
@@ -54,5 +60,25 @@ class JwtAuthenticationFilterTest {
     assertThat(authentication.getAuthorities())
         .extracting("authority")
         .containsExactly("watchlist:read");
+  }
+
+  @Test
+  void rejectsTokenWhenAccountTokenVersionHasChanged() throws Exception {
+    var tokens = new JwtAccessTokenService(
+        "0123456789abcdef0123456789abcdef", CLOCK, Duration.ofMinutes(15));
+    var issuedUser = new UserAccount(
+        1001L, "demo", "hash", UserAccount.Status.ACTIVE, "演示用户", 3);
+    var currentUser = new UserAccount(
+        1001L, "demo", "hash", UserAccount.Status.ACTIVE, "演示用户", 4);
+    var accessToken = tokens.issue(issuedUser, Set.of("watchlist:read"));
+    UserAccountRepository accounts = mock(UserAccountRepository.class);
+    when(accounts.findById(issuedUser.id())).thenReturn(Optional.of(currentUser));
+    var filter = new JwtAuthenticationFilter(tokens, mock(AccessTokenBlacklist.class), accounts);
+    var request = new MockHttpServletRequest("GET", "/api/v1/users/me");
+    request.addHeader("Authorization", "Bearer " + accessToken.value());
+
+    filter.doFilter(request, new MockHttpServletResponse(), new MockFilterChain());
+
+    assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
   }
 }

@@ -8,7 +8,7 @@ let refreshInFlight: Promise<TokenResponse> | undefined
 let authenticationFailureHandler: (() => void) | undefined
 
 export interface UserSummary {
-  userId: number
+  userId: string
   username: string
   displayName: string
 }
@@ -68,24 +68,11 @@ async function request<T>(path: string, init: RequestInit, mayRefresh: boolean):
   if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
   if (tokenUsed) headers.set('Authorization', `Bearer ${tokenUsed}`)
 
-  const controller = new AbortController()
-  const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
-  let response: Response
-  try {
-    response = await fetch(`${API_BASE_URL}${path}`, {
-      ...init,
-      headers,
-      credentials: 'include',
-      signal: controller.signal,
-    })
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new ApiError('REQUEST_TIMEOUT', '请求超时，请稍后重试', 0)
-    }
-    throw new ApiError('NETWORK_ERROR', '暂时无法连接服务', 0)
-  } finally {
-    window.clearTimeout(timeout)
-  }
+  const response = await fetchWithTimeout(path, {
+    ...init,
+    headers,
+    credentials: 'include',
+  })
 
   if (response.status === 401 && mayRefresh && !isAuthenticationEntry(path)) {
     try {
@@ -119,7 +106,7 @@ async function refreshOnce(): Promise<TokenResponse> {
 }
 
 async function rawTokenRequest(path: string): Promise<TokenResponse> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetchWithTimeout(path, {
     method: 'POST',
     credentials: 'include',
     headers: { Accept: 'application/json' },
@@ -128,6 +115,24 @@ async function rawTokenRequest(path: string): Promise<TokenResponse> {
   if (!envelope.success) throw toApiError(response.status, envelope)
   if (!response.ok) throw new ApiError(envelope.code, envelope.message, response.status, envelope.traceId)
   return envelope.data
+}
+
+async function fetchWithTimeout(path: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  try {
+    return await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      signal: controller.signal,
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new ApiError('REQUEST_TIMEOUT', '请求超时，请稍后重试', 0)
+    }
+    throw new ApiError('NETWORK_ERROR', '暂时无法连接服务', 0)
+  } finally {
+    window.clearTimeout(timeout)
+  }
 }
 
 async function parseEnvelope<T>(response: Response): Promise<ApiResponse<T> | (ErrorEnvelope & { success: false })> {
