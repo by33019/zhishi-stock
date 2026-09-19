@@ -84,3 +84,94 @@ jobs:
       - name: 校验迁移文件契约
         shell: pwsh
         run: ./sql/tests/validate_migrations.ps1
+
+  sql-legacy-upgrade:
+    name: 数据库（旧库升级路径端到端）
+    runs-on: ubuntu-latest
+
+    # 旧库升级路径与空库全量路径的差异：先有 11 张旧表 + 存量数据，
+    # Flyway 以 baselineOnMigrate 记为 V1 基线，只执行 V2–V8。
+    # 空库路径已由 backend 作业的 Testcontainers 集成测试覆盖，本作业补齐另一条。
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: stock_system
+          MYSQL_USER: stock
+          MYSQL_PASSWORD: ci_stock_password
+          MYSQL_ROOT_PASSWORD: ci_root_password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci_root_password --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
+
+    env:
+      MYSQL_PWD: ci_stock_password
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 导入旧库样本
+        run: |
+          set -euo pipefail
+          mysql -h 127.0.0.1 -P 3306 -ustock stock_system < sql/stock_db.sql
+
+      - name: 升级前检查（preflight）
+        run: |
+          set -euo pipefail
+          mysql -h 127.0.0.1 -P 3306 -ustock -N -B stock_system \
+            < sql/checks/preflight_existing_schema.sql
+
+      - name: Flyway baseline + migrate（V2–V8）
+        run: |
+          set -euo pipefail
+          docker run --rm --network host \
+            -v "$PWD/sql/flyway:/flyway/sql:ro" \
+            flyway/flyway:11-alpine \
+            -url="jdbc:mysql://127.0.0.1:3306/stock_system?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true" \
+            -user=stock \
+            -password=ci_stock_password \
+            -baselineOnMigrate=true \
+            -baselineVersion=1 \
+            -connectRetries=60 \
+            migrate
+
+      # post_migration_validation.sql 中除「外键计数」（必输出 0）与
+      # 「未映射旧日志引用」（informational，样本库为空）外，其余检查都应返回 0 行。
+      # 因此在 -N（无表头）模式下，整个脚本的输出应当恰好只有一行 "0"。
+      - name: 迁移后完整性校验
+        run: |
+          set -euo pipefail
+          OUTPUT=$(mysql -h 127.0.0.1 -P 3306 -ustock -N -B stock_system \
+            < sql/checks/post_migration_validation.sql | grep -v '^[[:space:]]*$' || true)
+          echo "校验输出（期望恰好为 0，即外键数为 0、其余检查无异常行）："
+          echo "${OUTPUT}"
+          if [ "${OUTPUT}" != "0" ]; then
+            echo "::error::迁移后完整性校验未通过，期望输出仅为 0"
+            exit 1
+          fi
+
+      # preflight 在干净样本上只会"保持沉默"，无法证明检查逻辑有效。
+      # 这里在独立库中注入违规数据，断言各 blocking 段确实能报出记录。
+      - name: 验证 preflight 检出能力（负向用例）
+        run: |
+          set -euo pipefail
+          export MYSQL_PWD=ci_root_password
+          mysql -h 127.0.0.1 -P 3306 -uroot -e "CREATE DATABASE preflight_negative"
+          mysql -h 127.0.0.1 -P 3306 -uroot preflight_negative < sql/stock_db.sql
+          mysql -h 127.0.0.1 -P 3306 -uroot preflight_negative < sql/tests/preflight_negative_case.sql
+
+          OUTPUT=$(mysql -h 127.0.0.1 -P 3306 -uroot -B preflight_negative \
+            < sql/checks/preflight_existing_schema.sql)
+          echo "${OUTPUT}"
+
+          for expected in "preflight.dup@example.com" "PREFLIGHT_DUP_ROLE" "preflight:dup:code" "not-a-number"; do
+            if ! grep -qF "${expected}" <<< "${OUTPUT}"; then
+              echo "::error::preflight 未能检出预期违规项：${expected}"
+              exit 1
+            fi
+          done
+          echo "preflight 检出能力验证通过"
