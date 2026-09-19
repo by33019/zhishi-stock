@@ -1,0 +1,26 @@
+# 旧库升级路径覆盖文件
+#
+# 默认 `compose.yaml` 走「空库全量 Flyway」：MySQL 空库启动，Flyway 从 V1 顺序建到 V8。
+# 本覆盖文件改为「已有库升级」路径，用于验证 `sql/README.md` 描述的升级流程：
+#   1. MySQL 首次初始化时导入 `sql/stock_db.sql`（11 张旧表 + 样本数据）；
+#   2. Flyway 以 `baselineOnMigrate` 把该库记录为 V1 基线，只执行 V2–V8。
+#
+# 用法（必须使用全新数据卷，否则 `docker-entrypoint-initdb.d` 不会执行）：
+#   docker compose -f compose.yaml -f compose.legacy.yaml -p zhishi-legacy up -d
+#   重置：docker compose -f compose.yaml -f compose.legacy.yaml -p zhishi-legacy down -v
+#
+# 约束：
+# - 此路径下 Flyway 禁止执行 V1，否则会与已存在的旧表冲突。
+# - 升级前应先运行 `sql/checks/preflight_existing_schema.sql`；
+#   本样本保留了全部 sys_* 数据，正是为了让 blocking 项检查有真实输入。
+
+services:
+  mysql:
+    volumes:
+      # 挂载到 initdb 目录：仅在数据卷为空时执行一次，导入顺序早于 Flyway。
+      - ./sql/stock_db.sql:/docker-entrypoint-initdb.d/00-legacy-baseline.sql:ro
+
+  flyway:
+    environment:
+      FLYWAY_BASELINE_ON_MIGRATE: "true"
+      FLYWAY_BASELINE_VERSION: "1"

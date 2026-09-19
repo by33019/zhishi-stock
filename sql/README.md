@@ -2,11 +2,35 @@
 
 ## 目录说明
 
-- `stock_db.sql`：原项目 SQL，包含 11 张旧表和历史初始化数据，保持原样。
+- `stock_db.sql`：原项目 SQL 的**精简样本**，保留全部 11 张旧表 DDL，数据按下述规则采样。用于「已有数据库升级」路径演练。
+- `tools/slim_legacy_dump.py`：把原项目全量 dump 裁剪为 `stock_db.sql` 的可复现工具。
 - `flyway/`：MySQL 8.x 的版本化结构迁移，生产环境唯一结构变更入口。
 - `checks/preflight_existing_schema.sql`：已有数据库升级前的只读冲突检查。
 - `checks/post_migration_validation.sql`：全部迁移后的只读完整性检查。
 - `tests/validate_migrations.ps1`：不依赖数据库的迁移结构契约测试。
+
+## 精简样本说明
+
+原项目全量 dump（MySQL 5.6，Navicat 导出）共 11 张表、约 15.1 万行、24 MB，其中
+`stock_rt_info` 单表 145,382 行（逐分钟 × 全市场个股快照）占全文件 97%。
+本仓库保留其**精简样本**（149 KB，0.6%），采样规则如下：
+
+| 表 | 保留行数 | 原行数 | 规则 |
+| --- | --- | --- | --- |
+| `stock_rt_info` | 300 | 145,382 | 采样 |
+| `stock_market_index_info` | 200 | 2,822 | 采样 |
+| `stock_block_rt_info` | 60 | 980 | 采样 |
+| `stock_business` | 40 | 40 | 完整 |
+| `stock_outer_market_index_info` | 10 | 10 | 完整 |
+| `sys_user` / `sys_role` / `sys_permission` / `sys_role_permission` / `sys_user_role` / `sys_log` | 全部 | 153 | 完整 |
+
+**保留全部 RBAC 与日志数据**，因为升级路径校验（重复邮箱、角色名、权限编码等 blocking 项）
+依赖真实脏数据。三张行情表仅作结构载体，采样即可。
+
+- 全部 11 张表的 DDL、`SET` 语句与文件结构保持与原始导出逐字一致。
+- 重新生成：`python sql/tools/slim_legacy_dump.py sql/stock_db.sql sql/stock_db.sql`
+  （该脚本幂等，对已精简的文件重复执行不会继续缩减）。
+- 原全量文件可从 Git 历史恢复：`git show 30ed63f:sql/stock_db.sql > stock_db.full.sql`。
 
 ## 环境约束
 
@@ -20,7 +44,7 @@
 
 1. 创建一个字符集为 `utf8mb4` 的空 schema，数据库名称由部署环境配置决定。
 2. 将 Flyway location 指向 `filesystem:sql/flyway`，不要先执行 `stock_db.sql`。
-3. 从 V1 顺序执行至 V7。
+3. 从 V1 顺序执行至 V8。
 4. 运行 `checks/post_migration_validation.sql`，除“未映射旧日志引用”外的异常明细应为空，`foreign_key_count` 应为 0。
 5. 证券、交易日历、涨跌停规则、Provider、用户和权限数据由应用引导或授权数据同步产生，本目录不写入业务种子数据。
 
@@ -44,6 +68,7 @@
 | V5 | 自选分组和自选证券 |
 | V6 | AI 会话、任务、上下文、报告、证据、反馈和用量 |
 | V7 | 定时任务摘要、数据质量问题和事务 Outbox |
+| V8 | 市场总览聚合快照，供 Redis 缺失或不可用时降级 |
 
 ## 关键数据约定
 

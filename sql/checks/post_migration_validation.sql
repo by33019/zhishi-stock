@@ -1,6 +1,9 @@
--- V1 至 V7 完成后的只读检查。正常空库中，各异常明细查询应返回 0 行。
+-- V1 至 V8 完成后的只读检查。
+-- 适用两条路径：空库全量迁移（V1→V8）与已有库升级（baseline V1 后执行 V2→V8）。
+-- 两条路径下，各异常明细查询都应返回 0 行；唯一例外是“未映射旧日志引用”，
+-- 旧库升级路径允许存在，因为 sys_log.legacy_user_ref 永久保留无法映射的历史引用。
 
--- 1. 应有 39 张平台业务表，missing_table 为 NULL 表示无缺表。
+-- 1. 应有 40 张平台业务表，missing_table 为 NULL 表示无缺表。
 WITH expected_tables AS (
   SELECT 'stock_block_rt_info' AS table_name UNION ALL
   SELECT 'stock_business' UNION ALL
@@ -40,7 +43,8 @@ WITH expected_tables AS (
   SELECT 'ai_usage' UNION ALL
   SELECT 'job_execution_summary' UNION ALL
   SELECT 'data_quality_issue' UNION ALL
-  SELECT 'event_outbox'
+  SELECT 'event_outbox' UNION ALL
+  SELECT 'market_overview_snapshot'
 )
 SELECT e.table_name AS missing_table
 FROM expected_tables e

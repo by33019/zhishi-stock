@@ -1,0 +1,86 @@
+name: CI
+
+# 门禁范围：主干推送与面向主干的 PR。
+# 三个作业相互独立，任一项失败即整体失败。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# 同一分支的新推送取消上一次未完成的运行，避免排队浪费。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: 后端（Maven 全量测试，含 Testcontainers）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      # InfrastructureIntegrationTest 依赖 Testcontainers，需要 Docker。
+      # ubuntu-latest 运行器自带 Docker，无需额外配置。
+      # 该测试会以真实 MySQL 8.4 执行 Flyway V1–V8 并断言 8 条成功迁移。
+      - name: 运行后端测试
+        run: mvn -B -ntp -f backend/pom.xml verify
+
+      - name: 上传测试报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-surefire-reports
+          path: backend/*/target/surefire-reports/
+          if-no-files-found: ignore
+
+  frontend:
+    name: 前端（类型检查 + 单测 + 构建）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      # 项目 vite 配置依赖 --configLoader runner，必须显式传入。
+      - name: 单元测试
+        run: npx vitest --configLoader runner --run
+
+      - name: 生产构建
+        run: npx vite build --configLoader runner
+
+  sql:
+    name: 数据库（迁移契约静态校验）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 脚本为无 BOM UTF-8 且含中文，必须用 PowerShell 7。
+      # ubuntu-latest 预装 pwsh 7；本机仅有 Windows PowerShell 5.1 时无法运行。
+      - name: 校验迁移文件契约
+        shell: pwsh
+        run: ./sql/tests/validate_migrations.ps1
