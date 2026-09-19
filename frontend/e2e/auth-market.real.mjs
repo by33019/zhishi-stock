@@ -17,7 +17,7 @@ try {
     page.goto(`${baseURL}/market`),
   ])
   assert.equal(marketResponse.status(), 200)
-  await page.getByText('市场广度').waitFor()
+  await page.getByRole('heading', { name: '市场广度', exact: true }).waitFor()
 
   await page.goto(`${baseURL}/watchlist`)
   await page.waitForURL(/\/login\?redirect=/)
