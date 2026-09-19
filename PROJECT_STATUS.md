@@ -7,7 +7,7 @@
 
 ## 1. 一句话状态
 
-**"知势" AI 智能股票分析平台**：设计文档完备、数据库迁移完备、前端高保真原型可跑、后端首个纵向切片（认证 + 市场总览）已跑通并合入 `main`，**且全栈 Compose 端到端验收已通过**（真实 API + 登录 + Cookie 恢复 + 退出 + 路由保护全链路）。工程地基（mvn 修复、后端 45 测试复跑、旧库升级路径验证、CI 工作流、容器构建稳定性修复、项目文档补全）已就位。剩余：分支保护配置（需用户操作）、M1 的 3 个待办（M1-12 / M1-14 / M1-16）、以及 M2/M3 的业务纵向切片。
+**"知势" AI 智能股票分析平台**：设计文档完备、数据库迁移完备、前端高保真原型可跑、后端首个纵向切片（认证 + 市场总览）已跑通并合入 `main`，**且全栈 Compose 端到端验收已通过**（真实 API + 登录 + Cookie 恢复 + 退出 + 路由保护全链路）。工程地基已完备：mvn 修复、后端 45 测试复跑、数据库两条迁移路径验证、CI 四作业、容器构建稳定性修复、项目文档补全、本地 dev 联调打通。**M1 除「GitHub 分支保护」需用户操作外全部完成**，下一步进入 M2 市场域纵向补全。
 
 ## 2. 仓库与分支
 
@@ -31,19 +31,19 @@
 | 后端 Flyway 迁移（空库路径） | ✅ 已在真实 MySQL 8.4 验证 | 集成测试断言 `flyway_schema_history` 有 8 条成功迁移 |
 | 后端 Flyway 迁移（旧库升级路径） | ✅ **首次验证通过** | baseline v1 → V2–V8 → `now at version v8`，退出码 0 |
 | 迁移后完整性校验 | ✅ 通过 | `post_migration_validation.sql` 无异常明细，`foreign_key_count = 0` |
-| 前端 main 类型检查 + 测试 | ✅ 通过 | 10 文件 / 20 测试 |
-| 前端 slice 类型检查 + 测试 | ✅ 通过 | 13 文件 / 35 测试 |
-| 前端生产构建 | ✅ 通过 | `vite build` 成功，dist 923 KB |
-| CI | ⚠️ 工作流已提交，尚未在 GitHub 上运行 | `.github/workflows/ci.yml`（3 作业） |
+| 前端类型检查 + 测试 + 构建 | ✅ 通过 | 13 文件 / 35 测试；`vite build` 成功（dist 923 KB） |
+| 本地 dev 联调（Vite 代理） | ✅ 已打通 | dev server 下 `GET /api/v1/markets/overview` 返回真实 JSON |
+| CI | ⚠️ 工作流已提交，尚未在 GitHub 上运行 | `.github/workflows/ci.yml`（**4 作业**，含旧库升级路径） |
 | 全栈 Compose 端到端 | ✅ **已通过** | 6 容器全部启动、无 ERROR；`npm run e2e:real` 通过 |
 | 容器镜像构建 | ✅ 稳定可重复 | 修复容器内依赖下载中断后，6 镜像连续构建成功 |
 | 数据库迁移在真实库执行 | ✅ 空库 + 旧库升级两条路径均已完成 | 见上 |
+| preflight 脚本 | ✅ 已在真实旧库验证（含负向用例） | 9 段查询可执行；注入违规数据后 3 项 blocking 全部检出 |
 
 ## 4. 里程碑进度
 
 | 里程碑 | 目标 | 状态 |
 | --- | --- | --- |
-| M1 | 合流与工程地基 | 🟢 12/16 完成（M1-07 工作流已就位，分支保护待用户配置；待办 M1-12 / M1-14 / M1-16） |
+| M1 | 合流与工程地基 | 🟢 15/16 完成（仅 M1-07 的「GitHub 分支保护」需用户操作） |
 | M2 | 市场域纵向补全（游客主流程全真实） | ⬜ 未开始（9 个任务） |
 | M3 | 用户态闭环与 AI 研究编排 | ⬜ 未开始（12 个任务） |
 
@@ -62,12 +62,10 @@
 
 | # | 问题 | 严重度 | 处置 |
 | --- | --- | --- | --- |
-| 1 | `preflight_existing_schema.sql` 从未在真实旧库运行过 | 🟠 | M1-12 |
-| 2 | CI 未在 GitHub 实际跑过；分支保护未设置 | 🟠 | M1-07 收尾（需用户配置） |
-| 3 | **本地 `npm run dev` 无法联调真实接口**（Vite 未配 proxy + 后端无 CORS，`/api/v1/**` 被 SPA fallback 返回 HTML） | 🟠 | M1-16（本次实测确认） |
-| 4 | CI 仅覆盖空库路径，未覆盖旧库升级路径 | 🟡 | M1-14 |
-| 5 | 9 个前端页面仍走 mockApi | 🟠 | M2-08 / M3-03 / M3-05 / M3-10 |
-| 6 | 认证默认值偏松（`JWT_SECRET` 默认空、dev `COOKIE_SECURE=false`、演示账号固定密码） | 🟡 | 生产 profile 需单独加固，待排期 |
+| 1 | CI 未在 GitHub 实际跑过；分支保护未设置 | 🟠 | M1-07 收尾（需用户配置） |
+| 2 | 9 个前端页面仍走 mockApi | 🟠 | M2-08 / M3-03 / M3-05 / M3-10 |
+| 3 | 认证默认值偏松（`JWT_SECRET` 默认空、dev `COOKIE_SECURE=false`、演示账号固定密码） | 🟡 | 生产 profile 需单独加固，待排期 |
+| 4 | `preflight_existing_schema.sql` 第 8 段永远不会触发（`block_label` 实际是 `varchar(10)`，检查条件为 `> 20`） | 🔵 | 设计上的防御性检查，无实际影响，仅记录 |
 
 ### 已定位的环境故障（含根因）
 
@@ -132,23 +130,16 @@ docker exec -i zhishi-legacy-mysql-1 mysql -ustock -pstock_dev_password stock_sy
 
 ## 9. 待用户处理
 
-1. **配置 GitHub 分支保护**，把 CI 三个作业设为必需检查（Settings → Branches → Branch protection rules → Require status checks）。本机无 `gh` CLI，无法代设。
-2. **决定 M1-16 的修复方式**：本地 `npm run dev` 无法联调真实接口。
-   推荐在 `vite.config.ts` 增加 `server.proxy` 把 `/api` 转发到 `http://localhost:8080`
-   （无需改动后端、天然无跨域）；备选是后端增加 CORS 配置放行 dev 源。
+1. **配置 GitHub 分支保护**，把 CI 作业设为必需检查（Settings → Branches → Branch protection rules → Require status checks）。
+   建议至少勾选 `backend`、`frontend`、`sql`、`sql-legacy-upgrade`。本机无 `gh` CLI，无法代设。
 
 > `.workbuddy-ai/` 已加入 `.gitignore`（第 40 行），无需再处理。
 
 ## 10. 下一步
 
-**M1 剩余 3 项**：
+**M1 已完成**（仅剩 M1-07 的分支保护配置，需用户操作）。
 
-| 任务 | 内容 |
-| --- | --- |
-| M1-12 | 校验 `preflight_existing_schema.sql` 在真实旧库上的行为（该脚本从未实际运行过） |
-| M1-14 | CI 增加「旧库升级路径」作业（当前只覆盖空库路径） |
-| M1-16 | 修复本地 dev 联调（待用户选定方案） |
-
-**M2 起点：M2-01 交易日历与市场状态**，开始市场域纵向补全。
+**下一步：M2-01 交易日历与市场状态**，开始市场域纵向补全。
+M2 共 9 个任务，目标是让游客主流程（榜单、板块、个股、资讯）全部接入真实 API。
 
 > 仍待用户操作：GitHub 分支保护配置（见第 9 节）。

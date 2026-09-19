@@ -32,27 +32,34 @@
 
 ### M1 执行中新发现的任务
 
-- [ ] **M1-12** P1 校验 `preflight_existing_schema.sql` 在旧库升级前的实际行为
-  - 该脚本**从未在真实旧库上运行过**（M1-04 直接执行了迁移，未先跑 preflight）
-  - 做法：起一个仅导入旧库样本、未执行 Flyway 的 MySQL，运行 preflight，确认能正确报出 blocking 项
+- [x] **M1-12** P1 校验 `preflight_existing_schema.sql` 在旧库升级前的实际行为 — 已完成
+  - 做法：起一个仅导入旧库样本、未执行 Flyway 的 MySQL，先跑 preflight，再注入违规数据重跑
+  - **结果**：脚本 9 段查询全部可执行（无语法错误）。干净样本下 `missing_count = 0` 且各 blocking 段无输出；
+    注入违规数据后，邮箱重复、角色名重复、权限 code 重复**三项 blocking 全部被检出**，
+    重复关系 / 空关系 / 无法映射日志引用等 informational 项也被正确报出
+  - **新增测试资产** `sql/tests/preflight_negative_case.sql`（负向用例，已纳入 CI）
+  - **发现**：第 8 段检查 `CHAR_LENGTH(block_label) > 20`，但该列实际是 `varchar(10)`，
+    因此**永远不会触发**。属设计上的防御性检查（作者注释已说明"理论上不应返回记录"），非缺陷，但已记录
 - [x] **M1-13** P2 补建 CHANGELOG.md — 已完成（按日期分段，覆盖全部 26 条提交）
-- [ ] **M1-14** P1 在 CI 中增加「旧库升级路径」作业
-  - 当前 CI 只覆盖空库全量路径（Testcontainers 集成测试）
-  - 建议：起 MySQL → 导入 `sql/stock_db.sql` → Flyway baseline+migrate → 跑 `post_migration_validation.sql`
+- [x] **M1-14** P1 在 CI 中增加「旧库升级路径」作业 — 已完成
+  - 新增 `sql-legacy-upgrade` 作业（MySQL 8.4 service + 6 步骤）：
+    导入样本 → preflight → Flyway baseline+migrate → 迁移后校验断言 → preflight 负向用例
+  - 断言设计：`post_migration_validation.sql` 除「外键计数」与 informational 段外都应返回 0 行，
+    故 `-N` 模式下输出应恰好为 `0`，否则判失败
+  - **本地已完整复现该作业全部 5 步并验证通过**（含负向用例 4 项断言）
 - [x] **M1-15** P2 统一本机与文档的 Compose 调用方式 — 已完成
   - 本机 `docker compose` 子命令**不可用**，只有独立命令 `docker-compose`（v5.5.1）
   - 已统一 `compose.legacy.yaml`、路线图、README、`backend/README.md` 中的调用方式，并注明两者等价
 
 ### M1 收尾阶段新发现
 
-- [ ] **M1-16** P1 修复本地 `npm run dev` 无法联调真实接口 — **本次实测确认**
+- [x] **M1-16** P1 修复本地 `npm run dev` 无法联调真实接口 — 已完成（采用方案 1）
   - 现象：dev 模式下请求 `/api/v1/markets/overview` 返回 **SPA 的 index.html**（HTTP 200 但内容为 HTML），前端会按 JSON 解析失败
   - 根因：`vite.config.ts` **未配置 `server.proxy`**，且后端**全无 CORS 配置**（全仓库 grep `cors|allowedOrigin|CrossOrigin` 零命中）
-  - 影响：本地开发只能通过容器路径（`http://localhost:8088`）查看真实数据；`/market` 页在 dev 下取不到数据
-  - 建议修复（二选一，前者更优）：
-    1. 在 `vite.config.ts` 增加 `server.proxy` 把 `/api` 转发到 `http://localhost:8080`（无需改后端、无跨域问题）
-    2. 后端增加 CORS 配置放行 dev 源（需注意生产环境不要放开过宽）
-  - 待用户确认后再实施
+  - 修复：① `vite.config.ts` 增加 `server.proxy` 把 `/api` 转发到 `http://localhost:8080`；
+    ② `compose.yaml` 为 stock-api 补上端口映射 `${API_PORT:-8080}:8080`（此前未暴露，代理无处可转）；
+    ③ `.env.example` 增加 `API_PORT`
+  - 验证：dev server 下 `GET /api/v1/markets/overview` 返回**真实 JSON**（此前为 HTML），typecheck 通过
 
 ## M2：市场域纵向补全（游客主流程全真实）
 
@@ -148,7 +155,6 @@
 | 阻塞 | 影响任务 | 需要 |
 | --- | --- | --- |
 | GitHub 分支保护未设置 | M1-07 的「必需检查」语义 | 用户在仓库 Settings → Branches 配置（本机无 `gh` CLI，无法代设） |
-| M1-16 修复方案待用户选定 | 本地 `npm run dev` 联调 | 用户在「Vite proxy（推荐）」与「后端 CORS」之间选一种 |
 | 本机无 PowerShell 7 | 本地运行 `validate_migrations.ps1` | 仅影响本地；CI 的 ubuntu-latest 预装 pwsh 7，可正常执行 |
 | 真实行情/资讯/LLM Provider 未就位 | M2-*、M3-04~M3-10 | 不阻塞开发，统一以模拟 Provider 落地 |
 
@@ -158,4 +164,4 @@
 
 - [x] 阶段 0 只读审计（2026-09-19）
 - [x] 阶段 1 交付路线图（2026-09-19）
-- [x] M1-01 / M1-02 / M1-03 / M1-04 / M1-05 / M1-06 / M1-09 / M1-10 / M1-11 / M1-13 / M1-15（2026-09-19）
+- [x] M1-01 / M1-02 / M1-03 / M1-04 / M1-05 / M1-06 / M1-09 / M1-10 / M1-11 / M1-12 / M1-13 / M1-14 / M1-15 / M1-16（2026-09-19）
