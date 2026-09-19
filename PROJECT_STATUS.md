@@ -1,13 +1,13 @@
 # PROJECT_STATUS.md — 知势平台项目状态
 
-> 最后更新：2026-09-19（M2-05 完成：个股快照与日/周/月 K 线 STK-04 / STK-07）
+> 最后更新：2026-09-19（M2-06 完成：榜单 QTE-01）
 > 任务清单见 `TASKS.md`，路线图见 `docs/superpowers/plans/2026-09-19-mvp-delivery-roadmap.md`。
 
 ---
 
 ## 1. 一句话状态
 
-**"知势" AI 智能股票分析平台**：设计文档完备、数据库迁移完备、前端高保真原型可跑、后端首个纵向切片（认证 + 市场总览）已跑通并合入 `main`，**且全栈 Compose 端到端验收已通过**（真实 API + 登录 + Cookie 恢复 + 退出 + 路由保护全链路）。工程地基已完备：mvn 修复、数据库两条迁移路径验证、CI 四作业、容器构建稳定性修复、项目文档补全、本地 dev 联调打通。**M1 除「GitHub 分支保护」需用户操作外全部完成**；**M2 已交付 MKT-02 市场状态、MKT-03 市场广度、MKT-04 成交趋势、STK-01/02 证券主数据与搜索建议**。市场域已从"首页一张硬编码快照"扩展为可查询的状态 / 广度 / 趋势三组接口，广度与趋势均由确定性模拟数据按规则真实计算；证券主数据（5149 只）已可搜索与分页筛选；个股详情已可查完整快照与日/周/月 K 线（STK-04 / STK-07）。
+**"知势" AI 智能股票分析平台**：设计文档完备、数据库迁移完备、前端高保真原型可跑、后端首个纵向切片（认证 + 市场总览）已跑通并合入 `main`，**且全栈 Compose 端到端验收已通过**（真实 API + 登录 + Cookie 恢复 + 退出 + 路由保护全链路）。工程地基已完备：mvn 修复、数据库两条迁移路径验证、CI 四作业、容器构建稳定性修复、项目文档补全、本地 dev 联调打通。**M1 除「GitHub 分支保护」需用户操作外全部完成**；**M2 已交付 MKT-02 市场状态、MKT-03 市场广度、MKT-04 成交趋势、STK-01/02 证券主数据与搜索建议、STK-04/07 个股快照与 K 线、QTE-01 榜单**。市场域已从"首页一张硬编码快照"扩展为可查询的状态 / 广度 / 趋势 / 证券 / 榜单五组接口，广度与趋势均由确定性模拟数据按规则真实计算；证券主数据（5149 只）已可搜索与分页筛选；个股详情已可查完整快照与日/周/月 K 线；全市场榜单已可按涨跌幅 / 成交额排序并多条件筛选分页。
 
 ## 2. 仓库与分支
 
@@ -27,11 +27,11 @@
 | 能力 | 状态 | 证据 |
 | --- | --- | --- |
 | `mvn`（Git Bash） | ✅ 已修复 | `mvn -v` → Maven 3.9.10（需 `JAVA_HOME` 用 Windows 路径，如 `D:/idea/JDK17`） |
-| 后端全量测试 | ✅ **241 测试全绿** | 0 失败 0 错误；`BUILD SUCCESS` |
+| 后端全量测试 | ✅ **286 测试全绿** | 0 失败 0 错误；`BUILD SUCCESS` |
 | 后端 Flyway 迁移（空库路径） | ✅ 已在真实 MySQL 8.4 验证 | 集成测试断言 `flyway_schema_history` 有 8 条成功迁移 |
 | 后端 Flyway 迁移（旧库升级路径） | ✅ **首次验证通过** | baseline v1 → V2–V8 → `now at version v8`，退出码 0 |
 | 迁移后完整性校验 | ✅ 通过 | `post_migration_validation.sql` 无异常明细，`foreign_key_count = 0` |
-| 前端类型检查 + 测试 + 构建 | ✅ 通过 | 13 文件 / 37 测试；`vite build` 成功（dist 923 KB） |
+| 前端类型检查 + 测试 + 构建 | ✅ 通过 | 13 文件 / 37 测试（默认时区与 `TZ=UTC` 下均全绿）；`vite build` 成功（dist 923 KB） |
 | 本地 dev 联调（Vite 代理） | ✅ 已打通 | dev server 下 `GET /api/v1/markets/overview` 返回真实 JSON |
 | CI | 🟢 **已在 GitHub 实际运行** | `.github/workflows/ci.yml`（**4 作业**，含旧库升级路径）；前端作业曾因时区依赖持续失败，已修复（`3fd970c`） |
 | 全栈 Compose 端到端 | ✅ **已通过** | 6 容器全部启动、无 ERROR；`npm run e2e:real` 通过 |
@@ -44,7 +44,7 @@
 | 里程碑 | 目标 | 状态 |
 | --- | --- | --- |
 | M1 | 合流与工程地基 | 🟢 15/16 完成（仅 M1-07 的「GitHub 分支保护」需用户操作） |
-| M2 | 市场域纵向补全（游客主流程全真实） | 🟡 5/9 完成（M2-01 交易日历与市场状态 ✅、M2-02 市场广度 ✅、M2-03 成交趋势 ✅、M2-04 证券主数据与搜索建议 ✅、M2-05 个股快照与日/周/月 K 线 ✅） |
+| M2 | 市场域纵向补全（游客主流程全真实） | 🟡 6/9 完成（M2-01 交易日历与市场状态 ✅、M2-02 市场广度 ✅、M2-03 成交趋势 ✅、M2-04 证券主数据与搜索建议 ✅、M2-05 个股快照与日/周/月 K 线 ✅、M2-06 榜单 ✅） |
 | M3 | 用户态闭环与 AI 研究编排 | ⬜ 未开始（12 个任务） |
 
 ## 5. 已完成能力盘点
@@ -54,8 +54,8 @@
 | 设计文档 | ✅ 100% | PRD 86KB、Architecture 53KB、RESTful-API 79KB + superpowers specs/plans |
 | 数据库迁移 | ✅ 结构 100% / 两条路径均验证 | Flyway V1–V8；旧库样本 149KB（原 24MB） |
 | 前端原型 | ✅ 页面 100% / 真实接入 2/11 | 11 路由全部有页面；`/market` 与 `/login` 接真实 API |
-| 后端 | 🟡 2/8 域 | 认证闭环 ✅、市场总览（MKT-01~04）🟡、证券主数据与个股行情（STK-01/02/04/07）🟡；其余未开工 |
-| 测试 | ✅ 278 个 | 后端 241 + 前端 37；无覆盖率门槛 |
+| 后端 | 🟡 2/8 域 | 认证闭环 ✅、市场总览（MKT-01~04）🟡、证券主数据与个股行情（STK-01/02/04/07）🟡、榜单（QTE-01）🟡；其余未开工 |
+| 测试 | ✅ 323 个 | 后端 286 + 前端 37；无覆盖率门槛 |
 | 工程化 | 🟢 85% | CI 工作流 ✅、TASKS/STATUS/CHANGELOG ✅、根与模块 README ✅、容器构建稳定 ✅；分支保护待用户配置 |
 
 ## 6. 已知问题（按严重度）
@@ -68,6 +68,7 @@
 | 4 | `preflight_existing_schema.sql` 第 8 段永远不会触发（`block_label` 实际是 `varchar(10)`，检查条件为 `> 20`） | 🔵 | 设计上的防御性检查，无实际影响，仅记录 |
 | 5 | 独立 `MockMvc` 的日期序列化与线上不一致（`LocalDate` → `[2026,9,11]`） | 🔵 | **已修复**：契约测试显式构造 `ObjectMapper` 关闭 `WRITE_DATES_AS_TIMESTAMPS`。后续新增契约测试需沿用同一 helper，否则日期断言会失真 |
 | 6 | PRD 把「分时图」列为 P0（STK-02），但 `TASKS.md` 的 M2 未列此任务，当前是功能缺口 | 🟠 | 需单独排期；M2-05 只交付了快照与日/周/月 K 线 |
+| 7 | 市场总览在**非交易日**仍以"今天"为 `tradeDate`、`marketStatus` 报 `TRADING`（M2-01 遗留）。MKT-01 契约要求非交易日回退到最近有效收盘快照并标 `CLOSED` | 🟡 | M2-06 修复了总览榜单预览的 404 与数据不一致，但未动 `tradeDate` / `marketStatus` 的日历回退逻辑；建议与 M2-08 前端接入时一并处理（届时页面需要正确显示"非交易日"） |
 
 ### 已定位的环境故障（含根因）
 
@@ -87,6 +88,12 @@
 - 后端 Maven：`Premature end of Content-Length delimited message body` → 阿里云镜像 + wagon 重试 `count=5`
 - 前端 npm：直连 `registry.npmjs.org` 报 `ECONNRESET`；换 npmmirror 后报 `EIDLETIMEOUT`（tarball 所在 `cdn.npmmirror.com` 连接空闲挂死）→ 国内镜像源 + `--maxsockets=5` + 拉长超时 + 外层 3 次重试（保留 npm 缓存使重试增量续传）
 
+**7. Spring 按具体类型解析 `@Bean` 时别名 Bean 会形成两个候选** —— M2-06 实测踩到：
+为让依赖方按端口注入，曾把一个 `SimulatedQuoteSnapshotProvider` 实例拆成「具体类型 Bean + 两个返回接口类型的别名 Bean」，
+结果 Spring 解析 `SimulatedQuoteSnapshotProvider` 时报
+`NoUniqueBeanDefinitionException: expected single matching bean but found 2`——别名 Bean 的**运行时类型**同样是具体类型。
+**对策**：只声明一个具体类型 Bean，依赖方按自己需要的端口声明参数，Spring 按可赋值性解析到同一实例。
+
 ## 7. 技术栈与运行方式
 
 | 层 | 技术 |
@@ -102,7 +109,7 @@ cd frontend && npm install && npm run dev      # http://localhost:5173/market
 npm run typecheck && npx vitest --configLoader runner --run
 
 # 后端（测试需 Docker）
-export JAVA_HOME="D:/idea/JDK17"               # 必须用 Windows 路径，见环境故障 7
+export JAVA_HOME="D:/idea/JDK17"               # 必须用 Windows 路径，见环境故障 1
 mvn.cmd -s backend/settings.xml -f backend/pom.xml test
 
 # 全栈（空库路径）
@@ -123,12 +130,14 @@ docker exec -i zhishi-legacy-mysql-1 mysql -ustock -pstock_dev_password stock_sy
                                         │ 市场广度：摄入时按 LimitRuleProvider 规则对 SecurityQuoteProvider 全市场个股计数
                                         │ 成交趋势：TurnoverTrendProvider 按交易日历生成分钟/日序列（确定性，整数运算）
                                         │ 证券主数据：SecurityMasterProvider 投影行情全集为 SecuritySummary（5149 只，内存搜索）
+                                        │ 榜单：QuoteSnapshotBatchProvider 整批取数 → StockRankingQueryService 筛选/排序/分页
                                         ▼
                               Redis 8.2 ◀──▶ MySQL 8.4
                                    ▲              ▲
                                    └── stock-job（每 60s）── SimulatedQuoteProvider
                                                             ├─ SimulatedSecurityQuoteProvider（5149 只确定性个股）
                                                             │     └─ 亦被 SimulatedSecurityMasterProvider 复用为证券全集
+                                                            │     └─ 亦被 SimulatedQuoteSnapshotProvider 复用（单只 + 整批）
                                                             └─ SimulatedLimitRuleProvider（10 条限幅规则）
 认证：login → JWT access(内存) + refresh(httpOnly cookie, Redis 轮换)
       401 → apiClient 单飞刷新 → 失败清会话 → 登录引导
@@ -146,10 +155,12 @@ docker exec -i zhishi-legacy-mysql-1 mysql -ustock -pstock_dev_password stock_sy
 
 ## 10. 下一步
 
-**M1 已完成**（仅剩 M1-07 的分支保护配置，需用户操作）。**M2-01 ~ M2-05 已完成**（M2 进度 5/9）。
+**M1 已完成**（仅剩 M1-07 的分支保护配置，需用户操作）。**M2-01 ~ M2-06 已完成**（M2 进度 6/9）。
 
-**下一步：M2-06 榜单（涨跌幅 / 成交额 / 换手）+ 分页筛选** —— 依赖 M2-04 ✅（证券主数据已就位）。
-M2-07（板块排行、详情与成分股）同样依赖 M2-04，可与 M2-06 并行；
-两者完成后由 M2-08 统一做前端接入（rankings / sectors / stocks:id）。
+**下一步：M2-07 板块排行、详情与成分股**（依赖 M2-04 ✅）—— 它同时是榜单 `sectorId` 筛选生效的前提：
+板块关系数据（`stock_sector` / `stock_security_sector`）一旦就位，QTE-01 的 `sectorId` 与 STK-02 的 `sectorId`
+会**同时**从"恒返回空页"变为真实筛选，两处不需要改动代码。
+
+M2-07 完成后由 **M2-08** 统一做前端接入（rankings / sectors / sectors:id / stocks:id）。
 
 > 仍待用户操作：GitHub 分支保护配置（见第 9 节）；`.worktrees/` 残留 2 个被进程占用的 `element-plus` 文件（128K），关闭编辑器后可手动删除。

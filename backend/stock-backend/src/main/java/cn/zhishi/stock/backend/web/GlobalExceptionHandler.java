@@ -2,6 +2,7 @@ package cn.zhishi.stock.backend.web;
 
 import cn.zhishi.stock.common.api.ApiResponse;
 import cn.zhishi.stock.market.application.InvalidKlineParameterException;
+import cn.zhishi.stock.market.application.InvalidRankingQueryException;
 import cn.zhishi.stock.market.application.InvalidSecurityQueryException;
 import cn.zhishi.stock.market.application.InvalidTurnoverParameterException;
 import cn.zhishi.stock.market.application.MarketDataUnavailableException;
@@ -87,6 +88,24 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(InvalidSecurityQueryException.class)
     public ResponseEntity<ApiResponse<Void>> invalidSecurityQuery(
             InvalidSecurityQueryException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.badRequest().body(ApiResponse.failure(
+                "INVALID_REQUEST",
+                exception.getMessage(),
+                null,
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
+    /**
+     * 榜单参数非法。
+     *
+     * <p>只覆盖"参数本身不合法"（{@code rankingType} 不在枚举内、分页越界）。
+     * 筛选值在数据中不存在不属于这里——那是"没有数据"，返回空页而不是 400。
+     */
+    @ExceptionHandler(InvalidRankingQueryException.class)
+    public ResponseEntity<ApiResponse<Void>> invalidRankingQuery(
+            InvalidRankingQueryException exception,
             HttpServletRequest request) {
         return ResponseEntity.badRequest().body(ApiResponse.failure(
                 "INVALID_REQUEST",

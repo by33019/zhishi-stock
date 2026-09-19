@@ -314,3 +314,45 @@ export interface KlineQuery {
   endDate?: string
   adjustment?: KlineAdjustment
 }
+
+/** QTE-01 榜单口径。 */
+export type RankingType = 'GAINERS' | 'LOSERS' | 'TURNOVER'
+
+/**
+ * QTE-01 榜单响应。
+ *
+ * 外层刻意是**扁平**的（`items` 与分页字段同级），与后端 `StockRanking` 一致。
+ *
+ * `snapshotVersion` 等于每一行的 `sequence`，`dataTime` 等于每一行的 `dataTime`——
+ * 整个榜单来自同一批快照，因此这两项可以直接用于页面级的数据截止提示。
+ */
+export interface StockRanking {
+  items: QuoteSnapshot[]
+  page: number
+  size: number
+  total: number
+  totalPages: number
+  hasNext: boolean
+  rankingType: RankingType
+  snapshotVersion: string
+  dataTime: string | null
+  dataStatus: DataStatus
+}
+
+/** QTE-01 查询参数。 */
+export interface RankingQuery {
+  rankingType: RankingType
+  /** 逗号分隔的多值筛选，如 `SH,SZ`；取值不存在时返回空页而非报错。 */
+  exchangeCodes?: string
+  /** 逗号分隔的多值筛选，如 `MAIN,GEM`。 */
+  boardCodes?: string
+  /** 板块关系数据在 M2-07 之前不存在，传该参数当前必然返回空页。 */
+  sectorId?: string
+  /** 默认 `false`。 */
+  excludeSt?: boolean
+  /** 默认 `true`：PRD 要求停牌与无有效价格的证券默认排除。 */
+  excludeSuspended?: boolean
+  page?: number
+  /** 1 至 100，默认 20。 */
+  size?: number
+}

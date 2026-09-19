@@ -23,6 +23,41 @@
 
 ---
 
+## 2026-09-19 — M2-06 榜单（QTE-01）
+
+### 新增
+
+- **QTE-01 接口** `GET /api/v1/stock-rankings`（PUBLIC）：`rankingType=GAINERS|LOSERS|TURNOVER`（必填）；可选 `exchangeCodes`、`boardCodes`（逗号分隔多值）、`sectorId`、`excludeSt`（默认 `false`）、`excludeSuspended`（默认 `true`）、`page`（默认 1）、`size`（默认 20，上限 100）；返回**扁平** `data`：`items[]{QuoteSnapshot}` + 分页字段 + `rankingType` + `snapshotVersion` + `dataTime` + `dataStatus`
+- **领域模型** `RankingType`（含三种口径的排序比较器与 `hasSortKey`）、`StockRanking`（扁平响应）
+- **端口** `QuoteSnapshotBatchProvider`（整批快照，**不接收筛选条件**）
+- **应用服务** `StockRankingQueryService`、`RankingCriteria`、异常 `InvalidRankingQueryException`（→ 400）
+- 包级工具 `QueryParameters`（多值筛选解析，与 STK-02 共用）
+- 设计文档 `docs/superpowers/specs/2026-09-19-stock-rankings.md`
+
+### 变更
+
+- `SimulatedQuoteSnapshotProvider` 同时实现单只查询与整批查询，两条路径**共用同一个装配方法**；`SimulatedMarketAccess` 新增 `universe()` 与 `summaries()`（一次性建索引，避免整批装配退化成 O(n²)）
+- `SimulatedQuoteProvider.rankings()` 由三个写死常量改为**投影自涨幅榜前 3 名**，与 QTE-01 榜单同源
+- `SimulatedQuoteProvider` 构造器改为接收整批快照源；`BackendConfiguration` 只声明一个具体类型的 `quoteSnapshotProvider` Bean（同时满足两个端口），并把 `StockRankingQueryService` 接入
+- `GlobalExceptionHandler` 新增 `InvalidRankingQueryException` → 400 `INVALID_REQUEST`
+- `SecurityQueryService` 的多值筛选解析规则收敛到 `QueryParameters`，与榜单共用一份实现
+- 前端 `domain.ts` 新增 `RankingType` / `StockRanking` / `RankingQuery`
+
+### 修复
+
+- **首页点击个股 404**：总览榜单预览的 `securityId` 用的是主数据里不存在的 `stock-600519`（实际为 `sim-600519`），前端 `/stocks/{id}` 链接必然 404。改为投影自真实批次后，预览行的 ID 必然可解析
+- **总览榜单预览与榜单页数据不一致**：预览值原为写死常量，与 QTE-01 榜单无任何关联
+
+### 说明
+
+- 排序口径：涨幅榜按 `changeRate` 降序、跌幅榜升序、成交额榜按 `tradeAmount` 降序；统一兜底键 `security.fullSymbol` 升序（**不随主键方向翻转**，以保证排序稳定）
+- 排序键一律解析为 `BigDecimal` 后比较：`changeRate` / `tradeAmount` 是十进制定点字符串，按字典序比较会错（`"0.10"` 字典序小于 `"0.0218"`，数值上却更大）
+- 筛选值不存在 → **200 + 空页**（不报错）；`rankingType` 缺失 / 非法、分页越界 → 400 `INVALID_REQUEST`
+- `sectorId` 在 M2-07 之前恒返回空页（板块关系数据尚不存在），与 STK-02 的处理一致
+- 后端测试 241 → **286**（新增 45）；前端 13 文件 / 37 测试在默认时区与 `TZ=UTC` 下均全绿
+
+---
+
 ## 2026-09-19 — M2-05 个股快照与日/周/月 K 线（STK-04 / STK-07）
 
 ### 新增

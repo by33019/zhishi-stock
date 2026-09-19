@@ -12,15 +12,17 @@ import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
  * 模拟源共享的取数辅助。
  *
- * <p>个股快照与 K 线都要先回答"这只证券是谁、它今天的行情是什么"。
- * 抽出来是为了让两者对这两个问题有**唯一答案**——各自实现的话，
- * 证券身份与前收价会在两条路径上悄悄分叉，而这不会有任何测试发现。
+ * <p>个股快照、整批快照与 K 线都要先回答"这只证券是谁、它今天的行情是什么"。
+ * 抽出来是为了让它们对这两个问题有**唯一答案**——各自实现的话，
+ * 证券身份与前收价会在多条路径上悄悄分叉，而这不会有任何测试发现。
  */
 final class SimulatedMarketAccess {
 
@@ -62,8 +64,13 @@ final class SimulatedMarketAccess {
         .orElse(today);
   }
 
+  /** 指定交易日的一整批个股行情。整批装配只调一次，避免逐只查找退化成 O(n²)。 */
+  List<SecurityQuote> universe(LocalDate tradeDate) {
+    return securityQuoteProvider.fetchUniverse(SUPPORTED_MARKET, tradeDate);
+  }
+
   Optional<SecurityQuote> quote(String securityId, LocalDate tradeDate) {
-    return securityQuoteProvider.fetchUniverse(SUPPORTED_MARKET, tradeDate).stream()
+    return universe(tradeDate).stream()
         .filter(quote -> quote.securityId().equals(securityId))
         .findFirst();
   }
@@ -72,6 +79,21 @@ final class SimulatedMarketAccess {
     return securityMasterProvider.findAll(SUPPORTED_MARKET).stream()
         .filter(summary -> summary.securityId().equals(securityId))
         .findFirst();
+  }
+
+  /**
+   * 主数据按 {@code securityId} 建索引。
+   *
+   * <p>整批装配要逐只取身份，线性查找会让 5149 只证券的装配退化成 2600 万次比较。
+   * 用 {@code putIfAbsent} 而不是 {@code put}：主数据若出现重复 ID，保留先出现的那条，
+   * 行为与 {@link #summary} 的 {@code findFirst} 一致。
+   */
+  Map<String, SecuritySummary> summaries() {
+    Map<String, SecuritySummary> index = new HashMap<>();
+    for (SecuritySummary summary : securityMasterProvider.findAll(SUPPORTED_MARKET)) {
+      index.putIfAbsent(summary.securityId(), summary);
+    }
+    return index;
   }
 
   LocalDate previousTradeDate(LocalDate date) {

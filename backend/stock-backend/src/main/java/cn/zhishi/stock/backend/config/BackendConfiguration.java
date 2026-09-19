@@ -15,12 +15,14 @@ import cn.zhishi.stock.market.application.MarketOverviewQueryService;
 import cn.zhishi.stock.market.application.MarketStatusQueryService;
 import cn.zhishi.stock.market.application.SecurityDetailQueryService;
 import cn.zhishi.stock.market.application.SecurityQueryService;
+import cn.zhishi.stock.market.application.StockRankingQueryService;
 import cn.zhishi.stock.market.application.TurnoverTrendQueryService;
 import cn.zhishi.stock.market.domain.KlineProvider;
 import cn.zhishi.stock.market.domain.LimitRuleProvider;
 import cn.zhishi.stock.market.domain.MarketOverviewArchive;
 import cn.zhishi.stock.market.domain.MarketOverviewStore;
 import cn.zhishi.stock.market.domain.QuoteProvider;
+import cn.zhishi.stock.market.domain.QuoteSnapshotBatchProvider;
 import cn.zhishi.stock.market.domain.QuoteSnapshotProvider;
 import cn.zhishi.stock.market.domain.SecurityMasterProvider;
 import cn.zhishi.stock.market.domain.SecurityQuoteProvider;
@@ -223,15 +225,43 @@ public class BackendConfiguration {
         return new SimulatedSecurityQuoteProvider(limitRuleProvider);
     }
 
+    /**
+     * 单只查询与整批查询由**同一个实例**承担，因此两条路径共用同一套装配。
+     *
+     * <p>这里只声明一个具体类型的 Bean，不再额外声明两个别名 Bean：别名 Bean 会让
+     * Spring 在按具体类型解析时看到两个候选（别名 Bean 的运行时类型同样是本类型），
+     * 反而需要 {@code @Qualifier} 才能消歧。依赖方按自己需要的端口声明参数即可，
+     * Spring 会按可赋值性解析到这一个实例。
+     *
+     * <p>若拆成两个实例，两者就会各自持有一份装配逻辑，将来改一处就会让
+     * 榜单与个股页对同一只证券给出不同价格，且不会有任何测试变红。
+     */
+    @Bean
+    SimulatedQuoteSnapshotProvider quoteSnapshotProvider(
+            SecurityQuoteProvider securityQuoteProvider,
+            SecurityMasterProvider securityMasterProvider,
+            LimitRuleProvider limitRuleProvider,
+            TradingCalendarProvider tradingCalendarProvider,
+            Clock clock) {
+        return new SimulatedQuoteSnapshotProvider(
+                securityQuoteProvider,
+                securityMasterProvider,
+                limitRuleProvider,
+                tradingCalendarProvider,
+                clock);
+    }
+
     @Bean
     QuoteProvider quoteProvider(
             Clock clock,
             LimitRuleProvider limitRuleProvider,
+            QuoteSnapshotBatchProvider quoteSnapshotBatchProvider,
             @Value("${stock.market.scenario:NORMAL}") String scenario) {
         return new SimulatedQuoteProvider(
                 clock,
                 SimulatedQuoteProvider.Scenario.valueOf(scenario.toUpperCase()),
-                limitRuleProvider);
+                limitRuleProvider,
+                quoteSnapshotBatchProvider);
     }
 
     @Bean
@@ -253,21 +283,6 @@ public class BackendConfiguration {
     @Bean
     SecurityQueryService securityQueryService(SecurityMasterProvider securityMasterProvider) {
         return new SecurityQueryService(securityMasterProvider);
-    }
-
-    @Bean
-    QuoteSnapshotProvider quoteSnapshotProvider(
-            SecurityQuoteProvider securityQuoteProvider,
-            SecurityMasterProvider securityMasterProvider,
-            LimitRuleProvider limitRuleProvider,
-            TradingCalendarProvider tradingCalendarProvider,
-            Clock clock) {
-        return new SimulatedQuoteSnapshotProvider(
-                securityQuoteProvider,
-                securityMasterProvider,
-                limitRuleProvider,
-                tradingCalendarProvider,
-                clock);
     }
 
     @Bean
@@ -293,6 +308,12 @@ public class BackendConfiguration {
             Clock clock) {
         return new SecurityDetailQueryService(
                 quoteSnapshotProvider, klineProvider, tradingCalendarProvider, clock);
+    }
+
+    @Bean
+    StockRankingQueryService stockRankingQueryService(
+            QuoteSnapshotBatchProvider quoteSnapshotBatchProvider) {
+        return new StockRankingQueryService(quoteSnapshotBatchProvider);
     }
 
     @Bean

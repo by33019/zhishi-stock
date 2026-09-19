@@ -7,19 +7,20 @@ import cn.zhishi.stock.market.domain.SecuritySearchMatch.MatchedField;
 import cn.zhishi.stock.market.domain.SecuritySearchResult;
 import cn.zhishi.stock.market.domain.SecuritySummary;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * 证券主数据的查询用例：搜索建议（STK-01）与列表（STK-02）。
  *
  * <p>两个用例共用同一份主数据与同一套过滤逻辑，差别只在"排序依据"：
  * 搜索按**匹配优先级**排序（用户输入什么就先给什么），列表按**调用方指定的字段**排序。
+ *
+ * <p>多值筛选的解析规则（裁剪空白、丢弃空项、大小写不敏感）统一放在
+ * {@link QueryParameters}，与榜单接口共用一份实现。
  *
  * <h2>为什么筛选值不校验合法性，排序字段却必须校验</h2>
  * <ul>
@@ -63,8 +64,8 @@ public class SecurityQueryService {
       String q, String types, String exchangeCodes, Integer limit) {
     String needle = normalizeQuery(q);
     int effectiveLimit = validateSearchLimit(limit);
-    Set<String> typeFilter = parseCsvFilter(types);
-    Set<String> exchangeFilter = parseCsvFilter(exchangeCodes);
+    Set<String> typeFilter = QueryParameters.parseCsvFilter(types);
+    Set<String> exchangeFilter = QueryParameters.parseCsvFilter(exchangeCodes);
 
     List<SecuritySearchMatch> matches = new ArrayList<>();
     for (SecuritySummary security : securityMasterProvider.findAll(MARKET_CODE)) {
@@ -91,7 +92,7 @@ public class SecurityQueryService {
 
     // 板块关系数据（stock_sector / stock_security_sector）在 M2-07 之前不存在，
     // 因此"没有任何证券属于该板块"在当下是事实，返回空页而不是报错或忽略条件。
-    if (isPresent(effective.sectorId())) {
+    if (QueryParameters.isPresent(effective.sectorId())) {
       return PageData.slice(List.of(), page, size);
     }
 
@@ -141,11 +142,11 @@ public class SecurityQueryService {
   private static boolean matchesFilter(
       SecuritySummary security, Set<String> typeFilter, Set<String> exchangeFilter) {
     if (!typeFilter.isEmpty()
-        && !typeFilter.contains(lower(security.securityType()))) {
+        && !typeFilter.contains(QueryParameters.lower(security.securityType()))) {
       return false;
     }
     return exchangeFilter.isEmpty()
-        || exchangeFilter.contains(lower(security.exchangeCode()));
+        || exchangeFilter.contains(QueryParameters.lower(security.exchangeCode()));
   }
 
   private static boolean matchesListFilters(
@@ -202,7 +203,7 @@ public class SecurityQueryService {
   }
 
   private static SortSpec parseSort(String sort) {
-    if (!isPresent(sort)) {
+    if (!QueryParameters.isPresent(sort)) {
       return new SortSpec(DEFAULT_SORT_FIELD, false);
     }
     String[] parts = sort.split(",", -1);
@@ -228,31 +229,14 @@ public class SecurityQueryService {
 
   // ---------- 小工具 ----------
 
-  private static Set<String> parseCsvFilter(String csv) {
-    if (!isPresent(csv)) {
-      return Set.of();
-    }
-    return Arrays.stream(csv.split(","))
-        .map(String::trim)
-        .filter(item -> !item.isEmpty())
-        .map(item -> item.toLowerCase(Locale.ROOT))
-        .collect(Collectors.toUnmodifiableSet());
-  }
-
-  private static boolean isPresent(String value) {
-    return value != null && !value.isBlank();
-  }
-
-  private static String lower(String value) {
-    return value == null ? null : value.toLowerCase(Locale.ROOT);
-  }
-
   private static boolean equalsIgnoreCase(String value, String expected) {
-    return !isPresent(expected) || (value != null && value.equalsIgnoreCase(expected.trim()));
+    return !QueryParameters.isPresent(expected)
+        || (value != null && value.equalsIgnoreCase(expected.trim()));
   }
 
   private static boolean containsIgnoreCase(String value, String needle) {
-    return !isPresent(needle) || indexOfIgnoreCase(value, needle.trim().toLowerCase(Locale.ROOT)) >= 0;
+    return !QueryParameters.isPresent(needle)
+        || indexOfIgnoreCase(value, needle.trim().toLowerCase(Locale.ROOT)) >= 0;
   }
 
   /**

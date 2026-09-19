@@ -68,7 +68,7 @@
 - [x] **M2-03** P0 成交趋势（MKT-04） — 已完成，见下方详情
 - [x] **M2-04** P0 证券主数据与搜索建议 — 已完成，见下方详情
 - [x] **M2-05** P0 个股快照与日/周/月 K 线（STK-04 / STK-07） — 已完成，见下方详情
-- [ ] **M2-06** P0 榜单（涨跌幅/成交额/换手）+ 分页筛选 — 依赖：M2-04
+- [x] **M2-06** P0 榜单（涨跌幅/成交额/换手）+ 分页筛选 — 已完成，见下方详情
 - [ ] **M2-07** P1 板块排行、详情与成分股 — 依赖：M2-04
 - [ ] **M2-08** P0 前端接入 rankings / sectors / sectors:id / stocks:id — 依赖：M2-05、M2-06、M2-07
 - [ ] **M2-09** P1 全局搜索接真实接口 — 依赖：M2-04
@@ -365,6 +365,73 @@ M2-08 接入真实接口时由契约类型取代原型。
 
 ---
 
+## M2-06 交付详情
+
+| 项 | 内容 |
+| --- | --- |
+| 接口 | `GET /api/v1/stock-rankings`（QTE-01，PUBLIC） |
+| 参数 | `rankingType=GAINERS\|LOSERS\|TURNOVER`（必填）；可选 `exchangeCodes`、`boardCodes`（逗号分隔多值）、`sectorId`、`excludeSt`（默认 `false`）、`excludeSuspended`（默认 **`true`**）、`page`（默认 1）、`size`（默认 20，上限 100） |
+| 返回 | **扁平** `data`：`items[]{QuoteSnapshot}`、`page`、`size`、`total`、`totalPages`、`hasNext`、`rankingType`、`snapshotVersion`、`dataTime`、`dataStatus` |
+| 排序口径 | 涨幅榜按 `changeRate` 降序、跌幅榜升序、成交额榜按 `tradeAmount` 降序；统一兜底键 `security.fullSymbol` 升序（**不随主键方向翻转**） |
+| 数据来源 | 新增端口 `QuoteSnapshotBatchProvider`，由 `SimulatedQuoteSnapshotProvider` 与单只查询**共用同一实例与同一装配方法** |
+| 参数校验 | `rankingType` 缺失 / 非法 → 400 `INVALID_REQUEST`；`page < 1`、`size` 越界 → 400 `INVALID_REQUEST`；筛选值不存在 → **200 + 空页**（不报错） |
+| 测试 | 后端 **286 测试全绿**（M2-05 的 241 + 新增 45）：`StockRankingQueryServiceTest` 22 项、`SimulatedQuoteSnapshotBatchProviderTest` 9 项、`RankingControllerContractTest` 12 项、`SimulatedQuoteProviderTest` 新增 2 项 |
+| 前端 | `domain.ts` 新增 `RankingType` / `StockRanking` / `RankingQuery`；typecheck 0 错误、13 文件 / 37 测试在默认时区与 `TZ=UTC` 下均全绿 |
+| 顺带修复 | `SimulatedQuoteProvider.rankings()` 由三个写死常量改为**投影自涨幅榜前 3 名**（见取舍 7） |
+| 设计文档 | `docs/superpowers/specs/2026-09-19-stock-rankings.md`（11 节） |
+
+### 关键设计取舍
+
+**1. 排序 / 筛选 / 分页放应用层，端口只提供整批快照**
+契约要求"整个榜单使用同一已完成快照版本"。把这三件事留在用例层、让端口**不接收筛选条件**，
+这条要求就由接口形状决定，而不是依赖实现方记得只取一个批次。附带好处是排序口径可以脱离
+数据源测试。代价：真实 Provider 若用 SQL `ORDER BY ... LIMIT` 实现，应用层这套逻辑会退化为
+参考实现而非实际执行路径。
+
+**2. 排序键必须解析成 `BigDecimal`**
+`changeRate` / `tradeAmount` 是十进制定点**字符串**。按字典序比较是错的——
+`"0.10"` 的字典序小于 `"0.0218"`，数值上却更大。这是本轮最容易埋雷的地方，
+`RankingType.order()` 里统一解析后比较。
+
+**3. 兜底键不随主键方向翻转**
+涨幅榜与跌幅榜的主键方向相反，但同值项的先后必须**一致**（都用 `fullSymbol` 升序），
+否则"排序稳定"就是空话。PRD §7.3 QTE-02 明确要求排序稳定。
+
+**4. 两个筛选默认值不同是有意的**
+`excludeSuspended` 默认 `true`（PRD：「停牌和无有效价格默认排除」），
+`excludeSt` 默认 `false`（PRD 未给默认，且"是否回避 ST"是投资者的主动选择）。
+因此 `RankingCriteria` 用 `Boolean` 包装类型——用 `boolean` 会把"未传"悄悄变成 `false`，
+让停牌股意外进入榜单。
+
+**5. 无有效排序键的行不进榜**
+涨跌幅榜要求该行有涨跌幅，成交额榜要求有成交额；PRD 的「无有效价格默认排除」说的就是这件事。
+先过滤再排序，比较器因此不必处理 `null`。
+
+**6. 扁平响应 vs 嵌套 `PageData`**
+契约只写了「`PageData<QuoteSnapshot>`、`rankingType`…」，没写明外层形状。选扁平让前端少一层
+解引用，代价是 `StockRanking` 里重复了 5 个分页字段；因此分页算术仍由 `PageData.slice` 负责，
+只有一份实现。
+
+**7. 顺带修掉总览榜单预览的两个可见缺陷**
+`SimulatedQuoteProvider.rankings()` 原本是三个写死常量，`securityId` 用的是
+**主数据里不存在**的 `stock-600519`（主数据实际是 `sim-600519`），导致前端首页
+`MarketOverview.vue` 渲染的 `/stocks/stock-600519` 链接 **404**；且预览值与榜单页必然对不上。
+改为投影自涨幅榜前 3 名后，两处一致性由构造方式保证。`sparkline` 只给「开盘 → 最新价」
+两个**真实**点位——模拟源没有分钟数据，编一条假的日内路径不如给一条真实的当日方向线。
+
+**8. 一个 Bean 同时满足两个端口，不声明别名 Bean**
+`quoteSnapshotProvider` 只声明一个具体类型的 Bean，依赖方按自己需要的端口声明参数，
+Spring 按可赋值性解析到同一实例。若额外声明两个返回接口类型的别名 Bean，Spring 按具体类型
+解析时会看到两个候选（别名 Bean 的运行时类型同样是 `SimulatedQuoteSnapshotProvider`），
+反而需要 `@Qualifier` 消歧——这一步实测踩过，见下。
+
+**9. 多值筛选的解析规则收敛到 `QueryParameters`**
+`exchangeCodes=SH,,SZ` 在 STK-02 与 QTE-01 上必须给出同一结果（裁剪空白、丢弃空项、大小写不敏感）。
+原本 `SecurityQueryService` 里有一份私有实现，本轮抽成包级 `QueryParameters` 并让两处共用——
+各写一遍的话，两者会各自演化且**没有任何测试会红**。
+
+---
+
 ## 已完成
 
 - [x] 阶段 0 只读审计（2026-09-19）
@@ -375,3 +442,4 @@ M2-08 接入真实接口时由契约类型取代原型。
 - [x] M2-03（2026-09-19）
 - [x] M2-04（2026-09-19）
 - [x] M2-05（2026-09-19）
+- [x] M2-06（2026-09-19）

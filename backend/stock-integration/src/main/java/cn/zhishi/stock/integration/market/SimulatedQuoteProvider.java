@@ -13,7 +13,13 @@ import cn.zhishi.stock.market.domain.MarketOverview.SectorQuote;
 import cn.zhishi.stock.market.domain.MarketOverview.TurnoverData;
 import cn.zhishi.stock.market.domain.MarketSessionStatus;
 import cn.zhishi.stock.market.domain.QuoteProvider;
+import cn.zhishi.stock.market.domain.QuoteSnapshot;
+import cn.zhishi.stock.market.domain.QuoteSnapshotBatchProvider;
+import cn.zhishi.stock.market.domain.RankingType;
+import cn.zhishi.stock.market.domain.SecurityMasterProvider;
 import cn.zhishi.stock.market.domain.SecurityQuoteProvider;
+import cn.zhishi.stock.market.domain.TradingCalendarProvider;
+import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -30,21 +36,51 @@ public class SimulatedQuoteProvider implements QuoteProvider {
 
     private static final String MARKET_CODE = "CN";
 
+    /** 行情热榜预览的行数。 */
+    private static final int RANKING_PREVIEW_SIZE = 3;
+
     private final Clock clock;
     private final Scenario scenario;
     private final LimitRuleProvider limitRuleProvider;
     private final SecurityQuoteProvider securityQuoteProvider;
+    private final QuoteSnapshotBatchProvider quoteSnapshotBatchProvider;
 
+    /**
+     * 独立使用（定时任务、单测）时的便捷构造：自建一份确定性的整批快照源。
+     *
+     * <p>生产环境由配置层注入**同一份**整批快照源，使总览的榜单预览与 QTE-01 榜单同源。
+     * 自建版本使用空节假日表，与配置层注入的实例可能对"最近交易日"给出不同答案，
+     * 因此只适用于不关心交易日历差异的场景。
+     */
     public SimulatedQuoteProvider(Clock clock, Scenario scenario) {
         this(clock, scenario, new SimulatedLimitRuleProvider());
     }
 
-    public SimulatedQuoteProvider(
+    private SimulatedQuoteProvider(
             Clock clock, Scenario scenario, LimitRuleProvider limitRuleProvider) {
+        this(clock, scenario, limitRuleProvider, defaultBatchProvider(clock, limitRuleProvider));
+    }
+
+    public SimulatedQuoteProvider(
+            Clock clock,
+            Scenario scenario,
+            LimitRuleProvider limitRuleProvider,
+            QuoteSnapshotBatchProvider quoteSnapshotBatchProvider) {
         this.clock = clock;
         this.scenario = scenario;
         this.limitRuleProvider = limitRuleProvider;
         this.securityQuoteProvider = new SimulatedSecurityQuoteProvider(limitRuleProvider);
+        this.quoteSnapshotBatchProvider = quoteSnapshotBatchProvider;
+    }
+
+    private static QuoteSnapshotBatchProvider defaultBatchProvider(
+            Clock clock, LimitRuleProvider limitRuleProvider) {
+        SecurityQuoteProvider quotes = new SimulatedSecurityQuoteProvider(limitRuleProvider);
+        TradingCalendarProvider calendar = SimulatedTradingCalendarProvider.ofCsv(clock, "");
+        SecurityMasterProvider master =
+                new SimulatedSecurityMasterProvider(quotes, calendar, clock);
+        return new SimulatedQuoteSnapshotProvider(
+                quotes, master, limitRuleProvider, calendar, clock);
     }
 
     @Override
@@ -83,7 +119,7 @@ public class SimulatedQuoteProvider implements QuoteProvider {
                         "916218000000",
                         List.of(538.2, 1028.6, 1886.4, 2945.1, 4380.8, 6126.2, 7982.3, 9826.45)),
                 scenario == Scenario.PARTIAL ? List.of() : sectors(),
-                rankings(),
+                rankings(quoteSnapshotBatchProvider.fetchBatch(marketCode)),
                 news(now),
                 componentStatus,
                 now,
@@ -103,6 +139,64 @@ public class SimulatedQuoteProvider implements QuoteProvider {
                 tradeDate);
     }
 
+    /**
+     * 行情热榜预览：涨幅榜前 3 名。
+     *
+     * <p>**投影自与 QTE-01 榜单同一批快照**，不另起一套生成逻辑。此前这里是三个写死的常量，
+     * {@code securityId} 用的是主数据里不存在的 {@code stock-600519}，导致首页点击个股跳 404，
+     * 且预览值与榜单页对不上。投影之后两处必然一致，不需要靠约定维持。
+     *
+     * <p>筛选条件与榜单接口的默认值保持一致：排除停牌、不排除 ST。
+     *
+     * <p>{@code sparkline} 只给「开盘 → 最新价」两个**真实**点位：模拟源没有分钟数据，
+     * 编一条假的日内路径不如给一条真实的当日方向线。
+     */
+    private static List<QuoteRow> rankings(List<QuoteSnapshot> batch) {
+        return batch.stream()
+                .filter(RankingType.GAINERS::hasSortKey)
+                .filter(snapshot -> !snapshot.security().isSuspended())
+                .sorted(RankingType.GAINERS.order())
+                .limit(RANKING_PREVIEW_SIZE)
+                .map(SimulatedQuoteProvider::toQuoteRow)
+                .toList();
+    }
+
+    private static QuoteRow toQuoteRow(QuoteSnapshot snapshot) {
+        return new QuoteRow(
+                snapshot.security().securityId(),
+                snapshot.security().securityCode(),
+                snapshot.security().securityName(),
+                snapshot.security().exchangeCode(),
+                snapshot.latestPrice(),
+                snapshot.changeAmount(),
+                snapshot.changeRate(),
+                snapshot.tradeVolume(),
+                snapshot.tradeAmount(),
+                snapshot.turnoverRate(),
+                directionLine(snapshot));
+    }
+
+    /** 开盘 → 最新价；任一缺失时返回空数组，不伪造点位。 */
+    private static List<Double> directionLine(QuoteSnapshot snapshot) {
+        BigDecimal open = decimalOrNull(snapshot.openPrice());
+        BigDecimal latest = decimalOrNull(snapshot.latestPrice());
+        if (open == null || latest == null) {
+            return List.of();
+        }
+        return List.of(open.doubleValue(), latest.doubleValue());
+    }
+
+    private static BigDecimal decimalOrNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return new BigDecimal(value.trim());
+        } catch (NumberFormatException exception) {
+            return null;
+        }
+    }
+
     private static List<MarketIndex> indices() {
         return List.of(
                 new MarketIndex("idx-sh", "000001", "上证指数", "3188.42", "18.36", "0.0058",
@@ -120,13 +214,6 @@ public class SimulatedQuoteProvider implements QuoteProvider {
                 new SectorQuote("bk-ai", "BK-AI", "人工智能", "0.0342", "126800000000", "中科曙光", 68),
                 new SectorQuote("bk-chip", "BK-CHIP", "半导体", "0.0286", "105400000000", "北方华创", 81),
                 new SectorQuote("bk-broker", "BK-BROKER", "证券", "0.0231", "87600000000", "东方财富", 50));
-    }
-
-    private static List<QuoteRow> rankings() {
-        return List.of(
-                new QuoteRow("stock-600519", "600519", "贵州茅台", "SH", "1468.00", "31.32", "0.0218", "2630000", "3862000000", "0.0043", List.of(1442.0, 1451.0, 1460.0, 1468.0)),
-                new QuoteRow("stock-300750", "300750", "宁德时代", "SZ", "306.82", "12.40", "0.0421", "23800000", "7215000000", "0.0186", List.of(294.4, 298.2, 302.5, 306.82)),
-                new QuoteRow("stock-601318", "601318", "中国平安", "SH", "58.37", "0.78", "0.0135", "54200000", "3140000000", "0.0072", List.of(57.6, 57.9, 58.1, 58.37)));
     }
 
     private static List<NewsItem> news(OffsetDateTime now) {
