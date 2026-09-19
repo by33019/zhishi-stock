@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  容器内 Maven 构建使用的仓库配置。
+
+  为什么需要它：本项目部署在中国境内，直连 Maven Central 存在持续性的连接中断
+  （实测 micrometer-observation:1.15.7 返回 HTTP 000 连接失败，spring-core 速率仅 1.7 kB/s），
+  导致镜像构建随机失败于 "Premature end of Content-Length delimited message body"。
+  阿里云公共仓库对同一批构件稳定在 350-400 kB/s。
+
+  mirrorOf 限定为 central，不影响其它已声明仓库。
+  该镜像为公开仓库，GitHub Actions 同样可访问，因此不区分本地与 CI。
+-->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0
+                              https://maven.apache.org/xsd/settings-1.0.0.xsd">
+
+  <mirrors>
+    <mirror>
+      <id>aliyun-public</id>
+      <name>阿里云公共仓库</name>
+      <url>https://maven.aliyun.com/repository/public</url>
+      <mirrorOf>central</mirrorOf>
+    </mirror>
+  </mirrors>
+
+</settings>
