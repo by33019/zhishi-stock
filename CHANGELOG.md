@@ -23,6 +23,33 @@
 
 ---
 
+## 2026-09-19 — M2-05 个股快照与日/周/月 K 线（STK-04 / STK-07）
+
+### 新增
+
+- **STK-04 接口** `GET /api/v1/securities/{securityId}/quote`（PUBLIC）：返回 `QuoteSnapshot`（证券摘要、前收 / 开 / 高 / 低 / 最新价、涨跌额与幅度、量额、换手率、`dataTime`、`serverTime`、`sequence`、`dataStatus`、`delaySeconds`）
+- **STK-07 接口** `GET /api/v1/securities/{securityId}/klines`（PUBLIC）：`period=DAY|WEEK|MONTH`（必填）、`startDate`、`endDate`（缺省最近 **120 个交易日**）、`adjustment`（缺省 `NONE`）；返回 `KlineSeries`
+- **领域模型** `QuoteSnapshot`、`KlinePoint`（§8.2）、`KlineSeries`、`KlineRequest`、`KlinePeriod`、`KlineAdjustment`、`KlineQualityStatus`
+- **端口** `QuoteSnapshotProvider`、`KlineProvider`
+- **应用服务** `SecurityDetailQueryService`、异常 `SecurityNotFoundException`（→ 404）、`InvalidKlineParameterException`（→ 400，携带三种业务码）
+- **模拟数据源** `SimulatedQuoteSnapshotProvider`、`SimulatedKlineProvider`；共享价格算法 `SimulatedPriceSeries`、取数辅助 `SimulatedMarketAccess`
+- 设计文档 `docs/superpowers/specs/2026-09-19-security-detail-and-klines.md`
+
+### 变更
+
+- `SecurityController` 新增两个端点；`BackendConfiguration` 装配 3 个新 Bean
+- `GlobalExceptionHandler` 新增 `SecurityNotFoundException` → 404 `SECURITY_NOT_FOUND`、`InvalidKlineParameterException` → 400（业务码由异常自身携带）
+- 前端 `domain.ts` 新增 `QuoteSnapshot` / `KlinePeriod` / `KlineAdjustment` / `KlineQualityStatus` / `KlinePoint` / `KlineSeries` / `KlineQuery`；原型同名类型改名 `MockKlinePoint` 以避开 TypeScript 声明合并
+
+### 说明
+
+- K 线**按需生成**（5149 只 × 5 年 ≈ 640 万点，不预生成）；价格序列以最近交易日为锚点**向前倒推**，保证日 K 末端收盘价恒等于该证券最新价
+- 周 / 月 K **由日 K 聚合**，`time` 取该周期最后一个交易日；空周 / 空月不产生点，不做自然日补齐（PRD 明确）
+- 不支持的复权方式返回 400 `ADJUSTMENT_NOT_SUPPORTED`，**不静默替换成 `NONE`**
+- 已知取舍：K 线价格**跨交易日会漂移**（倒推起点随最近交易日前移），接入真实数据源后消失
+
+---
+
 ## 2026-09-19 — 修复：行情时间统一按北京时间渲染
 
 ### 修复

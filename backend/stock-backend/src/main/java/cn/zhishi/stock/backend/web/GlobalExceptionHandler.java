@@ -1,10 +1,12 @@
 package cn.zhishi.stock.backend.web;
 
 import cn.zhishi.stock.common.api.ApiResponse;
+import cn.zhishi.stock.market.application.InvalidKlineParameterException;
 import cn.zhishi.stock.market.application.InvalidSecurityQueryException;
 import cn.zhishi.stock.market.application.InvalidTurnoverParameterException;
 import cn.zhishi.stock.market.application.MarketDataUnavailableException;
 import cn.zhishi.stock.market.application.MarketNotFoundException;
+import cn.zhishi.stock.market.application.SecurityNotFoundException;
 import cn.zhishi.stock.system.auth.AuthErrorCode;
 import cn.zhishi.stock.system.auth.AuthException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -88,6 +90,37 @@ public class GlobalExceptionHandler {
             HttpServletRequest request) {
         return ResponseEntity.badRequest().body(ApiResponse.failure(
                 "INVALID_REQUEST",
+                exception.getMessage(),
+                null,
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
+    /**
+     * K 线参数非法。
+     *
+     * <p>业务码由异常自身携带（{@code INVALID_REQUEST} / {@code KLINE_RANGE_TOO_LARGE} /
+     * {@code ADJUSTMENT_NOT_SUPPORTED}），不在这里靠 instanceof 推断——
+     * 三种情况的 HTTP 状态相同，只有业务码不同。
+     */
+    @ExceptionHandler(InvalidKlineParameterException.class)
+    public ResponseEntity<ApiResponse<Void>> invalidKlineParameter(
+            InvalidKlineParameterException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.badRequest().body(ApiResponse.failure(
+                exception.code(),
+                exception.getMessage(),
+                null,
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
+    @ExceptionHandler(SecurityNotFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> securityNotFound(
+            SecurityNotFoundException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.failure(
+                "SECURITY_NOT_FOUND",
                 exception.getMessage(),
                 null,
                 TraceIdFilter.current(request),

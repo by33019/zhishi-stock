@@ -67,7 +67,7 @@
 - [x] **M2-02** P0 市场广度（MKT-03） — 已完成，见下方详情
 - [x] **M2-03** P0 成交趋势（MKT-04） — 已完成，见下方详情
 - [x] **M2-04** P0 证券主数据与搜索建议 — 已完成，见下方详情
-- [ ] **M2-05** P0 个股快照与日/周/月 K 线 — 依赖：M2-04
+- [x] **M2-05** P0 个股快照与日/周/月 K 线（STK-04 / STK-07） — 已完成，见下方详情
 - [ ] **M2-06** P0 榜单（涨跌幅/成交额/换手）+ 分页筛选 — 依赖：M2-04
 - [ ] **M2-07** P1 板块排行、详情与成分股 — 依赖：M2-04
 - [ ] **M2-08** P0 前端接入 rankings / sectors / sectors:id / stocks:id — 依赖：M2-05、M2-06、M2-07
@@ -307,6 +307,64 @@ record 组件为 `tradingDay`（Java 访问器 `tradingDay()`），JSON 名由 `
 
 ---
 
+## M2-05 交付详情
+
+| 项 | 内容 |
+| --- | --- |
+| 接口 | `GET /api/v1/securities/{securityId}/quote`（STK-04，PUBLIC）、`GET /api/v1/securities/{securityId}/klines`（STK-07，PUBLIC） |
+| STK-04 返回 | `QuoteSnapshot`：`security`、前收 / 开 / 高 / 低 / 最新价、涨跌额与幅度、量额、换手率、`dataTime`、`serverTime`、`sequence`、`dataStatus`、`delaySeconds` |
+| STK-07 参数 | `period=DAY\|WEEK\|MONTH`（必填）、`startDate`、`endDate`（缺省最近 **120 个交易日**）、`adjustment`（缺省 `NONE`） |
+| STK-07 返回 | `KlineSeries`：`security`、`period`、`adjustment`、`dataCutoffAt`、`dataStatus`、`points[]{time, 开高低收, 前收, 涨跌额与幅度, 量额, 换手率, qualityStatus}` |
+| 数据来源 | 新增端口 `QuoteSnapshotProvider` / `KlineProvider`，实现 `SimulatedQuoteSnapshotProvider` / `SimulatedKlineProvider`；价格算法抽为共享的 `SimulatedPriceSeries`，取数辅助 `SimulatedMarketAccess` |
+| 参数校验 | `securityId` 不存在 → 404 `SECURITY_NOT_FOUND`；`period` 非法 / 日期格式错 / 起止颠倒 → 400 `INVALID_REQUEST`；跨度超限 → 400 `KLINE_RANGE_TOO_LARGE`；**不支持的复权方式 → 400 `ADJUSTMENT_NOT_SUPPORTED`（不静默替换）** |
+| 测试 | 后端 **241 测试全绿**（M2-04 的 189 + 新增 52）：`SecurityDetailQueryServiceTest` 17 项、`SimulatedKlineProviderTest` 16 项、`SimulatedQuoteSnapshotProviderTest` 12 项、契约测试新增 7 项 |
+| 前端 | `domain.ts` 新增 `QuoteSnapshot` / `KlinePeriod` / `KlineAdjustment` / `KlineQualityStatus` / `KlinePoint` / `KlineSeries` / `KlineQuery`；原型同名类型改名 `MockKlinePoint`；typecheck 0 错误、13 文件 / 37 测试全绿 |
+| 设计文档 | `docs/superpowers/specs/2026-09-19-security-detail-and-klines.md`（311 行） |
+
+### 关键设计取舍
+
+**1. K 线按需生成，不预生成全市场历史**
+5149 只 × 5 年 ≈ 640 万点，内存里既存不下也不该存。Provider 给定证券与区间现算，
+默认区间单次约 120 个点。代价是每次请求要扫一遍行情全集来定位证券——与 M2-04 同构，
+已有 P95 < 500ms 的证据。
+
+**2. 价格序列末端锚定 + 向前倒推**
+硬约束是「日 K 最后一根收盘价 == 该证券快照的最新价」，否则会出现"头部显示 1580、
+K 线末端却是 1543"的自相矛盾。而 `latestPrice` 由涨跌停规则反推得出、**不可改**
+（它是广度计数的输入），因此序列从最近交易日向前倒推，倒数第二根直接钉在前收价上。
+**已知代价：跨交易日会漂移**——`last` 前移一天，同一历史日期的价格随之变化。
+这是有意接受的取舍，接入真实数据源后自然消失（见 spec §11）。
+
+**3. 快照与 K 线共用一份价格算法**
+`SimulatedPriceSeries` 被两个 Provider 共用。若各写一遍，改一处就会让"行情头部"与
+"K 线末端"分叉，**且没有任何测试会红**。同理，证券身份一律投影自 `SecurityMasterProvider`，
+不自己拼一份。
+
+**4. 周 / 月 K 由日 K 聚合，不独立生成**
+两种周期是同一份数据的两种切法，必须永远自洽。`time` 取该周期**最后一个交易日**
+（沿用 M2-03「点位取区间结束时刻」原则），`dataCutoffAt` 因此天然等于最后一个点的时刻。
+空周 / 空月不产生点，不做自然日补齐（PRD 明确）。
+
+**5. 不支持的复权方式报错而非静默降级**
+§8.3 明确要求"不支持的复权方式返回明确错误而非静默替换"。`adjustment=FORWARD` 直接 400——
+调用方以为拿到前复权数据、实际拿到不复权数据，是最难排查的一类问题（同 M2-03 的 `interval`）。
+
+**6. 三个 400 共用一个异常类**
+`INVALID_REQUEST` / `KLINE_RANGE_TOO_LARGE` / `ADJUSTMENT_NOT_SUPPORTED` 的 HTTP 状态相同，
+只有业务码不同。拆成三个异常类只会让处理器里出现三段几乎相同的代码；业务码由异常自身携带，
+处理器不做 `instanceof` 推断。
+
+**7. 涨跌停价夹取开高低**
+`high` / `low` 被夹在涨跌停价之内，否则会出现"K 线最高价超过涨停价"这种一眼假的数据，
+并与 M2-02 的涨跌停计数口径冲突。
+
+**8. 前端原型同名类型改名 `MockKlinePoint`**
+`domain.ts` 里原有一个原型阶段的 `KlinePoint`（字段简写、价格是 `number`）。与契约类型同名
+会触发 TypeScript 的**声明合并**，让 mock 数据因"缺少契约字段"而报错。改名后两者并存，
+M2-08 接入真实接口时由契约类型取代原型。
+
+---
+
 ## 已完成
 
 - [x] 阶段 0 只读审计（2026-09-19）
@@ -316,3 +374,4 @@ record 组件为 `tradingDay`（Java 访问器 `tradingDay()`），JSON 名由 `
 - [x] M2-02（2026-09-19）
 - [x] M2-03（2026-09-19）
 - [x] M2-04（2026-09-19）
+- [x] M2-05（2026-09-19）

@@ -138,7 +138,15 @@ export interface TurnoverTrend {
   points: TurnoverTrendPoint[]
 }
 
-export interface KlinePoint {
+/**
+ * 个股详情原型用的 K 线点（简化字段名，价格是 number）。
+ *
+ * 名字带 `Mock` 前缀是为了与契约类型 {@link KlinePoint}（对应 RESTful-API.md §8.2）
+ * 区分：两者字段不同，同名会触发 TypeScript 的声明合并，
+ * 让 mock 数据因"缺少契约字段"而报错。M2-08 接入真实接口后，本类型随
+ * `StockDetail` 一并由契约类型取代。
+ */
+export interface MockKlinePoint {
   time: string
   open: number
   close: number
@@ -159,7 +167,7 @@ export interface StockDetail extends QuoteRow {
   sectors: string[]
   dataTime: string
   dataStatus: DataStatus
-  kline: KlinePoint[]
+  kline: MockKlinePoint[]
   news: NewsItem[]
   aiPrompts: string[]
 }
@@ -230,4 +238,79 @@ export interface SecurityListQuery {
   page?: number
   size?: number
   sort?: string
+}
+
+/**
+ * 个股行情快照，对应后端 QuoteSnapshot 与 RESTful-API.md §4.2。
+ *
+ * 价格与量额一律是十进制定点数字符串：前端不做浮点运算，
+ * 字符串是唯一能保证「展示值 === 服务端值」的载体。
+ */
+export interface QuoteSnapshot {
+  security: SecuritySummary
+  previousClosePrice: string | null
+  openPrice: string | null
+  latestPrice: string | null
+  highPrice: string | null
+  lowPrice: string | null
+  changeAmount: string | null
+  /** 小数比例，`0.10` 即 10%。 */
+  changeRate: string | null
+  tradeVolume: string | null
+  tradeAmount: string | null
+  turnoverRate: string | null
+  dataTime: string | null
+  serverTime: string
+  sequence: string
+  dataStatus: DataStatus
+  delaySeconds: number | null
+}
+
+/** K 线周期。 */
+export type KlinePeriod = 'DAY' | 'WEEK' | 'MONTH'
+
+/** 复权方式；MVP 仅支持 `NONE`，前复权与后复权纳入 V1.2。 */
+export type KlineAdjustment = 'NONE'
+
+/** K 线点的数据质量状态。 */
+export type KlineQualityStatus = 'VALID' | 'DELAYED' | 'CORRECTED'
+
+/**
+ * 单个 K 线点，对应 RESTful-API.md §8.2。
+ *
+ * `time` 是交易日；周 K / 月 K 取该周期**最后一个交易日**。
+ */
+export interface KlinePoint {
+  time: string
+  openPrice: string
+  highPrice: string
+  lowPrice: string
+  closePrice: string
+  previousClosePrice: string | null
+  changeAmount: string | null
+  changeRate: string | null
+  tradeVolume: string
+  tradeAmount: string
+  turnoverRate: string | null
+  qualityStatus: KlineQualityStatus
+}
+
+/** STK-07 响应。 */
+export interface KlineSeries {
+  security: SecuritySummary
+  period: KlinePeriod
+  adjustment: KlineAdjustment
+  /** 数据可信边界，恒等于最后一个点位的时刻。 */
+  dataCutoffAt: string | null
+  dataStatus: DataStatus
+  points: KlinePoint[]
+}
+
+/** STK-07 查询参数。 */
+export interface KlineQuery {
+  period: KlinePeriod
+  /** 缺省为最近 120 个交易日。 */
+  startDate?: string
+  endDate?: string
+  adjustment?: KlineAdjustment
 }

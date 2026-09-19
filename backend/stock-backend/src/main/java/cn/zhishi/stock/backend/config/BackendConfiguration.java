@@ -2,8 +2,10 @@ package cn.zhishi.stock.backend.config;
 
 import cn.zhishi.stock.backend.security.JwtAuthenticationFilter;
 import cn.zhishi.stock.backend.web.TraceIdFilter;
+import cn.zhishi.stock.integration.market.SimulatedKlineProvider;
 import cn.zhishi.stock.integration.market.SimulatedLimitRuleProvider;
 import cn.zhishi.stock.integration.market.SimulatedQuoteProvider;
+import cn.zhishi.stock.integration.market.SimulatedQuoteSnapshotProvider;
 import cn.zhishi.stock.integration.market.SimulatedSecurityMasterProvider;
 import cn.zhishi.stock.integration.market.SimulatedSecurityQuoteProvider;
 import cn.zhishi.stock.integration.market.SimulatedTradingCalendarProvider;
@@ -11,12 +13,15 @@ import cn.zhishi.stock.integration.market.SimulatedTurnoverTrendProvider;
 import cn.zhishi.stock.market.application.MarketBreadthQueryService;
 import cn.zhishi.stock.market.application.MarketOverviewQueryService;
 import cn.zhishi.stock.market.application.MarketStatusQueryService;
+import cn.zhishi.stock.market.application.SecurityDetailQueryService;
 import cn.zhishi.stock.market.application.SecurityQueryService;
 import cn.zhishi.stock.market.application.TurnoverTrendQueryService;
+import cn.zhishi.stock.market.domain.KlineProvider;
 import cn.zhishi.stock.market.domain.LimitRuleProvider;
 import cn.zhishi.stock.market.domain.MarketOverviewArchive;
 import cn.zhishi.stock.market.domain.MarketOverviewStore;
 import cn.zhishi.stock.market.domain.QuoteProvider;
+import cn.zhishi.stock.market.domain.QuoteSnapshotProvider;
 import cn.zhishi.stock.market.domain.SecurityMasterProvider;
 import cn.zhishi.stock.market.domain.SecurityQuoteProvider;
 import cn.zhishi.stock.market.domain.TradingCalendarProvider;
@@ -248,6 +253,46 @@ public class BackendConfiguration {
     @Bean
     SecurityQueryService securityQueryService(SecurityMasterProvider securityMasterProvider) {
         return new SecurityQueryService(securityMasterProvider);
+    }
+
+    @Bean
+    QuoteSnapshotProvider quoteSnapshotProvider(
+            SecurityQuoteProvider securityQuoteProvider,
+            SecurityMasterProvider securityMasterProvider,
+            LimitRuleProvider limitRuleProvider,
+            TradingCalendarProvider tradingCalendarProvider,
+            Clock clock) {
+        return new SimulatedQuoteSnapshotProvider(
+                securityQuoteProvider,
+                securityMasterProvider,
+                limitRuleProvider,
+                tradingCalendarProvider,
+                clock);
+    }
+
+    @Bean
+    KlineProvider klineProvider(
+            SecurityQuoteProvider securityQuoteProvider,
+            SecurityMasterProvider securityMasterProvider,
+            LimitRuleProvider limitRuleProvider,
+            TradingCalendarProvider tradingCalendarProvider,
+            Clock clock) {
+        return new SimulatedKlineProvider(
+                securityQuoteProvider,
+                securityMasterProvider,
+                limitRuleProvider,
+                tradingCalendarProvider,
+                clock);
+    }
+
+    @Bean
+    SecurityDetailQueryService securityDetailQueryService(
+            QuoteSnapshotProvider quoteSnapshotProvider,
+            KlineProvider klineProvider,
+            TradingCalendarProvider tradingCalendarProvider,
+            Clock clock) {
+        return new SecurityDetailQueryService(
+                quoteSnapshotProvider, klineProvider, tradingCalendarProvider, clock);
     }
 
     @Bean
