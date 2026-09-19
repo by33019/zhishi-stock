@@ -23,6 +23,38 @@
 
 ---
 
+## 2026-09-19 — M2-04 证券主数据与搜索建议（STK-01 / STK-02）
+
+### 新增
+
+- **STK-01 接口** `GET /api/v1/securities/search`（PUBLIC）：`q`（1–50 字符，必填）、`types`、`exchangeCodes`、`limit`（1–20，默认 10）；返回 `items[]{security, matchedField, highlight}`
+- **STK-02 接口** `GET /api/v1/securities`（PUBLIC）：`keyword`、`securityType`、`exchangeCode`、`boardCode`、`listingStatus`、`sectorId`、`page`、`size`、`sort`；返回 `PageData<SecuritySummary>`
+- **通用分页外壳** `PageData<T>`（`stock-common/api`）：`items` / `page` / `size` / `total` / `totalPages` / `hasNext`，含静态切片方法 `slice`
+- **证券主数据领域模型** `SecuritySummary`（与 `RESTful-API.md` §4.1 逐字段对齐）、端口 `SecurityMasterProvider`、`SecuritySearchMatch`（含 `MatchedField` 枚举）、`SecuritySearchResult`
+- **应用服务** `SecurityQueryService`（搜索 + 列表）、查询条件 `SecurityListCriteria`、异常 `InvalidSecurityQueryException`（→ 400）
+- **模拟数据源** `SimulatedSecurityMasterProvider`：**投影**既有行情全集为证券主数据（5149 只），不重复定义代码段
+- 设计文档 `docs/superpowers/specs/2026-09-19-security-master-and-search.md`
+
+### 变更
+
+- `SecurityConfiguration` 放行 `GET /api/v1/securities` 与 `/api/v1/securities/**`
+- `GlobalExceptionHandler` 新增 `InvalidSecurityQueryException` → 400 `INVALID_REQUEST`
+- `BackendConfiguration` 新增 `SecurityQuoteProvider` / `SecurityMasterProvider` / `SecurityQueryService` Bean（`SecurityQuoteProvider` 此前无 Bean，由 `SimulatedQuoteProvider` 内部自建）
+- 前端 `src/types/domain.ts` 新增 `PageData` / `SecurityType` / `ListingStatus` / `SecurityMatchedField` / `SecuritySummary` / `SecuritySearchMatch` / `SecuritySearchResult` / `SecurityListQuery`
+
+### 说明
+
+- **匹配优先级固定**：`CODE`（代码或 `fullSymbol` **前缀**）→ `NAME`（名称**包含**）→ `PINYIN` → `PINYIN_ABBR`，一只证券只产生一条结果。代码用前缀是因为它是结构化标识（输入 `600` 期望 `600xxx` 这一段），名称用包含是因为它是自然语言
+- **排序确定性**：搜索按「`matchedField` 优先级 → `fullSymbol` 升序」，第二个键是兜底——没有它，同优先级内的顺序取决于底层集合遍历顺序
+- **筛选值不校验合法性，排序字段必须校验**：`types=ETF` 是合法取值、只是当前没有数据，报 400 会把"没有数据"错报成"参数非法"；而 `sort` 字段被静默忽略时调用方会拿到"顺序不对但看起来正常"的响应，故白名单外直接 400
+- **拼音保留能力但不填值**：`SecuritySummary` 含 `pinyin` / `pinyinAbbr` 组件并标 `@JsonIgnore`，**JSON 输出严格等于文档 §4.1 的 11 个字段**。合成名称没有可核实的拼音，编一份假拼音会污染真实逻辑；单测用带拼音的桩数据覆盖 `PINYIN` / `PINYIN_ABBR` 两条分支
+- **主数据从行情全集投影**：代码段只在一处定义，避免"主数据"与"广度计数"指向不同证券全集且无测试报警
+- **`sectorId` 当前必然返回空页**：板块关系数据在 M2-07 之前不存在，"没有任何证券属于该板块"在当下是事实
+- **不落库**：`stock_security` 表继续空置，与 M2-01 / M2-03 决策一致
+- **验收标准「搜索 P95 < 500ms」**以宽松冒烟测试落实（预热后 100 次采样，P95 断言 < 500ms，两个数量级余量）
+
+---
+
 ## 2026-09-19 — M2-03 成交趋势（MKT-04）
 
 ### 新增

@@ -66,7 +66,7 @@
 - [x] **M2-01** P0 交易日历与市场状态（MKT-02） — 已完成，见下方详情
 - [x] **M2-02** P0 市场广度（MKT-03） — 已完成，见下方详情
 - [x] **M2-03** P0 成交趋势（MKT-04） — 已完成，见下方详情
-- [ ] **M2-04** P0 证券主数据与搜索建议 — 依赖：M2-01
+- [x] **M2-04** P0 证券主数据与搜索建议 — 已完成，见下方详情
 - [ ] **M2-05** P0 个股快照与日/周/月 K 线 — 依赖：M2-04
 - [ ] **M2-06** P0 榜单（涨跌幅/成交额/换手）+ 分页筛选 — 依赖：M2-04
 - [ ] **M2-07** P1 板块排行、详情与成分股 — 依赖：M2-04
@@ -262,6 +262,51 @@ record 组件为 `tradingDay`（Java 访问器 `tradingDay()`），JSON 名由 `
 
 ---
 
+## M2-04 交付详情
+
+| 项 | 内容 |
+| --- | --- |
+| 接口 | `GET /api/v1/securities/search`（STK-01，PUBLIC）、`GET /api/v1/securities`（STK-02，PUBLIC） |
+| STK-01 参数 | `q`（必填，1–50 字符）、`types`、`exchangeCodes`（逗号分隔）、`limit`（1–20，默认 10） |
+| STK-01 返回 | `items[]{security, matchedField, highlight}`；`matchedField ∈ CODE\|NAME\|PINYIN\|PINYIN_ABBR` |
+| STK-02 参数 | `keyword`、`securityType`、`exchangeCode`、`boardCode`、`listingStatus`、`sectorId`、`page`、`size`、`sort` |
+| STK-02 返回 | `PageData<SecuritySummary>`：`items`、`page`、`size`、`total`、`totalPages`、`hasNext` |
+| 匹配优先级 | `CODE`（代码 / `fullSymbol` **前缀**）→ `NAME`（名称**包含**）→ `PINYIN` → `PINYIN_ABBR`；一只证券只产生一条结果 |
+| 排序确定性 | 搜索按「`matchedField` 优先级 → `fullSymbol` 升序」；列表按白名单字段，默认 `fullSymbol,asc` |
+| 数据来源 | 新增端口 `SecurityMasterProvider`，实现 `SimulatedSecurityMasterProvider`（**投影**自行情全集，不重复定义代码段） |
+| 参数校验 | `q` 长度、`limit`、`page`、`size`、`sort` 字段与方向非法 → 400 `INVALID_REQUEST`；**筛选值不存在不报错**，返回空结果 |
+| 测试 | 后端 **189 测试全绿**（M2-03 的 145 + 新增 44）：`SecurityQueryServiceTest` 28 项、`SimulatedSecurityMasterProviderTest` 8 项、契约测试 8 项 |
+| 前端 | `domain.ts` 新增 `PageData` / `SecuritySummary` / `SecuritySearchMatch` / `SecuritySearchResult` / `SecurityListQuery` 等类型（页面接入归 M2-08 / M2-09）；typecheck 0 错误、13 文件 / 35 测试全绿 |
+
+### 关键设计取舍
+
+**1. 主数据**投影**自行情全集，不复制代码段**
+`SimulatedSecurityMasterProvider` 不自己定义证券全集，而是把 `SecurityQuoteProvider.fetchUniverse()`
+的结果映射成 `SecuritySummary`。代码段一旦在两处各写一遍，改动其中一处就会让"主数据"与"广度计数"
+指向不同的证券全集，**且没有任何测试会红**。
+
+**2. 筛选值不校验合法性，排序字段必须校验**
+`types=ETF` 是合法取值，只是当前没有 ETF——报 400 会把"没有数据"错报成"参数非法"，故不匹配即空。
+但 `sort` 字段被静默忽略时，调用方拿到的是"顺序不对但看起来正常"的响应，极难排查，故白名单外直接报错。
+
+**3. 拼音保留能力但不填值**
+`SecuritySummary` 含 `pinyin` / `pinyinAbbr` 组件并标 `@JsonIgnore`——JSON 输出严格等于文档 §4.1 的
+11 个字段。合成名称（`模拟证券600000`）没有可核实的拼音，编一份假拼音会污染真实逻辑；
+单测用一只带拼音的桩数据（贵州茅台）覆盖 `PINYIN` / `PINYIN_ABBR` 两条分支，能力不会腐烂。
+
+**4. `PageData` 落在 `stock-common`**
+它是跨域共用的响应外壳（榜单、资讯、AI 历史都要用），放进行情域会让别的域反向依赖它。
+
+**5. `sectorId` 当前必然返回空页**
+板块关系数据在 M2-07 之前不存在，"没有任何证券属于该板块"在当下是事实而非错误。
+保留参数是为了契约完整，M2-07 落地后自然生效。
+
+**6. 验收标准「搜索 P95 < 500ms」以宽松冒烟测试落实**
+内存线性扫描 5149 条，实测单次在毫秒级。测试取 100 次采样的 P95 并断言 < 500ms——
+两个数量级余量，CI 上不会抖动，但搜索一旦退化成 O(n²) 或引入阻塞 IO 会立刻变红。
+
+---
+
 ## 已完成
 
 - [x] 阶段 0 只读审计（2026-09-19）
@@ -270,3 +315,4 @@ record 组件为 `tradingDay`（Java 访问器 `tradingDay()`），JSON 名由 `
 - [x] M2-01（2026-09-19）
 - [x] M2-02（2026-09-19）
 - [x] M2-03（2026-09-19）
+- [x] M2-04（2026-09-19）

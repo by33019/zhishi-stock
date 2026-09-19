@@ -1,6 +1,7 @@
 package cn.zhishi.stock.backend.web;
 
 import cn.zhishi.stock.common.api.ApiResponse;
+import cn.zhishi.stock.market.application.InvalidSecurityQueryException;
 import cn.zhishi.stock.market.application.InvalidTurnoverParameterException;
 import cn.zhishi.stock.market.application.MarketDataUnavailableException;
 import cn.zhishi.stock.market.application.MarketNotFoundException;
@@ -72,6 +73,18 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(InvalidTurnoverParameterException.class)
     public ResponseEntity<ApiResponse<Void>> invalidTurnoverParameter(
             InvalidTurnoverParameterException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.badRequest().body(ApiResponse.failure(
+                "INVALID_REQUEST",
+                exception.getMessage(),
+                null,
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
+    @ExceptionHandler(InvalidSecurityQueryException.class)
+    public ResponseEntity<ApiResponse<Void>> invalidSecurityQuery(
+            InvalidSecurityQueryException exception,
             HttpServletRequest request) {
         return ResponseEntity.badRequest().body(ApiResponse.failure(
                 "INVALID_REQUEST",

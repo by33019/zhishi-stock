@@ -4,16 +4,21 @@ import cn.zhishi.stock.backend.security.JwtAuthenticationFilter;
 import cn.zhishi.stock.backend.web.TraceIdFilter;
 import cn.zhishi.stock.integration.market.SimulatedLimitRuleProvider;
 import cn.zhishi.stock.integration.market.SimulatedQuoteProvider;
+import cn.zhishi.stock.integration.market.SimulatedSecurityMasterProvider;
+import cn.zhishi.stock.integration.market.SimulatedSecurityQuoteProvider;
 import cn.zhishi.stock.integration.market.SimulatedTradingCalendarProvider;
 import cn.zhishi.stock.integration.market.SimulatedTurnoverTrendProvider;
 import cn.zhishi.stock.market.application.MarketBreadthQueryService;
 import cn.zhishi.stock.market.application.MarketOverviewQueryService;
 import cn.zhishi.stock.market.application.MarketStatusQueryService;
+import cn.zhishi.stock.market.application.SecurityQueryService;
 import cn.zhishi.stock.market.application.TurnoverTrendQueryService;
 import cn.zhishi.stock.market.domain.LimitRuleProvider;
 import cn.zhishi.stock.market.domain.MarketOverviewArchive;
 import cn.zhishi.stock.market.domain.MarketOverviewStore;
 import cn.zhishi.stock.market.domain.QuoteProvider;
+import cn.zhishi.stock.market.domain.SecurityMasterProvider;
+import cn.zhishi.stock.market.domain.SecurityQuoteProvider;
 import cn.zhishi.stock.market.domain.TradingCalendarProvider;
 import cn.zhishi.stock.market.domain.TurnoverTrendProvider;
 import cn.zhishi.stock.market.infrastructure.JdbcMarketOverviewArchive;
@@ -204,6 +209,15 @@ public class BackendConfiguration {
         return new SimulatedLimitRuleProvider();
     }
 
+    /**
+     * 证券全集生成器。{@link SimulatedQuoteProvider} 内部仍自建一份实例——
+     * 该实现无状态且完全确定性，两份实例产出逐位相同，故不做改造以保持改动最小。
+     */
+    @Bean
+    SecurityQuoteProvider securityQuoteProvider(LimitRuleProvider limitRuleProvider) {
+        return new SimulatedSecurityQuoteProvider(limitRuleProvider);
+    }
+
     @Bean
     QuoteProvider quoteProvider(
             Clock clock,
@@ -220,6 +234,20 @@ public class BackendConfiguration {
             Clock clock,
             @Value("${stock.market.holidays:}") String holidays) {
         return SimulatedTradingCalendarProvider.ofCsv(clock, holidays);
+    }
+
+    @Bean
+    SecurityMasterProvider securityMasterProvider(
+            SecurityQuoteProvider securityQuoteProvider,
+            TradingCalendarProvider tradingCalendarProvider,
+            Clock clock) {
+        return new SimulatedSecurityMasterProvider(
+                securityQuoteProvider, tradingCalendarProvider, clock);
+    }
+
+    @Bean
+    SecurityQueryService securityQueryService(SecurityMasterProvider securityMasterProvider) {
+        return new SecurityQueryService(securityMasterProvider);
     }
 
     @Bean

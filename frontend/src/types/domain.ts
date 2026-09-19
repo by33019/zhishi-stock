@@ -27,6 +27,16 @@ export interface ApiResponse<T> {
   timestamp: string
 }
 
+/** 通用分页响应数据，对应后端 PageData。 */
+export interface PageData<T> {
+  items: T[]
+  page: number
+  size: number
+  total: number
+  totalPages: number
+  hasNext: boolean
+}
+
 export interface MarketIndex {
   indexId: string
   indexCode: string
@@ -171,4 +181,53 @@ export interface AiReport {
   riskAndUncertainty: string
   generatedAt: string
   evidence: AiEvidence[]
+}
+
+/** 证券类别，对应 stock_security.security_type。 */
+export type SecurityType = 'STOCK' | 'ETF' | 'INDEX'
+
+/** 上市状态，对应 stock_security.listing_status。 */
+export type ListingStatus = 'LISTED' | 'SUSPENDED' | 'DELISTED' | 'PRELISTED'
+
+/** 搜索命中的字段；后端按 CODE → NAME → PINYIN → PINYIN_ABBR 的优先级取第一个命中。 */
+export type SecurityMatchedField = 'CODE' | 'NAME' | 'PINYIN' | 'PINYIN_ABBR'
+
+/** 证券摘要，对应后端 SecuritySummary 与 RESTful-API.md §4.1。 */
+export interface SecuritySummary {
+  securityId: string
+  fullSymbol: string
+  securityCode: string
+  securityName: string
+  exchangeCode: string
+  securityType: SecurityType
+  boardCode: string | null
+  listingStatus: ListingStatus
+  isSt: boolean
+  isSuspended: boolean
+  priceScale: number
+}
+
+/** 一条搜索命中。`highlight` 是命中字段中的原文子串，不含任何标记。 */
+export interface SecuritySearchMatch {
+  security: SecuritySummary
+  matchedField: SecurityMatchedField
+  highlight: string | null
+}
+
+/** STK-01 搜索建议响应。 */
+export interface SecuritySearchResult {
+  items: SecuritySearchMatch[]
+}
+
+/** STK-02 列表查询参数。 */
+export interface SecurityListQuery {
+  keyword?: string
+  securityType?: SecurityType
+  exchangeCode?: string
+  boardCode?: string
+  listingStatus?: ListingStatus
+  sectorId?: string
+  page?: number
+  size?: number
+  sort?: string
 }
