@@ -31,9 +31,9 @@
 | 后端 Flyway 迁移（空库路径） | ✅ 已在真实 MySQL 8.4 验证 | 集成测试断言 `flyway_schema_history` 有 8 条成功迁移 |
 | 后端 Flyway 迁移（旧库升级路径） | ✅ **首次验证通过** | baseline v1 → V2–V8 → `now at version v8`，退出码 0 |
 | 迁移后完整性校验 | ✅ 通过 | `post_migration_validation.sql` 无异常明细，`foreign_key_count = 0` |
-| 前端类型检查 + 测试 + 构建 | ✅ 通过 | 13 文件 / 35 测试；`vite build` 成功（dist 923 KB） |
+| 前端类型检查 + 测试 + 构建 | ✅ 通过 | 13 文件 / 37 测试；`vite build` 成功（dist 923 KB） |
 | 本地 dev 联调（Vite 代理） | ✅ 已打通 | dev server 下 `GET /api/v1/markets/overview` 返回真实 JSON |
-| CI | ⚠️ 工作流已提交，尚未在 GitHub 上运行 | `.github/workflows/ci.yml`（**4 作业**，含旧库升级路径） |
+| CI | 🟢 **已在 GitHub 实际运行** | `.github/workflows/ci.yml`（**4 作业**，含旧库升级路径）；前端作业曾因时区依赖持续失败，已修复（`3fd970c`） |
 | 全栈 Compose 端到端 | ✅ **已通过** | 6 容器全部启动、无 ERROR；`npm run e2e:real` 通过 |
 | 容器镜像构建 | ✅ 稳定可重复 | 修复容器内依赖下载中断后，6 镜像连续构建成功 |
 | 数据库迁移在真实库执行 | ✅ 空库 + 旧库升级两条路径均已完成 | 见上 |
@@ -55,14 +55,14 @@
 | 数据库迁移 | ✅ 结构 100% / 两条路径均验证 | Flyway V1–V8；旧库样本 149KB（原 24MB） |
 | 前端原型 | ✅ 页面 100% / 真实接入 2/11 | 11 路由全部有页面；`/market` 与 `/login` 接真实 API |
 | 后端 | 🟡 2/8 域 | 认证闭环 ✅、市场总览（MKT-01~04）🟡、证券主数据（STK-01/02）🟡；其余未开工 |
-| 测试 | ✅ 224 个 | 后端 189 + 前端 35；无覆盖率门槛 |
+| 测试 | ✅ 226 个 | 后端 189 + 前端 37；无覆盖率门槛 |
 | 工程化 | 🟢 85% | CI 工作流 ✅、TASKS/STATUS/CHANGELOG ✅、根与模块 README ✅、容器构建稳定 ✅；分支保护待用户配置 |
 
 ## 6. 已知问题（按严重度）
 
 | # | 问题 | 严重度 | 处置 |
 | --- | --- | --- | --- |
-| 1 | CI 未在 GitHub 实际跑过；分支保护未设置 | 🟠 | M1-07 收尾（需用户配置） |
+| 1 | 分支保护未设置（CI 四个作业已实际跑通） | 🟡 | M1-07 收尾（需用户在 GitHub 配置必需检查） |
 | 2 | 9 个前端页面仍走 mockApi | 🟠 | M2-08 / M3-03 / M3-05 / M3-10 |
 | 3 | 认证默认值偏松（`JWT_SECRET` 默认空、dev `COOKIE_SECURE=false`、演示账号固定密码） | 🟡 | 生产 profile 需单独加固，待排期 |
 | 4 | `preflight_existing_schema.sql` 第 8 段永远不会触发（`block_label` 实际是 `varchar(10)`，检查条件为 `> 20`） | 🔵 | 设计上的防御性检查，无实际影响，仅记录 |
