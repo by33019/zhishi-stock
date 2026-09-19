@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
 import cn.zhishi.stock.market.application.MarketOverviewQueryService;
+import cn.zhishi.stock.market.application.SecurityQueryService;
+import cn.zhishi.stock.market.domain.SecurityMasterProvider;
+import cn.zhishi.stock.market.domain.SecurityQuoteProvider;
 import cn.zhishi.stock.backend.security.JwtAuthenticationFilter;
 import cn.zhishi.stock.backend.web.TraceIdFilter;
 import cn.zhishi.stock.system.auth.AuthenticationService;
@@ -34,6 +37,9 @@ class BackendConfigurationTest {
           assertThat(context).hasSingleBean(AuthenticationService.class);
           assertThat(context).hasSingleBean(RefreshSessionService.class);
           assertThat(context).hasSingleBean(MarketOverviewQueryService.class);
+          assertThat(context).hasSingleBean(SecurityQueryService.class);
+          assertThat(context).hasSingleBean(SecurityMasterProvider.class);
+          assertThat(context).hasSingleBean(SecurityQuoteProvider.class);
           assertThat(context).hasSingleBean(JwtAuthenticationFilter.class);
           assertThat(context).hasSingleBean(TraceIdFilter.class);
           FilterRegistrationBean<?> registration =
