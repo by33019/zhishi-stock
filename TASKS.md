@@ -20,7 +20,7 @@
   - 集成测试 42.67s，Testcontainers 真实 MySQL 8.4 + Redis
   - 断言 `flyway_schema_history` 有 **8 条成功迁移** → V1–V8 空库路径已在真实库验证
 - [x] **M1-04** P0 数据库基线落地（旧库升级路径）— 已完成，见下方详情
-- [ ] **M1-05** P0 全栈 Compose 端到端验收 — 依赖：M1-04 ✅
+- [x] **M1-05** P0 全栈 Compose 端到端验收 — 已完成，见下方详情
 - [x] **M1-06** P0 合流 slice → main 并推送 — 零冲突快进合并，main = `0eeee92`
 - [~] **M1-07** P0 建立 CI — 工作流已提交（`.github/workflows/ci.yml`，3 作业）；**分支保护需用户在 GitHub 设置**
 - [x] **M1-08** P1 建立 TASKS.md / PROJECT_STATUS.md — 已完成（CHANGELOG.md 见 M1-13）
@@ -87,6 +87,31 @@
 
 ---
 
+## M1-05 交付详情
+
+| 项 | 内容 |
+| --- | --- |
+| 编排 | `compose.yaml` + `compose.legacy.yaml`，项目名 `zhishi-legacy`（旧库升级路径） |
+| 容器 | mysql（healthy）· redis（healthy）· flyway（Exited 0）· stock-api（healthy）· stock-job（Up）· frontend（`0.0.0.0:8088→80`） |
+| 镜像构建 | 6 个镜像全部构建成功；stock-api / stock-job / frontend 无 ERROR 日志 |
+| API 冒烟 | `GET /api/v1/markets/overview` → **200**，`success:true`，`marketStatus:TRADING`，数据截止时间 `2026-09-19T17:59`，4 指数 + 市场广度（涨 2876/跌 1924/涨停 82）+ 成交额 9826 亿 |
+| 端到端验收 | `npm run e2e:real` → **通过**：「市场 API、登录、Cookie 恢复、退出与路由保护」 |
+| 验收链路证据 | nginx 日志逐跳确认：overview **200** → watchlist 未登录 `token/refresh` **401** 跳登录 → login **200** → 刷新后 `token/refresh` **200** + `users/me` **200** → logout **200** → 退出后 `token/refresh` **401** |
+| 阻塞原因 | 容器内依赖下载中断（后端 Maven / 前端 npm 各命中一种失败形态），已修复 |
+
+### 容器内依赖下载中断（根因与修复）
+
+**根因**：容器网络对境外大流量下载存在约 **3% 的偶发连接中断**（实测并发 12 请求 30 个构件失败 1 个）。单文件下载与 MTU 均正常（MTU=1500，单文件 891KB 可完整下载），问题只在**并发**下出现。一次后端构建需拉取数百个构件，累积失败率接近必然。
+
+| 组件 | 失败形态 | 修复 |
+| --- | --- | --- |
+| Maven（后端） | `Premature end of Content-Length delimited message body` | 阿里云镜像（`backend/settings.xml`）+ wagon 重试 `count=5` |
+| npm（前端） | 直连 `registry.npmjs.org` → `ECONNRESET`；走 npmmirror → `EIDLETIMEOUT`（tarball CDN 连接挂死） | 国内镜像源 + `--maxsockets=5` + 拉长超时 + 外层 3 次重试（不清理 npm 缓存，重试可增量续传） |
+
+> 提交：`1d6f853`。两处修复均对 CI 友好（镜像源为公开源，GitHub Actions 可访问）。
+
+---
+
 ## 阻塞项
 
 | 阻塞 | 影响任务 | 需要 |
@@ -101,4 +126,4 @@
 
 - [x] 阶段 0 只读审计（2026-09-19）
 - [x] 阶段 1 交付路线图（2026-09-19）
-- [x] M1-01 / M1-02 / M1-03 / M1-04 / M1-06（2026-09-19）
+- [x] M1-01 / M1-02 / M1-03 / M1-04 / M1-05 / M1-06（2026-09-19）

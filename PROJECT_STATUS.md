@@ -1,6 +1,6 @@
 # PROJECT_STATUS.md — 知势平台项目状态
 
-> 最后更新：2026-09-19（M1-01 ~ M1-04、M1-06 完成）
+> 最后更新：2026-09-19（M1-01 ~ M1-06 完成，全栈端到端验收通过）
 > 任务清单见 `TASKS.md`，路线图见 `docs/superpowers/plans/2026-09-19-mvp-delivery-roadmap.md`。
 
 ---
@@ -14,7 +14,7 @@
 | 项 | 值 |
 | --- | --- |
 | 远端 | `git@github.com:by33019/zhishi-stock.git`（SSH，连通正常） |
-| 本地 `main` | `0eeee92`（含后端全量代码 + CI + 数据库工程） |
+| 本地 `main` | `1d6f853`（含后端全量代码 + CI + 数据库工程 + 容器构建稳定性修复） |
 | `auth-market-vertical-slice` | `0eeee92`，本地与远端同步 |
 | 合并方式 | **零冲突快进合并**，无合并提交，保留 6 条中文提交记录 |
 | 工作树 | `D:\Codex\Stock_System`（main）· `.worktrees\auth-market-vertical-slice` |
@@ -41,7 +41,7 @@
 
 | 里程碑 | 目标 | 状态 |
 | --- | --- | --- |
-| M1 | 合流与工程地基 | 🟡 6/11 完成（M1-05、M1-07 部分、M1-09、M1-10、M1-11 待办；新增 M1-12~M1-15） |
+| M1 | 合流与工程地基 | 🟡 7/11 完成（M1-07 部分、M1-09、M1-10、M1-11 待办；新增 M1-12~M1-15） |
 | M2 | 市场域纵向补全（游客主流程全真实） | ⬜ 未开始（9 个任务） |
 | M3 | 用户态闭环与 AI 研究编排 | ⬜ 未开始（12 个任务） |
 
@@ -60,16 +60,15 @@
 
 | # | 问题 | 严重度 | 处置 |
 | --- | --- | --- | --- |
-| 1 | 全栈 Compose 端到端未验收 | 🟠 | M1-05 |
-| 2 | `preflight_existing_schema.sql` 从未在真实旧库运行过 | 🟠 | M1-12 |
-| 3 | CI 未在 GitHub 实际跑过；分支保护未设置 | 🟠 | M1-07 收尾（需用户配置） |
-| 4 | CI 仅覆盖空库路径，未覆盖旧库升级路径 | 🟡 | M1-14 |
-| 5 | 9 个前端页面仍走 mockApi | 🟠 | M2-08 / M3-03 / M3-05 / M3-10 |
-| 6 | 根 README / backend README / frontend `.env.example` 缺失 | 🟡 | M1-09 |
-| 7 | `element-plus` 声明未使用 | 🟡 | M1-10 |
-| 8 | `AppShell.test.ts` 有 Vue router 注入警告 | 🟡 | M1-11 |
-| 9 | 无 CHANGELOG.md | 🟡 | M1-13 |
-| 10 | 认证默认值偏松（`JWT_SECRET` 默认空、dev `COOKIE_SECURE=false`、演示账号固定密码） | 🟡 | 生产 profile 需单独加固，待排期 |
+| 1 | `preflight_existing_schema.sql` 从未在真实旧库运行过 | 🟠 | M1-12 |
+| 2 | CI 未在 GitHub 实际跑过；分支保护未设置 | 🟠 | M1-07 收尾（需用户配置） |
+| 3 | CI 仅覆盖空库路径，未覆盖旧库升级路径 | 🟡 | M1-14 |
+| 4 | 9 个前端页面仍走 mockApi | 🟠 | M2-08 / M3-03 / M3-05 / M3-10 |
+| 5 | 根 README / backend README / frontend `.env.example` 缺失 | 🟡 | M1-09 |
+| 6 | `element-plus` 声明未使用 | 🟡 | M1-10 |
+| 7 | `AppShell.test.ts` 有 Vue router 注入警告 | 🟡 | M1-11 |
+| 8 | 无 CHANGELOG.md | 🟡 | M1-13 |
+| 9 | 认证默认值偏松（`JWT_SECRET` 默认空、dev `COOKIE_SECURE=false`、演示账号固定密码） | 🟡 | 生产 profile 需单独加固，待排期 |
 
 ### 已定位的环境故障（含根因）
 
@@ -84,6 +83,10 @@
 **4. 分支引用被外部删除** —— `.git/refs/heads/codex/` 目录建成后立即消失，`git update-ref` 返回 0 但不落盘；非嵌套引用稳定。已改用非嵌套分支名。
 
 **5. 24MB 旧库导入超时** —— 逐条 INSERT 共 145,382 次独立事务，超出 MySQL 健康检查窗口（30 × 5s = 150s）导致 `dependency failed to start`。裁剪为 149KB 后 **22 秒即 healthy**。
+
+**6. 容器内依赖下载中断（镜像构建随机失败）** —— 容器网络对境外大流量下载存在约 **3% 的偶发连接中断**。已排除 MTU（=1500 正常）与链路本身（单文件 891KB 可完整下载、速度 757 kB/s），确认只在**并发**下出现。
+- 后端 Maven：`Premature end of Content-Length delimited message body` → 阿里云镜像 + wagon 重试 `count=5`
+- 前端 npm：直连 `registry.npmjs.org` 报 `ECONNRESET`；换 npmmirror 后报 `EIDLETIMEOUT`（tarball 所在 `cdn.npmmirror.com` 连接空闲挂死）→ 国内镜像源 + `--maxsockets=5` + 拉长超时 + 外层 3 次重试（保留 npm 缓存使重试增量续传）
 
 ## 7. 技术栈与运行方式
 
@@ -134,6 +137,8 @@ docker exec -i zhishi-legacy-mysql-1 mysql -ustock -pstock_dev_password stock_sy
 
 ## 10. 下一步
 
-**M1-05 全栈 Compose 端到端验收**：构建 stock-api / stock-job / frontend 镜像，起完整栈，跑 `npm run e2e:real` 验证「市场 API 真实数据 + 登录 + Cookie 恢复 + 退出 + 路由保护」全链路。
+**M1 收尾（文档与清理类，风险低）**：M1-09 补根 README / `backend/README.md` / `frontend/.env.example`、M1-10 移除未使用的 `element-plus`、M1-11 修复 `AppShell.test.ts` 的 router 注入警告、M1-13 补 `CHANGELOG.md`、M1-15 统一文档中的 Compose 调用方式。
 
-> 该任务需要多次 Docker 镜像构建（后端 Maven 构建在容器内执行、前端 npm ci + vite build），耗时较长。
+**随后进入 M2-01**（交易日历与市场状态），开始市场域纵向补全。
+
+> 仍待用户操作：GitHub 分支保护配置（见第 9 节）。
