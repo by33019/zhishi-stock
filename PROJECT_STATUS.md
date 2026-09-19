@@ -1,20 +1,20 @@
 # PROJECT_STATUS.md — 知势平台项目状态
 
-> 最后更新：2026-09-19（M1-01 ~ M1-06 完成，全栈端到端验收通过）
+> 最后更新：2026-09-19（M1 主体完成：合流 + 工程地基 + 全栈端到端验收 + 文档收尾）
 > 任务清单见 `TASKS.md`，路线图见 `docs/superpowers/plans/2026-09-19-mvp-delivery-roadmap.md`。
 
 ---
 
 ## 1. 一句话状态
 
-**"知势" AI 智能股票分析平台**：设计文档完备、数据库迁移完备、前端高保真原型可跑、后端首个纵向切片（认证 + 市场总览）已跑通，**且已合入 `main`**。工程地基（mvn 修复、后端 45 测试复跑、旧库升级路径验证、CI 工作流）已就位。剩余：全栈 Compose 端到端验收（M1-05）、分支保护配置、以及 M2/M3 的业务纵向切片。
+**"知势" AI 智能股票分析平台**：设计文档完备、数据库迁移完备、前端高保真原型可跑、后端首个纵向切片（认证 + 市场总览）已跑通并合入 `main`，**且全栈 Compose 端到端验收已通过**（真实 API + 登录 + Cookie 恢复 + 退出 + 路由保护全链路）。工程地基（mvn 修复、后端 45 测试复跑、旧库升级路径验证、CI 工作流、容器构建稳定性修复、项目文档补全）已就位。剩余：分支保护配置（需用户操作）、M1 的 3 个待办（M1-12 / M1-14 / M1-16）、以及 M2/M3 的业务纵向切片。
 
 ## 2. 仓库与分支
 
 | 项 | 值 |
 | --- | --- |
 | 远端 | `git@github.com:by33019/zhishi-stock.git`（SSH，连通正常） |
-| 本地 `main` | `1d6f853`（含后端全量代码 + CI + 数据库工程 + 容器构建稳定性修复） |
+| 本地 `main` | 最新提交见 `CHANGELOG.md`；含后端全量代码、CI、数据库工程、容器构建稳定性修复、项目文档 |
 | `auth-market-vertical-slice` | `0eeee92`，本地与远端同步 |
 | 合并方式 | **零冲突快进合并**，无合并提交，保留 6 条中文提交记录 |
 | 工作树 | `D:\Codex\Stock_System`（main）· `.worktrees\auth-market-vertical-slice` |
@@ -33,15 +33,17 @@
 | 迁移后完整性校验 | ✅ 通过 | `post_migration_validation.sql` 无异常明细，`foreign_key_count = 0` |
 | 前端 main 类型检查 + 测试 | ✅ 通过 | 10 文件 / 20 测试 |
 | 前端 slice 类型检查 + 测试 | ✅ 通过 | 13 文件 / 35 测试 |
+| 前端生产构建 | ✅ 通过 | `vite build` 成功，dist 923 KB |
 | CI | ⚠️ 工作流已提交，尚未在 GitHub 上运行 | `.github/workflows/ci.yml`（3 作业） |
-| 全栈 Compose 端到端 | ⬜ 未执行 | M1-05 |
+| 全栈 Compose 端到端 | ✅ **已通过** | 6 容器全部启动、无 ERROR；`npm run e2e:real` 通过 |
+| 容器镜像构建 | ✅ 稳定可重复 | 修复容器内依赖下载中断后，6 镜像连续构建成功 |
 | 数据库迁移在真实库执行 | ✅ 空库 + 旧库升级两条路径均已完成 | 见上 |
 
 ## 4. 里程碑进度
 
 | 里程碑 | 目标 | 状态 |
 | --- | --- | --- |
-| M1 | 合流与工程地基 | 🟡 7/11 完成（M1-07 部分、M1-09、M1-10、M1-11 待办；新增 M1-12~M1-15） |
+| M1 | 合流与工程地基 | 🟢 12/16 完成（M1-07 工作流已就位，分支保护待用户配置；待办 M1-12 / M1-14 / M1-16） |
 | M2 | 市场域纵向补全（游客主流程全真实） | ⬜ 未开始（9 个任务） |
 | M3 | 用户态闭环与 AI 研究编排 | ⬜ 未开始（12 个任务） |
 
@@ -54,7 +56,7 @@
 | 前端原型 | ✅ 页面 100% / 真实接入 2/11 | 11 路由全部有页面；`/market` 与 `/login` 接真实 API |
 | 后端 | 🟡 2/8 域 | 认证闭环 ✅、市场总览（仅 MKT-01）🟡；其余未开工 |
 | 测试 | ✅ 80 个 | 后端 45 + 前端 35；无覆盖率门槛 |
-| 工程化 | 🟡 60% | CI 工作流 ✅、TASKS/STATUS ✅、路线图 ✅；分支保护、CHANGELOG、根 README 待补 |
+| 工程化 | 🟢 85% | CI 工作流 ✅、TASKS/STATUS/CHANGELOG ✅、根与模块 README ✅、容器构建稳定 ✅；分支保护待用户配置 |
 
 ## 6. 已知问题（按严重度）
 
@@ -62,13 +64,10 @@
 | --- | --- | --- | --- |
 | 1 | `preflight_existing_schema.sql` 从未在真实旧库运行过 | 🟠 | M1-12 |
 | 2 | CI 未在 GitHub 实际跑过；分支保护未设置 | 🟠 | M1-07 收尾（需用户配置） |
-| 3 | CI 仅覆盖空库路径，未覆盖旧库升级路径 | 🟡 | M1-14 |
-| 4 | 9 个前端页面仍走 mockApi | 🟠 | M2-08 / M3-03 / M3-05 / M3-10 |
-| 5 | 根 README / backend README / frontend `.env.example` 缺失 | 🟡 | M1-09 |
-| 6 | `element-plus` 声明未使用 | 🟡 | M1-10 |
-| 7 | `AppShell.test.ts` 有 Vue router 注入警告 | 🟡 | M1-11 |
-| 8 | 无 CHANGELOG.md | 🟡 | M1-13 |
-| 9 | 认证默认值偏松（`JWT_SECRET` 默认空、dev `COOKIE_SECURE=false`、演示账号固定密码） | 🟡 | 生产 profile 需单独加固，待排期 |
+| 3 | **本地 `npm run dev` 无法联调真实接口**（Vite 未配 proxy + 后端无 CORS，`/api/v1/**` 被 SPA fallback 返回 HTML） | 🟠 | M1-16（本次实测确认） |
+| 4 | CI 仅覆盖空库路径，未覆盖旧库升级路径 | 🟡 | M1-14 |
+| 5 | 9 个前端页面仍走 mockApi | 🟠 | M2-08 / M3-03 / M3-05 / M3-10 |
+| 6 | 认证默认值偏松（`JWT_SECRET` 默认空、dev `COOKIE_SECURE=false`、演示账号固定密码） | 🟡 | 生产 profile 需单独加固，待排期 |
 
 ### 已定位的环境故障（含根因）
 
@@ -100,6 +99,7 @@
 ```bash
 # 前端
 cd frontend && npm install && npm run dev      # http://localhost:5173/market
+                                               # 注意：dev 模式取不到真实接口，见 M1-16
 npm run typecheck && npx vitest --configLoader runner --run
 
 # 后端（测试需 Docker）
@@ -133,12 +133,22 @@ docker exec -i zhishi-legacy-mysql-1 mysql -ustock -pstock_dev_password stock_sy
 ## 9. 待用户处理
 
 1. **配置 GitHub 分支保护**，把 CI 三个作业设为必需检查（Settings → Branches → Branch protection rules → Require status checks）。本机无 `gh` CLI，无法代设。
-2. 确认 `.workbuddy-ai/` 是否加入 `.gitignore`（建议加入，与已有的 `.superpowers/`、`.worktrees/` 一致）。
+2. **决定 M1-16 的修复方式**：本地 `npm run dev` 无法联调真实接口。
+   推荐在 `vite.config.ts` 增加 `server.proxy` 把 `/api` 转发到 `http://localhost:8080`
+   （无需改动后端、天然无跨域）；备选是后端增加 CORS 配置放行 dev 源。
+
+> `.workbuddy-ai/` 已加入 `.gitignore`（第 40 行），无需再处理。
 
 ## 10. 下一步
 
-**M1 收尾（文档与清理类，风险低）**：M1-09 补根 README / `backend/README.md` / `frontend/.env.example`、M1-10 移除未使用的 `element-plus`、M1-11 修复 `AppShell.test.ts` 的 router 注入警告、M1-13 补 `CHANGELOG.md`、M1-15 统一文档中的 Compose 调用方式。
+**M1 剩余 3 项**：
 
-**随后进入 M2-01**（交易日历与市场状态），开始市场域纵向补全。
+| 任务 | 内容 |
+| --- | --- |
+| M1-12 | 校验 `preflight_existing_schema.sql` 在真实旧库上的行为（该脚本从未实际运行过） |
+| M1-14 | CI 增加「旧库升级路径」作业（当前只覆盖空库路径） |
+| M1-16 | 修复本地 dev 联调（待用户选定方案） |
+
+**M2 起点：M2-01 交易日历与市场状态**，开始市场域纵向补全。
 
 > 仍待用户操作：GitHub 分支保护配置（见第 9 节）。

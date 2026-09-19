@@ -6,8 +6,11 @@
 #   2. Flyway 以 `baselineOnMigrate` 把该库记录为 V1 基线，只执行 V2–V8。
 #
 # 用法（必须使用全新数据卷，否则 `docker-entrypoint-initdb.d` 不会执行）：
-#   docker compose -f compose.yaml -f compose.legacy.yaml -p zhishi-legacy up -d
-#   重置：docker compose -f compose.yaml -f compose.legacy.yaml -p zhishi-legacy down -v
+#   docker-compose -f compose.yaml -f compose.legacy.yaml -p zhishi-legacy up -d
+#   重置：docker-compose -f compose.yaml -f compose.legacy.yaml -p zhishi-legacy down -v
+#
+# 注：本机环境 `docker compose` 子命令不可用，只有独立命令 `docker-compose`。
+#     若你的环境两者都可用，把 `docker-compose` 换成 `docker compose` 即可，参数一致。
 #
 # 约束：
 # - 此路径下 Flyway 禁止执行 V1，否则会与已存在的旧表冲突。

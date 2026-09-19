@@ -59,8 +59,8 @@
 | M1-01 | 修复 Git Bash 下 mvn 启动失败 | P0 | — | `/d/maven/apache-maven-3.9.10-bin/apache-maven-3.9.10/bin/mvn`（本机，非仓库） | bash 中 `mvn -v` 输出 Maven 3.9.10 | `mvn -v` | 0.2d |
 | M1-02 | 提交 worktree 的 2 处未提交改动 | P0 | — | `compose.yaml`、`frontend/e2e/auth-market.real.mjs` | worktree `git status` 干净 | `git status` | 0.1d |
 | M1-03 | 本地复跑后端全量测试（含 Testcontainers） | P0 | M1-01、Docker 启动 | `backend/**` | 45 个测试全绿 | `mvn -f backend/pom.xml test` | 0.3d |
-| M1-04 | 数据库基线决策并落地 | P0 | M1-03 | `sql/**`、`compose.yaml`、`.env` | 见下方"待你拍板的决策 1" | `docker compose up flyway` + `checks/post_migration_validation.sql` | 0.5d |
-| M1-05 | 全栈 Compose 端到端验收 | P0 | M1-04 | `compose.yaml`、`frontend/e2e/auth-market.real.mjs` | `http://localhost:8088/market` 显示真实 API 数据；真实 e2e 通过 | `docker compose up -d --build` + `npm run e2e:real` | 0.5d |
+| M1-04 | 数据库基线决策并落地 | P0 | M1-03 | `sql/**`、`compose.yaml`、`.env` | 见下方"待你拍板的决策 1" | `docker-compose up flyway` + `checks/post_migration_validation.sql` | 0.5d |
+| M1-05 | 全栈 Compose 端到端验收 | P0 | M1-04 | `compose.yaml`、`frontend/e2e/auth-market.real.mjs` | `http://localhost:8088/market` 显示真实 API 数据；真实 e2e 通过 | `docker-compose up -d --build` + `npm run e2e:real` | 0.5d |
 | M1-06 | 合流 slice → main 并推送 | P0 | M1-03、M1-05 | 全仓库 | `origin/main` 含后端；工作树删除 | `git push` + 远端核对 | 0.2d |
 | M1-07 | 建立 CI（GitHub Actions） | P0 | M1-06 | `.github/workflows/ci.yml` | push/PR 触发；后端、前端、SQL 三个作业绿 | 观察 Actions 运行结果 | 0.5d |
 | M1-08 | 建立 TASKS.md / PROJECT_STATUS.md / CHANGELOG.md | P1 | — | 根目录 3 个文件 | 与路线图一致，可逐任务勾选 | 人工核对 | 0.3d |
