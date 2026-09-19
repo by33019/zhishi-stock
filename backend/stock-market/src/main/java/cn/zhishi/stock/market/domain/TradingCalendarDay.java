@@ -40,6 +40,19 @@ public record TradingCalendarDay(
                 .findFirst();
     }
 
+    /**
+     * 当日最后一个交易时段的结束时间，即收盘时刻；非交易日没有时段，返回空。
+     *
+     * <p>与 {@link #firstSessionStart()} 对称：需要判断"当日交易是否已经结束"时用它，
+     * 不要在调用方硬编码 15:00。
+     */
+    public Optional<LocalTime> lastSessionEnd() {
+        if (windows.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(windows.get(windows.size() - 1).end());
+    }
+
     public record Window(TradingSession session, LocalTime start, LocalTime end) {
 
         public Window {

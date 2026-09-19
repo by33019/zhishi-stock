@@ -5,14 +5,17 @@ import cn.zhishi.stock.backend.web.TraceIdFilter;
 import cn.zhishi.stock.integration.market.SimulatedLimitRuleProvider;
 import cn.zhishi.stock.integration.market.SimulatedQuoteProvider;
 import cn.zhishi.stock.integration.market.SimulatedTradingCalendarProvider;
+import cn.zhishi.stock.integration.market.SimulatedTurnoverTrendProvider;
 import cn.zhishi.stock.market.application.MarketBreadthQueryService;
 import cn.zhishi.stock.market.application.MarketOverviewQueryService;
 import cn.zhishi.stock.market.application.MarketStatusQueryService;
+import cn.zhishi.stock.market.application.TurnoverTrendQueryService;
 import cn.zhishi.stock.market.domain.LimitRuleProvider;
 import cn.zhishi.stock.market.domain.MarketOverviewArchive;
 import cn.zhishi.stock.market.domain.MarketOverviewStore;
 import cn.zhishi.stock.market.domain.QuoteProvider;
 import cn.zhishi.stock.market.domain.TradingCalendarProvider;
+import cn.zhishi.stock.market.domain.TurnoverTrendProvider;
 import cn.zhishi.stock.market.infrastructure.JdbcMarketOverviewArchive;
 import cn.zhishi.stock.market.infrastructure.MarketOverviewJsonCodec;
 import cn.zhishi.stock.market.infrastructure.RedisMarketOverviewStore;
@@ -181,6 +184,19 @@ public class BackendConfiguration {
     MarketBreadthQueryService marketBreadthQueryService(
             MarketOverviewQueryService marketOverviewQueryService) {
         return new MarketBreadthQueryService(marketOverviewQueryService);
+    }
+
+    @Bean
+    TurnoverTrendProvider turnoverTrendProvider(
+            Clock clock,
+            TradingCalendarProvider tradingCalendarProvider) {
+        return new SimulatedTurnoverTrendProvider(clock, tradingCalendarProvider);
+    }
+
+    @Bean
+    TurnoverTrendQueryService turnoverTrendQueryService(
+            TurnoverTrendProvider turnoverTrendProvider) {
+        return new TurnoverTrendQueryService(turnoverTrendProvider);
     }
 
     @Bean

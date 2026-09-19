@@ -2,6 +2,9 @@ export type AccessLevel = 'PUBLIC' | 'USER' | 'ADMIN'
 export type DataStatus = 'REALTIME' | 'DELAYED' | 'STALE' | 'UNAVAILABLE'
 export type Trend = 'up' | 'down' | 'flat'
 
+/** 成交趋势档位；TODAY 为分钟粒度，5D / 20D 为日粒度。 */
+export type TurnoverRange = 'TODAY' | '5D' | '20D'
+
 /** 粗粒度市场状态，跨市场通用，用于视觉与文案分支。 */
 export type MarketSessionStatus = 'PRE_OPEN' | 'CALL_AUCTION' | 'TRADING' | 'BREAK' | 'CLOSED'
 
@@ -97,6 +100,32 @@ export interface MarketOverview {
   componentStatus: Record<string, DataStatus>
   lastSuccessfulSyncAt: string
   snapshotVersion: string
+}
+
+/** MKT-04 成交趋势的单位声明：金额为人民币元，成交量为股。 */
+export interface TurnoverTrendUnit {
+  tradeAmount: string
+  tradeVolume: string
+}
+
+/**
+ * 单个趋势点。盘中档位 time 为带时区偏移的分钟边界、数值为开盘以来的累计值；
+ * 跨日档位 time 为交易日 yyyy-MM-dd、数值为该日全天总量。
+ */
+export interface TurnoverTrendPoint {
+  time: string
+  tradeAmount: string
+  tradeVolume: string
+}
+
+export interface TurnoverTrend {
+  marketCode: string
+  range: TurnoverRange
+  /** 盘中档位为 1m / 5m / 15m / 30m / 60m；跨日档位为 null。 */
+  interval: string | null
+  unit: TurnoverTrendUnit
+  dataCutoffAt: string
+  points: TurnoverTrendPoint[]
 }
 
 export interface KlinePoint {

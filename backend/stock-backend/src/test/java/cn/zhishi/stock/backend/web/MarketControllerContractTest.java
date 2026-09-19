@@ -8,11 +8,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import cn.zhishi.stock.market.application.MarketBreadthQueryService;
 import cn.zhishi.stock.market.application.MarketOverviewQueryService;
 import cn.zhishi.stock.market.application.MarketStatusQueryService;
+import cn.zhishi.stock.market.application.TurnoverTrendQueryService;
 import cn.zhishi.stock.market.domain.MarketOverview;
 import cn.zhishi.stock.market.domain.MarketSessionStatus;
 import cn.zhishi.stock.market.domain.TradingCalendarDay;
 import cn.zhishi.stock.market.domain.TradingCalendarProvider;
 import cn.zhishi.stock.market.domain.TradingSession;
+import cn.zhishi.stock.market.domain.TurnoverTrend;
+import cn.zhishi.stock.market.domain.TurnoverTrendProvider;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import java.time.Clock;
@@ -151,6 +154,58 @@ class MarketControllerContractTest {
         .andExpect(jsonPath("$.code").value("MARKET_DATA_UNAVAILABLE"));
   }
 
+  @Test
+  void returnsTurnoverTrendContract() throws Exception {
+    MockMvc mvc = mvc(overviewService());
+
+    mvc.perform(get("/api/v1/markets/CN/turnover-trend").queryParam("range", "TODAY"))
+        .andExpect(status().isOk())
+        .andExpect(header().exists("X-Trace-Id"))
+        .andExpect(jsonPath("$.success").value(true))
+        .andExpect(jsonPath("$.code").value("SUCCESS"))
+        .andExpect(jsonPath("$.data.marketCode").value("CN"))
+        .andExpect(jsonPath("$.data.range").value("TODAY"))
+        .andExpect(jsonPath("$.data.interval").value("1m"))
+        .andExpect(jsonPath("$.data.unit.tradeAmount").value("CNY"))
+        .andExpect(jsonPath("$.data.unit.tradeVolume").value("SHARE"))
+        .andExpect(jsonPath("$.data.dataCutoffAt").value("2026-09-11T11:30:00+08:00"))
+        .andExpect(jsonPath("$.data.points.length()").value(2))
+        .andExpect(jsonPath("$.data.points[0].time").value("2026-09-11T09:31:00+08:00"))
+        .andExpect(jsonPath("$.data.points[0].tradeAmount").value("100"))
+        .andExpect(jsonPath("$.data.points[0].tradeVolume").value("10"))
+        .andExpect(jsonPath("$.data.points[1].time").value("2026-09-11T09:32:00+08:00"));
+  }
+
+  @Test
+  void returns400ForUnknownTurnoverRange() throws Exception {
+    MockMvc mvc = mvc(overviewService());
+
+    mvc.perform(get("/api/v1/markets/CN/turnover-trend").queryParam("range", "30D"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.success").value(false))
+        .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+  }
+
+  @Test
+  void returns400ForIntervalOnDailyTurnoverRange() throws Exception {
+    MockMvc mvc = mvc(overviewService());
+
+    mvc.perform(get("/api/v1/markets/CN/turnover-trend")
+            .queryParam("range", "5D")
+            .queryParam("interval", "5m"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+  }
+
+  @Test
+  void returns404ForUnsupportedMarketOnTurnoverTrend() throws Exception {
+    MockMvc mvc = mvc(overviewService());
+
+    mvc.perform(get("/api/v1/markets/US/turnover-trend").queryParam("range", "TODAY"))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.code").value("MARKET_NOT_FOUND"));
+  }
+
   /**
    * 独立 MockMvc 的默认 ObjectMapper 未注册 JavaTimeModule，会把 LocalDate 序列化成数组
    * （如 [2026,9,11]）；而 Spring 的 Jackson2ObjectMapperBuilder 默认也不关闭
@@ -165,11 +220,27 @@ class MarketControllerContractTest {
             service,
             statusService(),
             new MarketBreadthQueryService(service),
+            turnoverTrendService(),
             CLOCK))
         .setControllerAdvice(new GlobalExceptionHandler(CLOCK))
         .setMessageConverters(new MappingJackson2HttpMessageConverter(mapper))
         .addFilters(new TraceIdFilter())
         .build();
+  }
+
+  private static TurnoverTrendQueryService turnoverTrendService() {
+    TurnoverTrendProvider provider = (marketCode, range, interval) -> "CN".equals(marketCode)
+        ? Optional.of(new TurnoverTrend(
+            marketCode,
+            range.code(),
+            interval,
+            TurnoverTrend.Unit.standard(),
+            OffsetDateTime.of(FRIDAY, LocalTime.of(11, 30), ZoneOffset.ofHours(8)),
+            List.of(
+                new TurnoverTrend.Point("2026-09-11T09:31:00+08:00", "100", "10"),
+                new TurnoverTrend.Point("2026-09-11T09:32:00+08:00", "220", "21"))))
+        : Optional.empty();
+    return new TurnoverTrendQueryService(provider);
   }
 
   private static MarketOverviewQueryService overviewService() {

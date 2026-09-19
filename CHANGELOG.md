@@ -23,6 +23,38 @@
 
 ---
 
+## 2026-09-19 — M2-03 成交趋势（MKT-04）
+
+### 新增
+
+- **MKT-04 接口** `GET /api/v1/markets/{marketCode}/turnover-trend`（PUBLIC，参数 `range`（默认 `TODAY`）、`interval`（仅分钟档可用，默认 `1m`）），返回 `marketCode`、`range`、`interval`、`unit`、`dataCutoffAt`、`points[]`
+- **粒度枚举** `TurnoverRange`（`TODAY` 1 个交易日 / 分钟粒度、`5D` 5 个交易日 / 日粒度、`20D` 20 个交易日 / 日粒度；`fromCode` 大小写不敏感）
+- **响应体** `TurnoverTrend`：`Unit{tradeAmount:"CNY", tradeVolume:"SHARE"}` 显式声明单位，`Point{time, tradeAmount, tradeVolume}` 数值一律字符串（避免前端精度丢失）
+- **领域端口** `TurnoverTrendProvider` 与应用服务 `TurnoverTrendQueryService`（`range` / `interval` 校验在用例层，非法值抛 `InvalidTurnoverParameterException` → 400 `INVALID_REQUEST`）
+- **模拟数据源** `SimulatedTurnoverTrendProvider`：按交易日历确定性生成分钟 / 日序列，**全程整数运算**（避开 `Math.sin` / `Math.exp` 的跨平台 1 ulp 差异）
+- `TradingCalendarDay.lastSessionEnd()`（与既有 `firstSessionStart()` 对称），供生成器取收盘时刻而不硬编码 15:00
+- 设计文档 `docs/superpowers/specs/2026-09-19-turnover-trend.md`
+
+### 变更
+
+- `MarketController` 构造函数新增 `TurnoverTrendQueryService` 依赖；`range` / `interval` 声明为 `String`，避免 Spring 把"取值不在白名单"转成 `MethodArgumentTypeMismatchException` 而混淆语义
+- `GlobalExceptionHandler` 新增 `InvalidTurnoverParameterException` → 400
+- `BackendConfiguration` 新增 `TurnoverTrendProvider` / `TurnoverTrendQueryService` Bean
+- 前端 `src/types/domain.ts` 新增 `TurnoverRange` / `TurnoverTrendUnit` / `TurnoverTrendPoint` / `TurnoverTrend`
+
+### 说明
+
+- **点位 `time` 取「区间结束时刻」**：首个点为 `09:31`（`1m` 档），因此 `dataCutoffAt` 天然等于最后一个点的时间，无需额外推导
+- **只返回已走完的区间**：`interval=5m` 在 `10:02` 只返回 6 个点（截至 `10:00`），不返回半截区间
+- **`range=TODAY` 点位是累计值**：从开盘累计到该时刻，曲线单调不减；累计值按 `全天总量 × 累计权重 / 总权重` 计算而非逐项相加，避免截断误差累积
+- **往返一致性**：今日曲线终点 == 同一天在 `5D` / `20D` 日粒度上的点（单测断言），保证分钟与日两套视图不会互相矛盾
+- 分钟网格为连续竞价两段 `09:30–11:30`、`13:00–15:00`（共 240 分钟），集合竞价并入相邻点
+- **日粒度起点排除仍在运行的当日**（盘中查 `5D`，最后一天是上一交易日），避免出现"半天数据"的伪日线
+- 日粒度档位传 `interval` → 400（不静默忽略），避免调用方误以为参数生效
+- **不落库**：`stock_minute_bar` / `stock_kline_day` 是证券级表，市场级聚合代价过大；个股级落库归 M2-05
+
+---
+
 ## 2026-09-19 — M2-02 市场广度（MKT-03）
 
 ### 新增
