@@ -2,10 +2,13 @@ package cn.zhishi.stock.backend.config;
 
 import cn.zhishi.stock.backend.security.JwtAuthenticationFilter;
 import cn.zhishi.stock.backend.web.TraceIdFilter;
+import cn.zhishi.stock.integration.market.SimulatedLimitRuleProvider;
 import cn.zhishi.stock.integration.market.SimulatedQuoteProvider;
 import cn.zhishi.stock.integration.market.SimulatedTradingCalendarProvider;
+import cn.zhishi.stock.market.application.MarketBreadthQueryService;
 import cn.zhishi.stock.market.application.MarketOverviewQueryService;
 import cn.zhishi.stock.market.application.MarketStatusQueryService;
+import cn.zhishi.stock.market.domain.LimitRuleProvider;
 import cn.zhishi.stock.market.domain.MarketOverviewArchive;
 import cn.zhishi.stock.market.domain.MarketOverviewStore;
 import cn.zhishi.stock.market.domain.QuoteProvider;
@@ -175,12 +178,25 @@ public class BackendConfiguration {
     }
 
     @Bean
+    MarketBreadthQueryService marketBreadthQueryService(
+            MarketOverviewQueryService marketOverviewQueryService) {
+        return new MarketBreadthQueryService(marketOverviewQueryService);
+    }
+
+    @Bean
+    LimitRuleProvider limitRuleProvider() {
+        return new SimulatedLimitRuleProvider();
+    }
+
+    @Bean
     QuoteProvider quoteProvider(
             Clock clock,
+            LimitRuleProvider limitRuleProvider,
             @Value("${stock.market.scenario:NORMAL}") String scenario) {
         return new SimulatedQuoteProvider(
                 clock,
-                SimulatedQuoteProvider.Scenario.valueOf(scenario.toUpperCase()));
+                SimulatedQuoteProvider.Scenario.valueOf(scenario.toUpperCase()),
+                limitRuleProvider);
     }
 
     @Bean

@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import cn.zhishi.stock.market.application.MarketBreadthQueryService;
 import cn.zhishi.stock.market.application.MarketOverviewQueryService;
 import cn.zhishi.stock.market.application.MarketStatusQueryService;
 import cn.zhishi.stock.market.domain.MarketOverview;
@@ -20,6 +21,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -35,6 +37,9 @@ class MarketControllerContractTest {
       Instant.parse("2026-09-11T02:00:00Z"), ZoneId.of("Asia/Shanghai"));
 
   private static final LocalDate FRIDAY = LocalDate.of(2026, 9, 11);
+
+  private static final OffsetDateTime DATA_TIME =
+      OffsetDateTime.of(2026, 9, 11, 10, 0, 0, 0, ZoneOffset.ofHours(8));
 
   /** 与 SimulatedTradingCalendarProvider 一致的 A 股窗口集，使契约断言贴近真实日历。 */
   private static final List<TradingCalendarDay.Window> WINDOWS = List.of(
@@ -53,10 +58,7 @@ class MarketControllerContractTest {
 
   @Test
   void returnsUnifiedEnvelopeForAvailableMarketOverview() throws Exception {
-    var snapshot = snapshot();
-    var service = new MarketOverviewQueryService(
-        market -> Optional.of(snapshot), market -> Optional.empty());
-    MockMvc mvc = mvc(service);
+    MockMvc mvc = mvc(overviewService());
 
     mvc.perform(get("/api/v1/markets/overview").queryParam("market", "CN"))
         .andExpect(status().isOk())
@@ -70,9 +72,7 @@ class MarketControllerContractTest {
 
   @Test
   void returns503AndStableErrorCodeWhenAllMarketDataIsUnavailable() throws Exception {
-    var service = new MarketOverviewQueryService(
-        market -> Optional.empty(), market -> Optional.empty());
-    MockMvc mvc = mvc(service);
+    MockMvc mvc = mvc(unavailableOverviewService());
 
     mvc.perform(get("/api/v1/markets/overview").queryParam("market", "CN"))
         .andExpect(status().isServiceUnavailable())
@@ -119,6 +119,38 @@ class MarketControllerContractTest {
         .andExpect(status().isBadRequest());
   }
 
+  @Test
+  void returnsMarketBreadthContract() throws Exception {
+    MockMvc mvc = mvc(overviewService());
+
+    mvc.perform(get("/api/v1/markets/CN/breadth"))
+        .andExpect(status().isOk())
+        .andExpect(header().exists("X-Trace-Id"))
+        .andExpect(jsonPath("$.success").value(true))
+        .andExpect(jsonPath("$.code").value("SUCCESS"))
+        .andExpect(jsonPath("$.data.marketCode").value("CN"))
+        .andExpect(jsonPath("$.data.riseCount").value(12))
+        .andExpect(jsonPath("$.data.fallCount").value(8))
+        .andExpect(jsonPath("$.data.flatCount").value(3))
+        .andExpect(jsonPath("$.data.suspendedCount").value(2))
+        .andExpect(jsonPath("$.data.limitUpCount").value(4))
+        .andExpect(jsonPath("$.data.limitDownCount").value(1))
+        .andExpect(jsonPath("$.data.totalCount").value(25))
+        .andExpect(jsonPath("$.data.dataTime").value("2026-09-11T10:00:00+08:00"))
+        .andExpect(jsonPath("$.data.dataStatus").value("REALTIME"))
+        .andExpect(jsonPath("$.data.snapshotVersion").value("contract-v1"));
+  }
+
+  @Test
+  void returns503ForBreadthWhenNoSnapshotExists() throws Exception {
+    MockMvc mvc = mvc(unavailableOverviewService());
+
+    mvc.perform(get("/api/v1/markets/CN/breadth"))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(jsonPath("$.success").value(false))
+        .andExpect(jsonPath("$.code").value("MARKET_DATA_UNAVAILABLE"));
+  }
+
   /**
    * 独立 MockMvc 的默认 ObjectMapper 未注册 JavaTimeModule，会把 LocalDate 序列化成数组
    * （如 [2026,9,11]）；而 Spring 的 Jackson2ObjectMapperBuilder 默认也不关闭
@@ -129,8 +161,11 @@ class MarketControllerContractTest {
     ObjectMapper mapper = Jackson2ObjectMapperBuilder.json()
         .featuresToDisable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
         .build();
-    return MockMvcBuilders.standaloneSetup(
-            new MarketController(service, statusService(), CLOCK))
+    return MockMvcBuilders.standaloneSetup(new MarketController(
+            service,
+            statusService(),
+            new MarketBreadthQueryService(service),
+            CLOCK))
         .setControllerAdvice(new GlobalExceptionHandler(CLOCK))
         .setMessageConverters(new MappingJackson2HttpMessageConverter(mapper))
         .addFilters(new TraceIdFilter())
@@ -138,6 +173,11 @@ class MarketControllerContractTest {
   }
 
   private static MarketOverviewQueryService overviewService() {
+    return new MarketOverviewQueryService(
+        market -> Optional.of(snapshot()), market -> Optional.empty());
+  }
+
+  private static MarketOverviewQueryService unavailableOverviewService() {
     return new MarketOverviewQueryService(market -> Optional.empty(), market -> Optional.empty());
   }
 
@@ -153,21 +193,20 @@ class MarketControllerContractTest {
   }
 
   private static MarketOverview snapshot() {
-    var now = OffsetDateTime.now(CLOCK);
     return new MarketOverview(
         "CN",
         MarketSessionStatus.TRADING,
         FRIDAY,
-        now,
+        DATA_TIME,
         MarketOverview.DataStatus.REALTIME,
         List.of(),
-        new MarketOverview.BreadthData(1, 1, 0, 0, 0),
+        new MarketOverview.BreadthData(12, 8, 3, 2, 4, 1),
         new MarketOverview.TurnoverData("0", "0", List.of()),
         List.of(),
         List.of(),
         List.of(),
         Map.of("indices", MarketOverview.DataStatus.REALTIME),
-        now,
-        "v1");
+        DATA_TIME,
+        "contract-v1");
   }
 }

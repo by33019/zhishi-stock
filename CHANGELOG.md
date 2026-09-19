@@ -23,6 +23,37 @@
 
 ---
 
+## 2026-09-19 — M2-02 市场广度（MKT-03）
+
+### 新增
+
+- **MKT-03 接口** `GET /api/v1/markets/{marketCode}/breadth`（PUBLIC，可选 `snapshotTime`），返回 `marketCode`、`riseCount`、`fallCount`、`flatCount`、`suspendedCount`、`limitUpCount`、`limitDownCount`、`totalCount`、`dataTime`、`dataStatus`、`lastSuccessfulSyncAt`、`snapshotVersion`
+- **限幅规则领域模型** `LimitRule`（镜像 `stock_limit_rule` 表，自带 `limitUpPrice` / `limitDownPrice`，四舍五入到分）与端口 `LimitRuleProvider`
+- **规则匹配器** `LimitRuleMatcher`：静态属性全等 → 生效窗口 → 上市天数窗口 → `priorityNo` 最小 → `ruleCode` 字典序，保证结果确定性
+- **广度计数器** `BreadthCalculator`：六类归类优先级（停牌 → 涨停 → 跌停 → 上涨 → 下跌 → 平盘），`limitUpCount ⊆ riseCount`、`limitDownCount ⊆ fallCount`；涨跌停**按价格而非比例**判定
+- **个股行情领域模型** `SecurityQuote` 与端口 `SecurityQuoteProvider`
+- **响应体** `MarketBreadth`（`totalCount` 派生自四态之和）
+- **应用服务** `MarketBreadthQueryService`
+- **模拟数据源** `SimulatedLimitRuleProvider`（10 条可核实的稳定规则：主板 ±10% / ST ±5%、创业板与科创板 ±20%、北交所 ±30%）、`SimulatedSecurityQuoteProvider`（5149 只确定性个股行情，按目标状态反推价格，与计数器构成往返一致性）
+- 设计文档 `docs/superpowers/specs/2026-09-19-market-breadth.md`
+
+### 变更
+
+- **市场广度不再是硬编码数字**：`SimulatedQuoteProvider` 改为按限幅规则对整批个股行情计数（原 `2876 / 1924 / 164 / 82 / 7` → 实测 `2976 / 1915 / 209 / 49 / 46 / 43`）
+- `MarketOverview.BreadthData` 新增 `suspendedCount`，并派生 `totalCount()`（标 `@JsonIgnore`：快照需持久化往返，派生字段不落盘，避免归档里出现第二个真相）
+- `MarketOverviewArchive` 新增 `findAt(marketCode, snapshotTime)` 默认方法；`JdbcMarketOverviewArchive` 实现之，走已有索引 `idx_market_overview_latest`
+- `MarketOverviewQueryService` 新增带 `snapshotTime` 的重载（时间回溯）；原 `getOverview(marketCode)` 行为逐字不变
+- `MarketController` 构造函数新增 `MarketBreadthQueryService` 依赖
+- `BackendConfiguration` 新增 `MarketBreadthQueryService` / `LimitRuleProvider` Bean，`QuoteProvider` 改为注入 `LimitRuleProvider`
+- 前端 `src/types/domain.ts` 的 `BreadthData` 补 `suspendedCount`（同步 MKT-01 响应新增字段），`mockApi.ts` 与 `MarketOverview.test.ts` 的固定数据同步补齐
+
+### 说明
+
+- **不编码"新股上市首日不设涨跌幅"**：该条款随板块与时期变化且各板块表述不一致，无法核实到可写进代码的程度。模型与匹配器保留了 `noPriceLimit` 与上市天数窗口能力并用合成规则单测覆盖，待规则真正入库时无需改动匹配逻辑
+- 规则缺失时**不计入涨跌停**，但仍按价格计入涨/跌/平——把"无规则"当成"不限幅"会把一只 10% 上涨的普通股算成涨停，是更严重的错误
+
+---
+
 ## 2026-09-19 — M2-01 交易日历与市场状态（MKT-02）
 
 ### 新增

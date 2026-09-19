@@ -4,6 +4,7 @@ import cn.zhishi.stock.market.domain.MarketOverview;
 import cn.zhishi.stock.market.domain.MarketOverviewArchive;
 import java.sql.Date;
 import java.sql.Timestamp;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.LongSupplier;
@@ -15,6 +16,15 @@ public class JdbcMarketOverviewArchive implements MarketOverviewArchive {
             SELECT snapshot_json
             FROM market_overview_snapshot
             WHERE market_code = ?
+            ORDER BY data_time DESC, id DESC
+            LIMIT 1
+            """;
+
+    /** 与 FIND_LATEST 共用索引 idx_market_overview_latest (market_code, data_time)。 */
+    private static final String FIND_AT = """
+            SELECT snapshot_json
+            FROM market_overview_snapshot
+            WHERE market_code = ? AND data_time <= ?
             ORDER BY data_time DESC, id DESC
             LIMIT 1
             """;
@@ -45,6 +55,16 @@ public class JdbcMarketOverviewArchive implements MarketOverviewArchive {
                 FIND_LATEST,
                 (resultSet, rowNumber) -> codec.decode(resultSet.getString("snapshot_json")),
                 marketCode);
+        return snapshots.stream().findFirst();
+    }
+
+    @Override
+    public Optional<MarketOverview> findAt(String marketCode, OffsetDateTime snapshotTime) {
+        List<MarketOverview> snapshots = jdbc.query(
+                FIND_AT,
+                (resultSet, rowNumber) -> codec.decode(resultSet.getString("snapshot_json")),
+                marketCode,
+                Timestamp.valueOf(snapshotTime.toLocalDateTime()));
         return snapshots.stream().findFirst();
     }
 

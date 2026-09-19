@@ -39,6 +39,7 @@ export interface BreadthData {
   riseCount: number
   fallCount: number
   flatCount: number
+  suspendedCount: number
   limitUpCount: number
   limitDownCount: number
 }

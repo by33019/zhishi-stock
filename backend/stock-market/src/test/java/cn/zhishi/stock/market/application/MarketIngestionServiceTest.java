@@ -91,7 +91,7 @@ class MarketIngestionServiceTest {
         dataTime,
         MarketOverview.DataStatus.REALTIME,
         List.of(),
-        new MarketOverview.BreadthData(1, 1, 0, 0, 0),
+        new MarketOverview.BreadthData(1, 1, 0, 0, 0, 0),
         new MarketOverview.TurnoverData("0", "0", List.of()),
         List.of(),
         List.of(),

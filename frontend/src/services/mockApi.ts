@@ -52,7 +52,7 @@ const marketOverview: MarketOverview = {
     { indexId: '10003', indexCode: '399006', indexName: '创业板指', latestPoint: '2586.73', changeAmount: '31.28', changeRate: '0.0122', region: 'DOMESTIC', sparkline: [2555, 2564, 2561, 2574, 2580, 2586] },
     { indexId: '10004', indexCode: 'HSI', indexName: '恒生指数', latestPoint: '25714.32', changeAmount: '-86.42', changeRate: '-0.0033', region: 'OVERSEAS', sparkline: [25800, 25782, 25810, 25750, 25736, 25714] },
   ],
-  breadth: { riseCount: 3278, fallCount: 1674, flatCount: 182, limitUpCount: 68, limitDownCount: 9 },
+  breadth: { riseCount: 3140, fallCount: 1905, flatCount: 206, suspendedCount: 51, limitUpCount: 51, limitDownCount: 51 },
   turnover: { amount: '1023000000000', previousAmount: '941200000000', points: [612, 648, 701, 742, 805, 872, 936, 1023] },
   sectors: [
     { sectorId: '20001', sectorCode: 'BK0475', sectorName: '银行', changeRate: '0.0274', tradeAmount: '82100000000', leadingStock: '浦发银行', companyCount: 42 },

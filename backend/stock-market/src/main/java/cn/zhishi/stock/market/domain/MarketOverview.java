@@ -1,5 +1,6 @@
 package cn.zhishi.stock.market.domain;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -67,12 +68,27 @@ public record MarketOverview(
         OVERSEAS
     }
 
+    /**
+     * 市场广度四态与涨跌停计数。
+     *
+     * <p>四态（涨 / 跌 / 平 / 停牌）互斥且完备，{@code totalCount} 由四态相加派生。
+     * {@code limitUpCount} 是 {@code riseCount} 的子集，{@code limitDownCount} 是 {@code fallCount} 的子集。
+     *
+     * <p>{@code totalCount} 刻意<b>不</b>参与 JSON 序列化：快照会被持久化并在读取时反序列化，
+     * 派生字段一旦落盘就会在归档里形成一个可能与四态不一致的第二真相。
+     */
     public record BreadthData(
             int riseCount,
             int fallCount,
             int flatCount,
+            int suspendedCount,
             int limitUpCount,
             int limitDownCount) {
+
+        @JsonIgnore
+        public int totalCount() {
+            return riseCount + fallCount + flatCount + suspendedCount;
+        }
     }
 
     public record TurnoverData(String amount, String previousAmount, List<Double> points) {

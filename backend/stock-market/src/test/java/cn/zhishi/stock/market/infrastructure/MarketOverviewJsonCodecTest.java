@@ -27,7 +27,7 @@ class MarketOverviewJsonCodecTest {
         now,
         MarketOverview.DataStatus.DELAYED,
         List.of(),
-        new MarketOverview.BreadthData(10, 5, 1, 2, 0),
+        new MarketOverview.BreadthData(10, 5, 1, 2, 0, 0),
         new MarketOverview.TurnoverData("100亿", "90亿", List.of(1.0, 2.0)),
         List.of(),
         List.of(),

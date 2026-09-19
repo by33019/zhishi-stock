@@ -1,5 +1,7 @@
 package cn.zhishi.stock.integration.market;
 
+import cn.zhishi.stock.market.domain.BreadthCalculator;
+import cn.zhishi.stock.market.domain.LimitRuleProvider;
 import cn.zhishi.stock.market.domain.MarketOverview;
 import cn.zhishi.stock.market.domain.MarketOverview.BreadthData;
 import cn.zhishi.stock.market.domain.MarketOverview.DataStatus;
@@ -11,7 +13,9 @@ import cn.zhishi.stock.market.domain.MarketOverview.SectorQuote;
 import cn.zhishi.stock.market.domain.MarketOverview.TurnoverData;
 import cn.zhishi.stock.market.domain.MarketSessionStatus;
 import cn.zhishi.stock.market.domain.QuoteProvider;
+import cn.zhishi.stock.market.domain.SecurityQuoteProvider;
 import java.time.Clock;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
@@ -24,17 +28,29 @@ public class SimulatedQuoteProvider implements QuoteProvider {
     private static final DateTimeFormatter VERSION_TIME =
             DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss");
 
+    private static final String MARKET_CODE = "CN";
+
     private final Clock clock;
     private final Scenario scenario;
+    private final LimitRuleProvider limitRuleProvider;
+    private final SecurityQuoteProvider securityQuoteProvider;
 
     public SimulatedQuoteProvider(Clock clock, Scenario scenario) {
+        this(clock, scenario, new SimulatedLimitRuleProvider());
+    }
+
+    public SimulatedQuoteProvider(
+            Clock clock, Scenario scenario, LimitRuleProvider limitRuleProvider) {
         this.clock = clock;
         this.scenario = scenario;
+        this.limitRuleProvider = limitRuleProvider;
+        this.securityQuoteProvider = new SimulatedSecurityQuoteProvider(limitRuleProvider);
     }
 
     @Override
     public MarketOverview fetch(String marketCode) {
         OffsetDateTime now = OffsetDateTime.now(clock);
+        LocalDate tradeDate = now.toLocalDate();
         DataStatus overallStatus = switch (scenario) {
             case NORMAL, CLOSED -> DataStatus.REALTIME;
             case DELAYED, PARTIAL -> DataStatus.DELAYED;
@@ -57,11 +73,11 @@ public class SimulatedQuoteProvider implements QuoteProvider {
         return new MarketOverview(
                 marketCode,
                 sessionStatus,
-                now.toLocalDate(),
+                tradeDate,
                 scenario == Scenario.DELAYED ? now.minusMinutes(8) : now,
                 overallStatus,
                 indices(),
-                new BreadthData(2876, 1924, 164, 82, 7),
+                breadth(tradeDate),
                 new TurnoverData(
                         "982645000000",
                         "916218000000",
@@ -73,6 +89,18 @@ public class SimulatedQuoteProvider implements QuoteProvider {
                 now,
                 "sim-" + marketCode + "-" + VERSION_TIME.format(now) + "-"
                         + scenario.name().toLowerCase(Locale.ROOT));
+    }
+
+    /**
+     * 广度不再是写死的数字，而是对整批个股行情按限幅规则计数得到的结果。
+     *
+     * <p>这带来一个可验证的性质：把快照里的广度与同批个股行情重新计一遍，结果必须一致。
+     */
+    private BreadthData breadth(LocalDate tradeDate) {
+        return BreadthCalculator.calculate(
+                securityQuoteProvider.fetchUniverse(MARKET_CODE, tradeDate),
+                limitRuleProvider.rules(MARKET_CODE, tradeDate),
+                tradeDate);
     }
 
     private static List<MarketIndex> indices() {

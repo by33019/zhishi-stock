@@ -1,8 +1,10 @@
 package cn.zhishi.stock.backend.web;
 
 import cn.zhishi.stock.common.api.ApiResponse;
+import cn.zhishi.stock.market.application.MarketBreadthQueryService;
 import cn.zhishi.stock.market.application.MarketOverviewQueryService;
 import cn.zhishi.stock.market.application.MarketStatusQueryService;
+import cn.zhishi.stock.market.domain.MarketBreadth;
 import cn.zhishi.stock.market.domain.MarketOverview;
 import cn.zhishi.stock.market.domain.MarketStatus;
 import jakarta.servlet.http.HttpServletRequest;
@@ -22,14 +24,17 @@ public class MarketController {
 
     private final MarketOverviewQueryService overviewService;
     private final MarketStatusQueryService statusService;
+    private final MarketBreadthQueryService breadthService;
     private final Clock clock;
 
     public MarketController(
             MarketOverviewQueryService overviewService,
             MarketStatusQueryService statusService,
+            MarketBreadthQueryService breadthService,
             Clock clock) {
         this.overviewService = overviewService;
         this.statusService = statusService;
+        this.breadthService = breadthService;
         this.clock = clock;
     }
 
@@ -51,6 +56,19 @@ public class MarketController {
             HttpServletRequest request) {
         return ApiResponse.success(
                 statusService.getStatus(marketCode, date),
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock));
+    }
+
+    /** MKT-03：同一快照口径的市场广度，可选 {@code snapshotTime} 做时间回溯。 */
+    @GetMapping("/{marketCode}/breadth")
+    public ApiResponse<MarketBreadth> breadth(
+            @PathVariable String marketCode,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime snapshotTime,
+            HttpServletRequest request) {
+        return ApiResponse.success(
+                breadthService.getBreadth(marketCode, snapshotTime),
                 TraceIdFilter.current(request),
                 OffsetDateTime.now(clock));
     }

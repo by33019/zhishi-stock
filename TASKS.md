@@ -64,7 +64,7 @@
 ## M2：市场域纵向补全（游客主流程全真实）
 
 - [x] **M2-01** P0 交易日历与市场状态（MKT-02） — 已完成，见下方详情
-- [ ] **M2-02** P0 市场广度（MKT-03） — 依赖：M2-01
+- [x] **M2-02** P0 市场广度（MKT-03） — 已完成，见下方详情
 - [ ] **M2-03** P0 成交趋势（MKT-04） — 依赖：M2-01
 - [ ] **M2-04** P0 证券主数据与搜索建议 — 依赖：M2-01
 - [ ] **M2-05** P0 个股快照与日/周/月 K 线 — 依赖：M2-04
@@ -186,9 +186,41 @@ record 组件为 `tradingDay`（Java 访问器 `tradingDay()`），JSON 名由 `
 
 ---
 
+## M2-02 交付详情
+
+| 项 | 内容 |
+| --- | --- |
+| 接口 | `GET /api/v1/markets/{marketCode}/breadth`（PUBLIC，可选 `snapshotTime`） |
+| 返回字段 | `marketCode`、`riseCount`、`fallCount`、`flatCount`、`suspendedCount`、`limitUpCount`、`limitDownCount`、`totalCount`、`dataTime`、`dataStatus`、`lastSuccessfulSyncAt`、`snapshotVersion` |
+| 口径保证 | 全部计数来自**同一个** `MarketOverview` 快照对象；"不混用不同批次行情"是构造保证，不是约定 |
+| 计数定义 | 归类优先级：停牌 → 涨停 → 跌停 → 上涨 → 下跌 → 平盘。`limitUpCount ⊆ riseCount`、`limitDownCount ⊆ fallCount`（与"涨停家数是上涨家数子集"的市场惯例一致） |
+| 涨跌停判定 | **按价格而非比例**。交易所把限价四舍五入到分后该价格即为上限：前收 `10.03` 的涨停价是 `11.03`，涨幅只有 `9.97%`，按比例判定会漏掉这个涨停 |
+| 规则缺失处置 | 匹配不到规则时**不计入涨跌停**，但仍按价格计入涨/跌/平。把"无规则"当成"不限幅"会把一只 10% 上涨的普通股算成涨停，是更严重的错误 |
+| 规则匹配 | 静态属性全等 → 生效窗口 → 上市天数窗口 → `priorityNo` 最小 → `ruleCode` 字典序。最后一步保证结果确定性，不依赖集合遍历顺序 |
+| 数据来源 | 新增端口 `LimitRuleProvider` / `SecurityQuoteProvider`；模拟实现 `SimulatedLimitRuleProvider`（10 条稳定规则）、`SimulatedSecurityQuoteProvider`（5149 只确定性个股行情） |
+| 模拟规则集 | 主板 ±10%（ST ±5%）、创业板/科创板 ±20%（ST 同）、北交所 ±30%。**不编码"新股首日不限幅"**——该条款随板块与时期变化，无法核实到可写进代码的程度；模型与匹配器保留了 `noPriceLimit` 与上市天数窗口能力并用合成规则覆盖 |
+| 时间回溯 | `snapshotTime` 给出时：实时存储命中且 `dataTime <= snapshotTime` 才可用，否则回到归档取"不晚于该时刻的最近一条"并标记 `STALE`；都没有 → 503 `MARKET_DATA_UNAVAILABLE` |
+| 实测分布 | 5149 只 → 涨 2976 / 跌 1915 / 平 209 / 停牌 49 / 涨停 46 / 跌停 43（ST 91 只）。与旧硬编码 `2876 / 1924 / 164 / 82 / 7` 量级接近 |
+| 测试 | 后端 **120 测试全绿**（M2-01 的 71 + 新增 49）：`LimitRuleMatcherTest` 9 项、`BreadthCalculatorTest` 11 项、`MarketBreadthQueryServiceTest` 7 项、`SimulatedLimitRuleProviderTest` 7 项、`SimulatedSecurityQuoteProviderTest` 11 项、契约测试 +2 项、`JdbcMarketOverviewArchiveTest` +1 项 |
+| 前端 | `domain.ts` 的 `BreadthData` 补 `suspendedCount`（同步 MKT-01 响应新增字段）；typecheck 0 错误、13 文件 / 35 测试全绿 |
+
+### 关键设计取舍
+
+**1. 生成与计数互为逆运算**
+`SimulatedSecurityQuoteProvider` 先为每只证券定出一个**目标状态**（涨停/上涨/平盘/下跌/跌停/停牌），再按匹配到的规则**反推价格**：涨停股最新价恰好等于涨停价，跌停股恰好等于跌停价，涨/跌股严格落在限价之内。于是"按规则计数"这句话可以被直接验证——单测断言「落在限价上的非停牌证券数 == `limitUpCount`」，如果生成器有一分钱的偏差，这个等式立刻破裂。
+
+**2. `totalCount` 派生而不落盘**
+`BreadthData.totalCount()` 标 `@JsonIgnore`：快照会被持久化并在读取时反序列化，派生字段一旦落盘就会在归档里形成第二个可能与四态不一致的真相。而 `MarketBreadth.totalCount` 是响应视图、不会被反序列化，因此正常序列化。
+
+**3. 快照解析逻辑只有一处**
+`MarketBreadthQueryService` 复用 `MarketOverviewQueryService.getOverview(marketCode, snapshotTime)`，MKT-01 与 MKT-03 不会各自演化出一套"实时 / 归档 / 过期"语义。原 `getOverview(marketCode)` 行为逐字不变。
+
+---
+
 ## 已完成
 
 - [x] 阶段 0 只读审计（2026-09-19）
 - [x] 阶段 1 交付路线图（2026-09-19）
 - [x] M1-01 / M1-02 / M1-03 / M1-04 / M1-05 / M1-06 / M1-09 / M1-10 / M1-11 / M1-12 / M1-13 / M1-14 / M1-15 / M1-16（2026-09-19）
 - [x] M2-01（2026-09-19）
+- [x] M2-02（2026-09-19）

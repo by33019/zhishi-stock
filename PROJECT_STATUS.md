@@ -1,13 +1,13 @@
 # PROJECT_STATUS.md — 知势平台项目状态
 
-> 最后更新：2026-09-19（M2-01 完成：交易日历与市场状态 MKT-02；M1 分支已收拢为单 main）
+> 最后更新：2026-09-19（M2-02 完成：市场广度 MKT-03，广度改为按规则真实计数）
 > 任务清单见 `TASKS.md`，路线图见 `docs/superpowers/plans/2026-09-19-mvp-delivery-roadmap.md`。
 
 ---
 
 ## 1. 一句话状态
 
-**"知势" AI 智能股票分析平台**：设计文档完备、数据库迁移完备、前端高保真原型可跑、后端首个纵向切片（认证 + 市场总览）已跑通并合入 `main`，**且全栈 Compose 端到端验收已通过**（真实 API + 登录 + Cookie 恢复 + 退出 + 路由保护全链路）。工程地基已完备：mvn 修复、后端 45 测试复跑、数据库两条迁移路径验证、CI 四作业、容器构建稳定性修复、项目文档补全、本地 dev 联调打通。**M1 除「GitHub 分支保护」需用户操作外全部完成**，下一步进入 M2 市场域纵向补全。
+**"知势" AI 智能股票分析平台**：设计文档完备、数据库迁移完备、前端高保真原型可跑、后端首个纵向切片（认证 + 市场总览）已跑通并合入 `main`，**且全栈 Compose 端到端验收已通过**（真实 API + 登录 + Cookie 恢复 + 退出 + 路由保护全链路）。工程地基已完备：mvn 修复、数据库两条迁移路径验证、CI 四作业、容器构建稳定性修复、项目文档补全、本地 dev 联调打通。**M1 除「GitHub 分支保护」需用户操作外全部完成**；**M2 已交付 MKT-02 市场状态与 MKT-03 市场广度**，市场总览的广度已从硬编码数字变为按限幅规则对 5149 只模拟个股真实计数的结果。
 
 ## 2. 仓库与分支
 
@@ -27,7 +27,7 @@
 | 能力 | 状态 | 证据 |
 | --- | --- | --- |
 | `mvn`（Git Bash） | ✅ 已修复 | `mvn -v` → Maven 3.9.10（需 `JAVA_HOME` 用 Windows 路径，如 `D:/idea/JDK17`） |
-| 后端全量测试 | ✅ **71 测试全绿** | 0 失败 0 错误；`BUILD SUCCESS` |
+| 后端全量测试 | ✅ **120 测试全绿** | 0 失败 0 错误；`BUILD SUCCESS` |
 | 后端 Flyway 迁移（空库路径） | ✅ 已在真实 MySQL 8.4 验证 | 集成测试断言 `flyway_schema_history` 有 8 条成功迁移 |
 | 后端 Flyway 迁移（旧库升级路径） | ✅ **首次验证通过** | baseline v1 → V2–V8 → `now at version v8`，退出码 0 |
 | 迁移后完整性校验 | ✅ 通过 | `post_migration_validation.sql` 无异常明细，`foreign_key_count = 0` |
@@ -44,7 +44,7 @@
 | 里程碑 | 目标 | 状态 |
 | --- | --- | --- |
 | M1 | 合流与工程地基 | 🟢 15/16 完成（仅 M1-07 的「GitHub 分支保护」需用户操作） |
-| M2 | 市场域纵向补全（游客主流程全真实） | 🟡 1/9 完成（M2-01 交易日历与市场状态 ✅） |
+| M2 | 市场域纵向补全（游客主流程全真实） | 🟡 2/9 完成（M2-01 交易日历与市场状态 ✅、M2-02 市场广度 ✅） |
 | M3 | 用户态闭环与 AI 研究编排 | ⬜ 未开始（12 个任务） |
 
 ## 5. 已完成能力盘点
@@ -54,8 +54,8 @@
 | 设计文档 | ✅ 100% | PRD 86KB、Architecture 53KB、RESTful-API 79KB + superpowers specs/plans |
 | 数据库迁移 | ✅ 结构 100% / 两条路径均验证 | Flyway V1–V8；旧库样本 149KB（原 24MB） |
 | 前端原型 | ✅ 页面 100% / 真实接入 2/11 | 11 路由全部有页面；`/market` 与 `/login` 接真实 API |
-| 后端 | 🟡 2/8 域 | 认证闭环 ✅、市场总览（仅 MKT-01）🟡；其余未开工 |
-| 测试 | ✅ 80 个 | 后端 45 + 前端 35；无覆盖率门槛 |
+| 后端 | 🟡 2/8 域 | 认证闭环 ✅、市场总览（MKT-01 / MKT-02 / MKT-03）🟡；其余未开工 |
+| 测试 | ✅ 155 个 | 后端 120 + 前端 35；无覆盖率门槛 |
 | 工程化 | 🟢 85% | CI 工作流 ✅、TASKS/STATUS/CHANGELOG ✅、根与模块 README ✅、容器构建稳定 ✅；分支保护待用户配置 |
 
 ## 6. 已知问题（按严重度）
@@ -119,10 +119,13 @@ docker exec -i zhishi-legacy-mysql-1 mysql -ustock -pstock_dev_password stock_sy
 浏览器 SPA ──/api/v1/**──▶ nginx ──▶ stock-api :8080
                                         │ 读优先 Redis，缺失回落 MySQL 快照
                                         │ 市场状态：TradingCalendarProvider（模拟日历）+ Clock 推导时段
+                                        │ 市场广度：摄入时按 LimitRuleProvider 规则对 SecurityQuoteProvider 全市场个股计数
                                         ▼
                               Redis 8.2 ◀──▶ MySQL 8.4
                                    ▲              ▲
                                    └── stock-job（每 60s）── SimulatedQuoteProvider
+                                                            ├─ SimulatedSecurityQuoteProvider（5149 只确定性个股）
+                                                            └─ SimulatedLimitRuleProvider（10 条限幅规则）
 认证：login → JWT access(内存) + refresh(httpOnly cookie, Redis 轮换)
       401 → apiClient 单飞刷新 → 失败清会话 → 登录引导
 统一壳：ApiResponse{success,code,message,data,traceId,timestamp}
@@ -139,9 +142,9 @@ docker exec -i zhishi-legacy-mysql-1 mysql -ustock -pstock_dev_password stock_sy
 
 ## 10. 下一步
 
-**M1 已完成**（仅剩 M1-07 的分支保护配置，需用户操作）。**M2-01 已完成**。
+**M1 已完成**（仅剩 M1-07 的分支保护配置，需用户操作）。**M2-01、M2-02 已完成**。
 
-**下一步：M2-02 市场广度（MKT-03）** —— 依赖 M2-01 ✅，要求「同一快照口径；涨跌停按规则计数，不混批次」。
-之后按路线图推进 M2-03 / M2-04 …（M2-02 与 M2-03 可并行）。
+**下一步：M2-03 成交趋势（MKT-04）** —— 依赖 M2-01 ✅。
+之后按路线图推进 M2-04（证券主数据与搜索建议）…（M2-03 与 M2-04 可并行）。
 
-> 仍待用户操作：GitHub 分支保护配置（见第 9 节）。
+> 仍待用户操作：GitHub 分支保护配置（见第 9 节）；`.worktrees/` 残留 2 个被进程占用的 `element-plus` 文件（128K），关闭编辑器后可手动删除。
