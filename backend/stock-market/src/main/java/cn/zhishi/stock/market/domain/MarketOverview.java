@@ -8,7 +8,7 @@ import java.util.Map;
 
 public record MarketOverview(
         String marketCode,
-        SessionStatus marketStatus,
+        MarketSessionStatus marketStatus,
         LocalDate tradeDate,
         OffsetDateTime dataTime,
         DataStatus dataStatus,
@@ -21,12 +21,6 @@ public record MarketOverview(
         Map<String, DataStatus> componentStatus,
         OffsetDateTime lastSuccessfulSyncAt,
         String snapshotVersion) {
-
-    public enum SessionStatus {
-        TRADING,
-        CLOSED,
-        BREAK
-    }
 
     public enum DataStatus {
         REALTIME,

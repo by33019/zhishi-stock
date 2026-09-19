@@ -8,8 +8,8 @@ import cn.zhishi.stock.market.domain.MarketOverview.NewsItem;
 import cn.zhishi.stock.market.domain.MarketOverview.QuoteRow;
 import cn.zhishi.stock.market.domain.MarketOverview.Region;
 import cn.zhishi.stock.market.domain.MarketOverview.SectorQuote;
-import cn.zhishi.stock.market.domain.MarketOverview.SessionStatus;
 import cn.zhishi.stock.market.domain.MarketOverview.TurnoverData;
+import cn.zhishi.stock.market.domain.MarketSessionStatus;
 import cn.zhishi.stock.market.domain.QuoteProvider;
 import java.time.Clock;
 import java.time.OffsetDateTime;
@@ -39,9 +39,9 @@ public class SimulatedQuoteProvider implements QuoteProvider {
             case NORMAL, CLOSED -> DataStatus.REALTIME;
             case DELAYED, PARTIAL -> DataStatus.DELAYED;
         };
-        SessionStatus sessionStatus = scenario == Scenario.CLOSED
-                ? SessionStatus.CLOSED
-                : SessionStatus.TRADING;
+        MarketSessionStatus sessionStatus = scenario == Scenario.CLOSED
+                ? MarketSessionStatus.CLOSED
+                : MarketSessionStatus.TRADING;
         Map<String, DataStatus> componentStatus = new LinkedHashMap<>();
         componentStatus.put("indices", scenario == Scenario.DELAYED
                 ? DataStatus.DELAYED

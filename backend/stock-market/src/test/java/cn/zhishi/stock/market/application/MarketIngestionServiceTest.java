@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import cn.zhishi.stock.market.domain.MarketOverview;
 import cn.zhishi.stock.market.domain.MarketOverviewArchive;
 import cn.zhishi.stock.market.domain.MarketOverviewStore;
+import cn.zhishi.stock.market.domain.MarketSessionStatus;
 import cn.zhishi.stock.market.domain.QuoteProvider;
 import java.time.Clock;
 import java.time.Instant;
@@ -85,7 +86,7 @@ class MarketIngestionServiceTest {
   private static MarketOverview snapshot(OffsetDateTime dataTime) {
     return new MarketOverview(
         "CN",
-        MarketOverview.SessionStatus.TRADING,
+        MarketSessionStatus.TRADING,
         LocalDate.of(2026, 9, 11),
         dataTime,
         MarketOverview.DataStatus.REALTIME,

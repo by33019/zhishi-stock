@@ -34,6 +34,8 @@ stock:
     cookie-secure: ${COOKIE_SECURE:true}
   market:
     scenario: ${MARKET_SCENARIO:NORMAL}
+    # 模拟交易日历的节假日集合，逗号分隔 ISO 日期。真实日历源就位后此项不再需要。
+    holidays: ${MARKET_HOLIDAYS:}
   seed:
     demo-username: ${DEMO_USERNAME:demo}
     demo-password: ${DEMO_PASSWORD:Stock@123}

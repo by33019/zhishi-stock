@@ -3,6 +3,7 @@ package cn.zhishi.stock.integration.market;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import cn.zhishi.stock.market.domain.MarketOverview;
+import cn.zhishi.stock.market.domain.MarketSessionStatus;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -19,7 +20,7 @@ class SimulatedQuoteProviderTest {
 
     var snapshot = provider.fetch("CN");
 
-    assertThat(snapshot.marketStatus()).isEqualTo(MarketOverview.SessionStatus.TRADING);
+    assertThat(snapshot.marketStatus()).isEqualTo(MarketSessionStatus.TRADING);
     assertThat(snapshot.dataStatus()).isEqualTo(MarketOverview.DataStatus.REALTIME);
     assertThat(snapshot.indices()).hasSize(4);
     assertThat(snapshot.breadth().riseCount()).isPositive();

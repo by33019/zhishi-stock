@@ -3,6 +3,7 @@ package cn.zhishi.stock.market.infrastructure;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import cn.zhishi.stock.market.domain.MarketOverview;
+import cn.zhishi.stock.market.domain.MarketSessionStatus;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.time.LocalDate;
@@ -21,7 +22,7 @@ class MarketOverviewJsonCodecTest {
     var now = OffsetDateTime.of(2026, 9, 11, 10, 0, 0, 0, ZoneOffset.ofHours(8));
     var snapshot = new MarketOverview(
         "CN",
-        MarketOverview.SessionStatus.TRADING,
+        MarketSessionStatus.TRADING,
         LocalDate.of(2026, 9, 11),
         now,
         MarketOverview.DataStatus.DELAYED,

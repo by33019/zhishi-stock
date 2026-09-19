@@ -3,10 +3,13 @@ package cn.zhishi.stock.backend.config;
 import cn.zhishi.stock.backend.security.JwtAuthenticationFilter;
 import cn.zhishi.stock.backend.web.TraceIdFilter;
 import cn.zhishi.stock.integration.market.SimulatedQuoteProvider;
+import cn.zhishi.stock.integration.market.SimulatedTradingCalendarProvider;
 import cn.zhishi.stock.market.application.MarketOverviewQueryService;
+import cn.zhishi.stock.market.application.MarketStatusQueryService;
 import cn.zhishi.stock.market.domain.MarketOverviewArchive;
 import cn.zhishi.stock.market.domain.MarketOverviewStore;
 import cn.zhishi.stock.market.domain.QuoteProvider;
+import cn.zhishi.stock.market.domain.TradingCalendarProvider;
 import cn.zhishi.stock.market.infrastructure.JdbcMarketOverviewArchive;
 import cn.zhishi.stock.market.infrastructure.MarketOverviewJsonCodec;
 import cn.zhishi.stock.market.infrastructure.RedisMarketOverviewStore;
@@ -178,5 +181,19 @@ public class BackendConfiguration {
         return new SimulatedQuoteProvider(
                 clock,
                 SimulatedQuoteProvider.Scenario.valueOf(scenario.toUpperCase()));
+    }
+
+    @Bean
+    TradingCalendarProvider tradingCalendarProvider(
+            Clock clock,
+            @Value("${stock.market.holidays:}") String holidays) {
+        return SimulatedTradingCalendarProvider.ofCsv(clock, holidays);
+    }
+
+    @Bean
+    MarketStatusQueryService marketStatusQueryService(
+            TradingCalendarProvider tradingCalendarProvider,
+            Clock clock) {
+        return new MarketStatusQueryService(tradingCalendarProvider, clock);
     }
 }

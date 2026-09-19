@@ -8,6 +8,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import cn.zhishi.stock.market.domain.MarketOverview;
+import cn.zhishi.stock.market.domain.MarketSessionStatus;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.time.LocalDate;
@@ -41,7 +42,7 @@ class JdbcMarketOverviewArchiveTest {
     var now = OffsetDateTime.of(2026, 9, 11, 10, 0, 0, 0, ZoneOffset.ofHours(8));
     return new MarketOverview(
         "CN",
-        MarketOverview.SessionStatus.TRADING,
+        MarketSessionStatus.TRADING,
         LocalDate.of(2026, 9, 11),
         now,
         MarketOverview.DataStatus.REALTIME,

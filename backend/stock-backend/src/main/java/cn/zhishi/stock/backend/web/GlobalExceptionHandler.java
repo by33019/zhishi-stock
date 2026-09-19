@@ -2,6 +2,7 @@ package cn.zhishi.stock.backend.web;
 
 import cn.zhishi.stock.common.api.ApiResponse;
 import cn.zhishi.stock.market.application.MarketDataUnavailableException;
+import cn.zhishi.stock.market.application.MarketNotFoundException;
 import cn.zhishi.stock.system.auth.AuthErrorCode;
 import cn.zhishi.stock.system.auth.AuthException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -15,6 +16,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestCookieException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,6 +39,30 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(ApiResponse.failure(
                 "MARKET_DATA_UNAVAILABLE",
                 exception.getMessage(),
+                null,
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
+    @ExceptionHandler(MarketNotFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> marketNotFound(
+            MarketNotFoundException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.failure(
+                "MARKET_NOT_FOUND",
+                exception.getMessage(),
+                null,
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiResponse<Void>> typeMismatch(
+            MethodArgumentTypeMismatchException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.badRequest().body(ApiResponse.failure(
+                "INVALID_REQUEST",
+                "请求参数格式无效",
                 null,
                 TraceIdFilter.current(request),
                 OffsetDateTime.now(clock)));

@@ -2,6 +2,19 @@ export type AccessLevel = 'PUBLIC' | 'USER' | 'ADMIN'
 export type DataStatus = 'REALTIME' | 'DELAYED' | 'STALE' | 'UNAVAILABLE'
 export type Trend = 'up' | 'down' | 'flat'
 
+/** 粗粒度市场状态，跨市场通用，用于视觉与文案分支。 */
+export type MarketSessionStatus = 'PRE_OPEN' | 'CALL_AUCTION' | 'TRADING' | 'BREAK' | 'CLOSED'
+
+/** 细粒度交易时段阶段，与后端 TradingSession 一一对应。 */
+export type TradingSession =
+  | 'PRE_OPEN'
+  | 'OPENING_CALL_AUCTION'
+  | 'MORNING_CONTINUOUS'
+  | 'LUNCH_BREAK'
+  | 'AFTERNOON_CONTINUOUS'
+  | 'CLOSING_CALL_AUCTION'
+  | 'CLOSED'
+
 export interface ApiResponse<T> {
   success: true
   code: 'SUCCESS'
@@ -66,7 +79,7 @@ export interface NewsItem {
 
 export interface MarketOverview {
   marketCode: 'CN'
-  marketStatus: 'TRADING' | 'CLOSED' | 'BREAK'
+  marketStatus: MarketSessionStatus
   tradeDate: string
   dataTime: string
   dataStatus: DataStatus

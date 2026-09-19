@@ -63,7 +63,7 @@
 
 ## M2：市场域纵向补全（游客主流程全真实）
 
-- [ ] **M2-01** P0 交易日历与市场状态（MKT-02） — 依赖：M1-06 ✅
+- [x] **M2-01** P0 交易日历与市场状态（MKT-02） — 已完成，见下方详情
 - [ ] **M2-02** P0 市场广度（MKT-03） — 依赖：M2-01
 - [ ] **M2-03** P0 成交趋势（MKT-04） — 依赖：M2-01
 - [ ] **M2-04** P0 证券主数据与搜索建议 — 依赖：M2-01
@@ -160,8 +160,35 @@
 
 ---
 
+## M2-01 交付详情
+
+| 项 | 内容 |
+| --- | --- |
+| 接口 | `GET /api/v1/markets/{marketCode}/status`（PUBLIC，可选 `date`） |
+| 返回字段 | `marketCode`、`tradeDate`、`isTradingDay`、`sessionStatus`、`currentSession`、`nextSessionAt`、`calendarSourceTime` |
+| 粒度设计 | `sessionStatus`（5 值粗粒度）+ `currentSession`（7 值细粒度），映射关系只在 `TradingSession` 枚举里维护一处 |
+| 时段划分 | 盘前 / 开盘集合竞价 09:15–09:25 / 静默 09:25–09:30 / 上午连续 09:30–11:30 / 午休 11:30–13:00 / 下午连续 13:00–14:57 / 收盘竞价 14:57–15:00；15:00 后无窗口，按 `CLOSED` 兜底 |
+| 数据来源 | 新增端口 `TradingCalendarProvider`，当前实现 `SimulatedTradingCalendarProvider`（周末 + 可配置节假日；节假日由 `stock.market.holidays` 注入，**不硬编码未经核实的法定节假日日期**） |
+| 枚举统一 | 删除 `MarketOverview.SessionStatus`，MKT-01 与 MKT-02 共用新的 `MarketSessionStatus`（超集）；**MKT-01 的 JSON 输出逐字不变**（仍 `TRADING`/`CLOSED`/`BREAK`） |
+| 历史/未来日期 | 只有查询日等于「今天」才按当前时刻推导时段；查历史或未来日期整日返回 `CLOSED`，`nextSessionAt` 为 `null` |
+| 错误契约 | 不受支持的市场 → 404 `MARKET_NOT_FOUND`；`date` 格式非法 → 400 `INVALID_REQUEST` |
+| 测试 | 后端 **71 测试全绿**（原 45 + 新增 26）：`MarketStatusQueryServiceTest` 16 项（含 8 个时段边界与 4 条 `nextSessionAt` 分支）、`SimulatedTradingCalendarProviderTest` 7 项、契约测试 +3 项 |
+| 前端 | `domain.ts` 新增 `MarketSessionStatus` / `TradingSession` 类型，`marketStatus` 放宽为 5 值；typecheck 0 错误、13 文件 / 35 测试全绿 |
+
+### 执行中发现并修复的两个问题
+
+**1. 独立 MockMvc 的日期序列化与线上不一致（新发现）**
+`MockMvcBuilders.standaloneSetup` 的默认 `ObjectMapper` 未注册 `JavaTimeModule`，且 Spring 的 `Jackson2ObjectMapperBuilder` 默认**也不关闭** `WRITE_DATES_AS_TIMESTAMPS`（该开关是 Spring Boot 自动配置打开的）。结果是 `LocalDate` 被序列化成 `[2026,9,11]`，与线上 ISO 字符串不符。
+修复：契约测试显式用 `Jackson2ObjectMapperBuilder.json().featuresToDisable(WRITE_DATES_AS_TIMESTAMPS)` 构造 mapper 并注入转换器，使断言对齐真实线上格式。
+
+**2. `MarketStatus` 的 JSON 字段名**
+record 组件为 `tradingDay`（Java 访问器 `tradingDay()`），JSON 名由 `@JsonProperty("isTradingDay")` 显式指定，与契约逐字一致。Java 访问器与 JSON 名解耦，避免依赖 Jackson 对 `is` 前缀的启发式推断。
+
+---
+
 ## 已完成
 
 - [x] 阶段 0 只读审计（2026-09-19）
 - [x] 阶段 1 交付路线图（2026-09-19）
 - [x] M1-01 / M1-02 / M1-03 / M1-04 / M1-05 / M1-06 / M1-09 / M1-10 / M1-11 / M1-12 / M1-13 / M1-14 / M1-15 / M1-16（2026-09-19）
+- [x] M2-01（2026-09-19）

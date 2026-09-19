@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import cn.zhishi.stock.market.domain.MarketOverview;
 import cn.zhishi.stock.market.domain.MarketOverviewArchive;
 import cn.zhishi.stock.market.domain.MarketOverviewStore;
+import cn.zhishi.stock.market.domain.MarketSessionStatus;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -70,7 +71,7 @@ class MarketOverviewQueryServiceTest {
     var now = OffsetDateTime.of(2026, 9, 11, 9, 30, 0, 0, ZoneOffset.ofHours(8));
     return new MarketOverview(
         "CN",
-        MarketOverview.SessionStatus.TRADING,
+        MarketSessionStatus.TRADING,
         LocalDate.of(2026, 9, 11),
         now,
         MarketOverview.DataStatus.REALTIME,
