@@ -80,7 +80,7 @@
 - [x] **M3-01** P0 自选分组 CRUD（后端，V5 表） — 已完成，见下方详情
 - [x] **M3-02** P0 自选项 CRUD + 排序 + 行情概览 — 已完成，见下方详情
 - [x] **M3-03** P0 前端 watchlist 接真实 API — 已完成，见下方详情
-- [ ] **M3-04** P0 资讯 Provider 抽象 + 模拟源 + 去重 + 标的关联 — 依赖：M2-04
+- [x] **M3-04** P0 资讯 Provider 抽象 + 模拟源 + 去重 + 标的关联 — 已完成，见下方详情
 - [ ] **M3-05** P1 前端 news 接真实 API — 依赖：M3-04
 - [ ] **M3-06** P0 AI Provider 抽象 + 确定性模拟实现 — 依赖：M3-04
 - [ ] **M3-07** P0 AI 任务编排 + SSE 流式契约（V6 表） — 依赖：M3-06
@@ -1061,6 +1061,99 @@ WAT-02 的 `createdAt` 取自应用 `Clock`，表里的列只作审计。
 
 ---
 
+## M3-04 交付详情
+
+> Spec：`docs/superpowers/specs/2026-09-20-news-provider.md`
+
+**目标**：资讯域独立成第 7 个模块 `stock-news`；采集 → 去重 → 标的关联 → 落库；
+六个契约接口（NEWS-01~04 / STK-10 / SEC-07）；关闭 M3-02 / M3-03 遗留的 `latestNewsCount` 与 `newsSince` 欠账。
+
+### 交付
+
+| 文件 | 内容 |
+| --- | --- |
+| `backend/stock-news`（新模块） | 50 个主代码 + 7 个测试文件。`domain` 36（7 枚举 / 5 实体 / 5 响应类型 / 3 纯函数 / 5 端口 / 4 共享口径）、`application` 5、`infrastructure` 9 |
+| `NewsIngestionService` | 取数 → 登记来源 → 授权闸门 → **来源 ID 幂等** → **内容指纹去重** → 落库 → 仅主记录解析关联；`recordSyncFailure` 标 `REQUIRES_NEW` |
+| `NewsQueryService` | 六个查询接口的业务规则，兼作 `NewsCountProvider`；可见性过滤链 6 步只写一遍 |
+| `integration/news/SimulatedNewsProvider`、`SimulatedRelationCatalogProvider` | 确定性模拟源与关联目录 |
+| `market/domain/SectorIdentity(Provider)`、`integration/market/SimulatedSectorIds`、`SimulatedSectorIdentityProvider` | 板块侧身份桥接（关联表 `target_id` 是 bigint，与证券侧同因同形） |
+| `stock-backend/web/NewsController` | **六个端点写在同一个控制器里**（STK-10 / SEC-07 的资源属资讯域，写进行情侧控制器会让 Web 层反向依赖资讯域） |
+| `stock-job/ScheduledNewsCollector` | `@Scheduled` fixedDelay 2 分钟（`stock.news.collect-delay-ms`）；失败时 `recordSyncFailure` 后**继续向上抛**（`LOG_AND_SUPPRESS_ERROR_HANDLER` 只记日志不中断调度） |
+| `stock-job/JobConfiguration` | 补资讯采集链 11 个 Bean；**刻意不声明 `NewsQueryService`**（定时任务不查询） |
+| `stock-job/StockJobApplication` | 加 `@MapperScan(basePackages="cn.zhishi.stock.news", annotationClass=Mapper.class)` |
+| `stock-system/WatchlistItemService` | 接 `NewsCountProvider`；`overview(...)` 新增 `newsSince`；删掉 `NEWS_NOT_IMPLEMENTED` 占位 |
+| `WatchlistEntry` / `WatchlistOverviewController` | 注释更新；删掉 `newsSince` 的占位 400 分支，改为透传 |
+| `integration/market/SimulatedHashing` | `SplitMix64` 放开为 `public`（资讯 Provider 复用，**不新写第二份哈希**） |
+| `integration/market/SimulatedSectorProvider` | 改为投影自 `SecurityMasterProvider` |
+
+### 关键取舍
+
+- **资讯落库、行情不落库。** 去重需要跨批次记忆（"这条内容三分钟前从另一家媒体来过"是历史事实），
+  `content_fingerprint` 是唯一索引的一部分，关联有生命周期（`CONFIRMED` → 人工复核 → `REJECTED`）。
+  这是仓库里第一个把模拟 Provider 的产出写进 MySQL 的里程碑。
+- **两条幂等路径的顺序是刻意的**：来源 ID 幂等**先于**内容指纹。重投（采集重试、游标回退）若先算指纹，
+  一条内容已被来源更新的重投会被判成新的 ORIGINAL，然后被 `uk_stock_news_source_content` 拒绝。
+  先查来源 ID，这次投递连指纹都不用算。
+- **只有 `DuplicateKeyException` 被吞掉。** 它是**正常**的并发结果；其余异常一律向上抛让整批回滚——
+  逐条吞异常会留下"一部分稿件进了库、它们的关联没进"的静默半成品。
+- **失败留痕必须独立事务。** `recordSyncFailure` 由调度方在 `ingest` 抛出**之后**调用，
+  写进 `ingest` 内部会跟着回滚，症状是"每次失败都不留痕迹"而 NEWS-03 永远报 OK。
+- **采集不传游标。** 把进度记在调度侧或 Provider 侧等于两个模块各维护一份状态；重投本就被来源 ID 挡住。
+- **资讯域刻意不产出 `STALE`。** 资讯没有定义"多久算陈旧"的阈值，`dataStatus()` 只做三态投影
+  `OK→REALTIME / DEGRADED→DELAYED / UNAVAILABLE→UNAVAILABLE`。真实源接入、采集周期确定之后再补。
+- **`NewsPage` 是扁平封套**（`items` 与分页字段同级），与既有 `StockRanking` 同形，
+  并让 `PageData.slice` 继续是分页算术的唯一实现。三个列表接口共用 `envelope(NewsQuery)` 这一个出口。
+- **时间解析抽出 `NewsTimestamps`**，使资讯的 `startAt/endAt` 与自选的 `newsSince` 落到同一时刻，
+  同时让 `stock-system` 不必依赖 `stock-news` 的用例层。
+- **`dataStatus` 住 `MarketOverview.DataStatus`**（契约 §3.6 的全局枚举），资讯域只是消费它。
+- **顺手修掉两处真实死代码**：① `NewsQueryService.validateKeyword` 此前从未被调用，
+  keyword 长度上限 50 形同虚设（e2e 已实测 51 字符返回 400）；② `WatchlistItemService` 的
+  `NEWS_NOT_IMPLEMENTED` 占位说明。
+
+### 不在本轮范围
+
+| 项 | 归属 |
+| --- | --- |
+| 真实资讯源适配器 | 授权源未就位，用户已确认延后 |
+| `ADM-NEWS-01~08` 后台来源管理 | M3-11（需要 RBAC + 审计基础设施） |
+| AI 证据链消费资讯（`allow_ai_analysis` 的消费侧） | M3-06 / M3-07；本轮只落库这个标记 |
+| 资讯关联重试定时任务（架构 §"每 10 分钟"） | 模拟源不产生"待重试"状态；先有真实源再谈 |
+| Redis 最新资讯列表缓存 | 会为"最新资讯"造出第二处真相；当前量级直读 MySQL 足够（已知问题） |
+| 相似度去重（编辑距离 / 向量） | 精确指纹先跑通链路；相似度去重是独立课题（已知问题） |
+| 资讯全文正文抓取与清洗 | 契约 §11.2 明写"不返回未经授权的完整正文"；`authorized_summary` 即全部可展示内容 |
+| WebSocket 资讯推送 | 架构 §394：MVP 不通过 WebSocket 主动推送新闻提醒 |
+| 前端 `/news` 接真实接口 | M3-05 |
+| `MarketOverview.news` 的首页快讯 | M3-05（改动会牵动 MKT-01 已冻结的 `componentStatus` 口径） |
+
+### 验证结果
+
+| 项 | 结果 |
+| --- | --- |
+| `mvn verify` | **BUILD SUCCESS**，8 个模块全绿 |
+| `TZ=UTC mvn test` | **BUILD SUCCESS**，计数一致 |
+| 后端用例 | **639**（`stock-news` 89 / `stock-backend` 181 含 `InfrastructureIntegrationTest$News` 7 / `stock-job` 12，由 2 扩到 12） |
+| 前端用例 | 133 / 20 文件（本轮未改前端，仅确认未回归） |
+| 红灯 | `stock-job` 三个测试类首跑 **8 项断言级失败**（先落只有签名的空壳 `collect()` 拿到真实红灯，不是编译错误） |
+| **真实端到端联调** | 本机 Docker 起 MySQL 8.4 + Redis 8.2 + `stock-api` + `stock-job`，空库 Flyway V1→V8；**库里数据全部由真实定时任务采集而来**，`curl` 走完六个接口 + WAT-11 并逐字段核对 |
+
+> **e2e 实测到的关键事实（明细见 spec §8.3）**：
+> ① 定时任务 21:06 首采、21:08 第二轮，**零新增行** ⇒ 来源 ID 幂等在真实运行路径上生效；
+> ② 停用来源 `SIM_MEDIA_C` 的 `last_success_at` 始终 `NULL`，NEWS-03 报 `availableSourceCount=4`；
+> ③ 重复稿 `7331469565956110` 折叠到主记录且**库里关联数为 0**，NEWS-01 `total=8`（库里 9 条）；
+> ④ 只有 CANDIDATE 关联的稿件 `7331469565956106` 在 NEWS-02 里 `relations=[]`、SEC-07 该板块 `total=0`
+> —— **"低置信不进默认视图"只有真库能验**；
+> ⑤ 关联 `targetId` 是 `sim-002343` / `sim-bk0025` / `CN`（不是 bigint）；
+> ⑥ 纯日期 `endAt` 取当日终点、精确时刻 `endAt` 是闭区间。
+
+> **e2e 查出的口径缺陷（已记入已知问题 #20，本轮记录不修）**：
+> `latestNewsCount` 无法表达"0 条"。`NewsCountProvider` 的端口注释声称"0 条"与"不知道"可区分，
+> 但实现里**没有任何代码路径产生"未知"**——`countSince` 无论资讯源是否可用都只返回有条数的证券。
+> 实测：`sim-600519`（无资讯）与 `newsSince=2026-09-19`（所有稿件都在 09-18）都得到 `null`。
+> 即 **"0 条"这个事实被写成了"不知道"**，前端只能渲染"—"。修它需要给 WAT-11 带上资讯域新鲜度
+> （契约增量），**建议 M3-05 一并决定**。在那之前，前端不要把 `null` 渲染成"0 条"。
+
+---
+
 ## 已完成
 
 - [x] 阶段 0 只读审计（2026-09-19）
@@ -1080,3 +1173,4 @@ WAT-02 的 `createdAt` 取自应用 `Clock`，表里的列只作审计。
 - [x] M3-01（2026-09-20）
 - [x] M3-02（2026-09-20）
 - [x] M3-03（2026-09-20）
+- [x] M3-04（2026-09-20）

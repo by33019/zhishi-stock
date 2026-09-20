@@ -5,8 +5,6 @@ import cn.zhishi.stock.market.application.MarketStatusQueryService;
 import cn.zhishi.stock.market.domain.MarketOverview;
 import cn.zhishi.stock.market.domain.MarketStatus;
 import cn.zhishi.stock.system.auth.AccessTokenPrincipal;
-import cn.zhishi.stock.system.watchlist.WatchlistErrorCode;
-import cn.zhishi.stock.system.watchlist.WatchlistException;
 import cn.zhishi.stock.system.watchlist.WatchlistItemService;
 import cn.zhishi.stock.system.watchlist.WatchlistMembership;
 import cn.zhishi.stock.system.watchlist.WatchlistOverview;
@@ -57,15 +55,8 @@ public class WatchlistOverviewController {
             @RequestParam(value = "groupId", required = false) Long groupId,
             @RequestParam(value = "newsSince", required = false) String newsSince,
             HttpServletRequest request) {
-        if (newsSince != null && !newsSince.isBlank()) {
-            // 静默忽略一个过滤条件，会让调用方拿到"看起来正常"的响应，极难排查
-            // （同 SecurityQueryService 对白名单外排序字段的处理）。宁可响亮失败。
-            throw new WatchlistException(
-                    WatchlistErrorCode.INVALID_REQUEST,
-                    "newsSince 尚未实现：最新资讯数由资讯 Provider 提供（M3-04）");
-        }
         long userId = principal(authentication).userId();
-        WatchlistOverview overview = items.overview(userId, groupId);
+        WatchlistOverview overview = items.overview(userId, groupId, newsSince);
         return success(
                 OverviewView.from(overview, marketStatus.getStatus(MARKET_CODE, null)), request);
     }
@@ -100,7 +91,7 @@ public class WatchlistOverviewController {
      * 字段增删时会各自演化且没有测试会红。
      *
      * <p>{@code limitations} 是契约"数据状态字段"的落点：人可读的降级说明。
-     * 空列表表示没有任何降级；只要资讯域还没就位（M3-04），它就不会是空的。
+     * 空列表表示没有任何降级。
      */
     public record OverviewView(
             List<WatchlistGroupController.GroupView> groups,

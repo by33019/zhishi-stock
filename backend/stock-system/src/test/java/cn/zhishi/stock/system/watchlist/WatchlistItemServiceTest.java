@@ -20,11 +20,13 @@ import cn.zhishi.stock.market.domain.QuoteSnapshotBatchProvider;
 import cn.zhishi.stock.market.domain.SecurityIdentity;
 import cn.zhishi.stock.market.domain.SecurityIdentityProvider;
 import cn.zhishi.stock.market.domain.SecuritySummary;
+import cn.zhishi.stock.news.domain.NewsCountProvider;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -58,9 +60,10 @@ class WatchlistItemServiceTest {
   private final WatchlistGroupRepository groups = mock(WatchlistGroupRepository.class);
   private final SecurityIdentityProvider securities = mock(SecurityIdentityProvider.class);
   private final QuoteSnapshotBatchProvider quotes = mock(QuoteSnapshotBatchProvider.class);
+  private final NewsCountProvider newsCounts = mock(NewsCountProvider.class);
   private final AtomicLong ids = new AtomicLong(8_000_000_000_000L);
-  private final WatchlistItemService service =
-      new WatchlistItemService(items, groups, securities, quotes, ids::incrementAndGet, CLOCK);
+  private final WatchlistItemService service = new WatchlistItemService(
+      items, groups, securities, quotes, newsCounts, ids::incrementAndGet, CLOCK);
 
   // ---------- WAT-06 ----------
 
@@ -453,7 +456,7 @@ class WatchlistItemServiceTest {
     when(securities.findByStorageIds(any())).thenReturn(Map.of(STORAGE_ID, identity()));
     when(quotes.fetchBatch("CN")).thenReturn(List.of(quote()));
 
-    WatchlistOverview overview = service.overview(USER_ID, null);
+    WatchlistOverview overview = service.overview(USER_ID, null, null);
 
     assertThat(overview.groups()).hasSize(2);
     // 分组顺序决定条目顺序：默认分组（sortNo 0）在前，即使 itemId 更大
@@ -462,8 +465,8 @@ class WatchlistItemServiceTest {
     assertThat(overview.snapshotVersion()).isEqualTo("sim-20260920");
     assertThat(overview.dataStatus()).isEqualTo(MarketOverview.DataStatus.REALTIME);
     assertThat(overview.dataTime()).isEqualTo(OffsetDateTime.parse("2026-09-20T07:00:00Z"));
-    assertThat(overview.limitations())
-        .containsExactly("最新资讯数尚未实现（资讯 Provider 见 M3-04），latestNewsCount 恒为 null");
+    // 资讯数已接真实口径，因此"资讯未实现"不再是一条降级说明；本次也没有别的降级
+    assertThat(overview.limitations()).isEmpty();
   }
 
   @Test
@@ -476,7 +479,7 @@ class WatchlistItemServiceTest {
     when(securities.findByStorageIds(any())).thenReturn(Map.of(STORAGE_ID, identity()));
     when(quotes.fetchBatch("CN")).thenReturn(List.of(quote()));
 
-    WatchlistOverview overview = service.overview(USER_ID, GROUP_ID);
+    WatchlistOverview overview = service.overview(USER_ID, GROUP_ID, null);
 
     assertThat(overview.entries()).extracting(WatchlistEntry::groupId).containsExactly(GROUP_ID);
     verify(items, never()).findByUser(anyLong());
@@ -493,7 +496,7 @@ class WatchlistItemServiceTest {
     when(securities.findByStorageIds(any())).thenReturn(Map.of(STORAGE_ID, identity()));
     when(quotes.fetchBatch("CN")).thenReturn(List.of());
 
-    WatchlistOverview overview = service.overview(USER_ID, null);
+    WatchlistOverview overview = service.overview(USER_ID, null, null);
 
     assertThat(overview.entries()).hasSize(2);
     assertThat(overview.limitations()).contains(
@@ -506,7 +509,7 @@ class WatchlistItemServiceTest {
     when(groups.findActiveByUser(USER_ID)).thenReturn(List.of());
     when(items.findByUser(USER_ID)).thenReturn(List.of());
 
-    WatchlistOverview overview = service.overview(USER_ID, null);
+    WatchlistOverview overview = service.overview(USER_ID, null, null);
 
     assertThat(overview.entries()).isEmpty();
     assertThat(overview.snapshotVersion()).isEmpty();
@@ -527,9 +530,96 @@ class WatchlistItemServiceTest {
     when(securities.findByStorageIds(any())).thenReturn(Map.of(STORAGE_ID, identity()));
     when(quotes.fetchBatch("CN")).thenReturn(List.of(quote()));
 
-    assertThat(service.overview(USER_ID, null).entries())
+    assertThat(service.overview(USER_ID, null, null).entries())
         .extracting(WatchlistEntry::itemId)
         .containsExactly(1L);
+  }
+
+  // ---------- WAT-11 的最新资讯数 ----------
+
+  @Test
+  void wat11AttachesLatestNewsCountFromTheNewsDomain() {
+    when(groups.findActiveByUser(USER_ID))
+        .thenReturn(List.of(group(GROUP_ID, "默认分组", 0, true, 0, 1)));
+    when(items.findByUser(USER_ID)).thenReturn(List.of(item(1L, GROUP_ID, STORAGE_ID, 0, 0)));
+    when(securities.findByStorageIds(any())).thenReturn(Map.of(STORAGE_ID, identity()));
+    when(quotes.fetchBatch("CN")).thenReturn(List.of(quote()));
+    when(newsCounts.countSince(List.of(SECURITY_ID), null)).thenReturn(Map.of(SECURITY_ID, 3));
+
+    assertThat(service.overview(USER_ID, null, null).entries().get(0).latestNewsCount())
+        .isEqualTo(3);
+  }
+
+  /**
+   * 资讯域查不到这只证券时必须是 {@code null}，不是 {@code 0}。
+   *
+   * <p>{@code 0} 会被前端读成"这只股票近期没有资讯"——那是编造；{@code null} 才是
+   * "我们不知道"。这条差别在任何一层都不会报错，只能靠断言钉住。
+   */
+  @Test
+  void wat11KeepsNewsCountNullWhenTheNewsDomainHasNoAnswer() {
+    when(groups.findActiveByUser(USER_ID))
+        .thenReturn(List.of(group(GROUP_ID, "默认分组", 0, true, 0, 1)));
+    when(items.findByUser(USER_ID)).thenReturn(List.of(item(1L, GROUP_ID, STORAGE_ID, 0, 0)));
+    when(securities.findByStorageIds(any())).thenReturn(Map.of(STORAGE_ID, identity()));
+    when(quotes.fetchBatch("CN")).thenReturn(List.of(quote()));
+    when(newsCounts.countSince(any(), any())).thenReturn(Map.of());
+
+    assertThat(service.overview(USER_ID, null, null).entries().get(0).latestNewsCount()).isNull();
+  }
+
+  /** 悬空自选（主数据里没有）连对外标识都拼不出来，资讯数只能是 {@code null}。 */
+  @Test
+  void wat11KeepsNewsCountNullForDanglingEntries() {
+    when(groups.findActiveByUser(USER_ID))
+        .thenReturn(List.of(group(GROUP_ID, "默认分组", 0, true, 0, 1)));
+    when(items.findByUser(USER_ID)).thenReturn(List.of(item(1L, GROUP_ID, 999_999L, 0, 0)));
+    when(securities.findByStorageIds(any())).thenReturn(Map.of());
+    when(quotes.fetchBatch("CN")).thenReturn(List.of());
+
+    assertThat(service.overview(USER_ID, null, null).entries().get(0).latestNewsCount()).isNull();
+  }
+
+  /** WAT-06 没有 newsSince，资讯数取不限下界的口径——窗口端点原样传 null。 */
+  @Test
+  void wat06CountsNewsWithoutALowerBound() {
+    activeGroup();
+    when(items.findByGroup(USER_ID, GROUP_ID)).thenReturn(List.of(item(ITEM_ID, GROUP_ID, STORAGE_ID, 0, 0)));
+    when(securities.findByStorageIds(any())).thenReturn(Map.of(STORAGE_ID, identity()));
+    when(quotes.fetchBatch("CN")).thenReturn(List.of(quote()));
+    when(newsCounts.countSince(any(), any())).thenReturn(Map.of(SECURITY_ID, 2));
+
+    assertThat(service.listItems(USER_ID, GROUP_ID, true, null, null).items().get(0).latestNewsCount())
+        .isEqualTo(2);
+    verify(newsCounts).countSince(List.of(SECURITY_ID), null);
+  }
+
+  @Test
+  void wat11PassesNewsSinceThroughAsAnInstant() {
+    when(groups.findActiveByUser(USER_ID))
+        .thenReturn(List.of(group(GROUP_ID, "默认分组", 0, true, 0, 1)));
+    when(items.findByUser(USER_ID)).thenReturn(List.of(item(1L, GROUP_ID, STORAGE_ID, 0, 0)));
+    when(securities.findByStorageIds(any())).thenReturn(Map.of(STORAGE_ID, identity()));
+    when(quotes.fetchBatch("CN")).thenReturn(List.of(quote()));
+
+    service.overview(USER_ID, null, "2026-09-18");
+
+    // 纯日期按 Clock 的时区取当日起点（Asia/Shanghai），与资讯中心的 startAt 同一口径
+    verify(newsCounts).countSince(
+        List.of(SECURITY_ID),
+        OffsetDateTime.of(2026, 9, 18, 0, 0, 0, 0, ZoneOffset.ofHours(8)));
+  }
+
+  @Test
+  void wat11RejectsAnUnparseableNewsSince() {
+    when(groups.findActiveByUser(USER_ID)).thenReturn(List.of());
+
+    WatchlistException thrown = catchThrowableOfType(
+        () -> service.overview(USER_ID, null, "昨天"),
+        WatchlistException.class);
+
+    assertThat(thrown.code()).isEqualTo(WatchlistErrorCode.INVALID_REQUEST);
+    assertThat(thrown).hasMessageContaining("newsSince");
   }
 
   // ---------- WAT-12 ----------

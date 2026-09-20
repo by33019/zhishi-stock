@@ -50,6 +50,7 @@ docker-compose -f compose.yaml -f compose.legacy.yaml -p zhishi-legacy up -d --b
 │   ├── stock-common/       共享类型（ApiResponse）
 │   ├── stock-system/       认证与用户域
 │   ├── stock-market/       行情域
+│   ├── stock-news/         资讯域
 │   ├── stock-integration/  外部数据源适配层
 │   ├── stock-backend/      Web 入口
 │   └── stock-job/          定时任务

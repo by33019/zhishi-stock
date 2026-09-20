@@ -10,6 +10,17 @@ import cn.zhishi.stock.market.domain.SecurityMasterProvider;
 import cn.zhishi.stock.market.domain.SecurityQuoteProvider;
 import cn.zhishi.stock.backend.security.JwtAuthenticationFilter;
 import cn.zhishi.stock.backend.web.TraceIdFilter;
+import cn.zhishi.stock.market.domain.SectorIdentityProvider;
+import cn.zhishi.stock.news.application.NewsIngestionService;
+import cn.zhishi.stock.news.application.NewsQueryService;
+import cn.zhishi.stock.news.domain.NewsArticleStore;
+import cn.zhishi.stock.news.domain.NewsProvider;
+import cn.zhishi.stock.news.domain.NewsRelationStore;
+import cn.zhishi.stock.news.domain.NewsSourceStore;
+import cn.zhishi.stock.news.domain.RelationCatalogProvider;
+import cn.zhishi.stock.news.infrastructure.NewsArticleMapper;
+import cn.zhishi.stock.news.infrastructure.NewsRelationMapper;
+import cn.zhishi.stock.news.infrastructure.NewsSourceMapper;
 import cn.zhishi.stock.system.auth.AuthenticationService;
 import cn.zhishi.stock.system.auth.RefreshSessionService;
 import cn.zhishi.stock.system.auth.SysUserMapper;
@@ -38,6 +49,9 @@ class BackendConfigurationTest {
         .withBean(SysUserMapper.class, () -> mock(SysUserMapper.class))
         .withBean(WatchlistGroupMapper.class, () -> mock(WatchlistGroupMapper.class))
         .withBean(WatchlistItemMapper.class, () -> mock(WatchlistItemMapper.class))
+        .withBean(NewsSourceMapper.class, () -> mock(NewsSourceMapper.class))
+        .withBean(NewsArticleMapper.class, () -> mock(NewsArticleMapper.class))
+        .withBean(NewsRelationMapper.class, () -> mock(NewsRelationMapper.class))
         .withBean(StringRedisTemplate.class, () -> mock(StringRedisTemplate.class))
         .withBean(JdbcTemplate.class, () -> mock(JdbcTemplate.class))
         .withBean(ObjectMapper.class, ObjectMapper::new)
@@ -58,6 +72,17 @@ class BackendConfigurationTest {
           assertThat(context).hasSingleBean(WatchlistItemService.class);
           assertThat(context).hasSingleBean(WatchlistItemRepository.class);
           assertThat(context).hasSingleBean(SecurityIdentityProvider.class);
+          assertThat(context).hasSingleBean(SectorIdentityProvider.class);
+          // 资讯域：采集侧与查询侧都要装起来，且查询用例同时充当 NewsCountProvider
+          assertThat(context).hasSingleBean(NewsProvider.class);
+          assertThat(context).hasSingleBean(RelationCatalogProvider.class);
+          assertThat(context).hasSingleBean(NewsSourceStore.class);
+          assertThat(context).hasSingleBean(NewsArticleStore.class);
+          assertThat(context).hasSingleBean(NewsRelationStore.class);
+          assertThat(context).hasSingleBean(NewsIngestionService.class);
+          assertThat(context).hasSingleBean(NewsQueryService.class);
+          assertThat(context.getBean(NewsQueryService.class))
+              .isInstanceOf(cn.zhishi.stock.news.domain.NewsCountProvider.class);
           assertThat(context).hasSingleBean(IdempotencyStore.class);
           assertThat(context).hasSingleBean(IdempotencyGuard.class);
           FilterRegistrationBean<?> registration =

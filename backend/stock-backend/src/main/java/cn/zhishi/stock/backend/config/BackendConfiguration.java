@@ -9,9 +9,12 @@ import cn.zhishi.stock.integration.market.SimulatedQuoteSnapshotProvider;
 import cn.zhishi.stock.integration.market.SimulatedSecurityIdentityProvider;
 import cn.zhishi.stock.integration.market.SimulatedSecurityMasterProvider;
 import cn.zhishi.stock.integration.market.SimulatedSecurityQuoteProvider;
+import cn.zhishi.stock.integration.market.SimulatedSectorIdentityProvider;
 import cn.zhishi.stock.integration.market.SimulatedSectorProvider;
 import cn.zhishi.stock.integration.market.SimulatedTradingCalendarProvider;
 import cn.zhishi.stock.integration.market.SimulatedTurnoverTrendProvider;
+import cn.zhishi.stock.integration.news.SimulatedNewsProvider;
+import cn.zhishi.stock.integration.news.SimulatedRelationCatalogProvider;
 import cn.zhishi.stock.market.application.MarketBreadthQueryService;
 import cn.zhishi.stock.market.application.MarketOverviewQueryService;
 import cn.zhishi.stock.market.application.MarketStatusQueryService;
@@ -28,6 +31,7 @@ import cn.zhishi.stock.market.domain.MarketOverviewStore;
 import cn.zhishi.stock.market.domain.QuoteProvider;
 import cn.zhishi.stock.market.domain.QuoteSnapshotBatchProvider;
 import cn.zhishi.stock.market.domain.QuoteSnapshotProvider;
+import cn.zhishi.stock.market.domain.SectorIdentityProvider;
 import cn.zhishi.stock.market.domain.SectorProvider;
 import cn.zhishi.stock.market.domain.SecurityIdentityProvider;
 import cn.zhishi.stock.market.domain.SecurityMasterProvider;
@@ -37,6 +41,20 @@ import cn.zhishi.stock.market.domain.TurnoverTrendProvider;
 import cn.zhishi.stock.market.infrastructure.JdbcMarketOverviewArchive;
 import cn.zhishi.stock.market.infrastructure.MarketOverviewJsonCodec;
 import cn.zhishi.stock.market.infrastructure.RedisMarketOverviewStore;
+import cn.zhishi.stock.news.application.NewsIngestionService;
+import cn.zhishi.stock.news.application.NewsQueryService;
+import cn.zhishi.stock.news.domain.NewsArticleStore;
+import cn.zhishi.stock.news.domain.NewsCountProvider;
+import cn.zhishi.stock.news.domain.NewsProvider;
+import cn.zhishi.stock.news.domain.NewsRelationStore;
+import cn.zhishi.stock.news.domain.NewsSourceStore;
+import cn.zhishi.stock.news.domain.RelationCatalogProvider;
+import cn.zhishi.stock.news.infrastructure.MyBatisNewsArticleStore;
+import cn.zhishi.stock.news.infrastructure.MyBatisNewsRelationStore;
+import cn.zhishi.stock.news.infrastructure.MyBatisNewsSourceStore;
+import cn.zhishi.stock.news.infrastructure.NewsArticleMapper;
+import cn.zhishi.stock.news.infrastructure.NewsRelationMapper;
+import cn.zhishi.stock.news.infrastructure.NewsSourceMapper;
 import cn.zhishi.stock.system.auth.AccessTokenBlacklist;
 import cn.zhishi.stock.system.auth.AuthenticationService;
 import cn.zhishi.stock.system.auth.JwtAccessTokenService;
@@ -140,6 +158,7 @@ public class BackendConfiguration {
             WatchlistGroupRepository watchlistGroupRepository,
             SecurityIdentityProvider securityIdentityProvider,
             QuoteSnapshotBatchProvider quoteSnapshotBatchProvider,
+            NewsCountProvider newsCountProvider,
             LongSupplier databaseIdGenerator,
             Clock clock) {
         return new WatchlistItemService(
@@ -147,6 +166,7 @@ public class BackendConfiguration {
                 watchlistGroupRepository,
                 securityIdentityProvider,
                 quoteSnapshotBatchProvider,
+                newsCountProvider,
                 databaseIdGenerator,
                 clock);
     }
@@ -357,6 +377,101 @@ public class BackendConfiguration {
     @Bean
     SectorProvider sectorProvider(SecurityMasterProvider securityMasterProvider) {
         return new SimulatedSectorProvider(securityMasterProvider);
+    }
+
+    /**
+     * 板块身份（字符串 {@code sectorId} ↔ 板块表 bigint 代理键）的唯一解析入口。
+     *
+     * <p>与 {@link #securityIdentityProvider} 同因同形：资讯关联表把 {@code target_id} 统一定义为
+     * bigint（V4），因此板块侧也需要一个桥接。构词规则只在 {@code SimulatedSectorIds} 里定义一份。
+     */
+    @Bean
+    SectorIdentityProvider sectorIdentityProvider(SectorProvider sectorProvider) {
+        return new SimulatedSectorIdentityProvider(sectorProvider);
+    }
+
+    @Bean
+    NewsProvider newsProvider(
+            Clock clock,
+            SecurityMasterProvider securityMasterProvider,
+            SectorProvider sectorProvider,
+            TradingCalendarProvider tradingCalendarProvider) {
+        return new SimulatedNewsProvider(
+                clock, securityMasterProvider, sectorProvider, tradingCalendarProvider);
+    }
+
+    @Bean
+    NewsSourceStore newsSourceStore(NewsSourceMapper mapper, Clock clock) {
+        return new MyBatisNewsSourceStore(mapper, clock);
+    }
+
+    /**
+     * 稿件仓储依赖来源仓储：契约要求列表里不出现"来源缺失"的稿件
+     * （等价于 {@code INNER JOIN news_source}），来源当前状态是可见性判据的一部分。
+     */
+    @Bean
+    NewsArticleStore newsArticleStore(
+            NewsArticleMapper articles, NewsSourceStore sources, NewsRelationMapper relations, Clock clock) {
+        return new MyBatisNewsArticleStore(articles, sources, relations, clock);
+    }
+
+    @Bean
+    NewsRelationStore newsRelationStore(NewsRelationMapper mapper) {
+        return new MyBatisNewsRelationStore(mapper);
+    }
+
+    /** 关联解析所需的证券/板块目录，投影自行情域主数据——不在这里另造一份名字表。 */
+    @Bean
+    RelationCatalogProvider relationCatalogProvider(
+            SecurityMasterProvider securityMasterProvider,
+            SecurityIdentityProvider securityIdentityProvider,
+            SectorProvider sectorProvider,
+            SectorIdentityProvider sectorIdentityProvider) {
+        return new SimulatedRelationCatalogProvider(
+                securityMasterProvider,
+                securityIdentityProvider,
+                sectorProvider,
+                sectorIdentityProvider);
+    }
+
+    @Bean
+    NewsIngestionService newsIngestionService(
+            NewsProvider newsProvider,
+            NewsSourceStore newsSourceStore,
+            NewsArticleStore newsArticleStore,
+            NewsRelationStore newsRelationStore,
+            RelationCatalogProvider relationCatalogProvider,
+            LongSupplier databaseIdGenerator,
+            Clock clock) {
+        return new NewsIngestionService(
+                newsProvider,
+                newsSourceStore,
+                newsArticleStore,
+                newsRelationStore,
+                relationCatalogProvider,
+                databaseIdGenerator,
+                clock);
+    }
+
+    /**
+     * 资讯查询用例同时充当 {@code NewsCountProvider}（自选页的 {@code latestNewsCount}）。
+     *
+     * <p>刻意**不**再声明一个只做计数的 Bean：那样"哪些资讯算可见"就会有两份实现，
+     * 而两份口径分歧不会报错，只会让自选卡片上的数字与资讯列表对不上。
+     */
+    @Bean
+    NewsQueryService newsQueryService(
+            NewsArticleStore newsArticleStore,
+            NewsSourceStore newsSourceStore,
+            SecurityIdentityProvider securityIdentityProvider,
+            SectorIdentityProvider sectorIdentityProvider,
+            Clock clock) {
+        return new NewsQueryService(
+                newsArticleStore,
+                newsSourceStore,
+                securityIdentityProvider,
+                sectorIdentityProvider,
+                clock);
     }
 
     @Bean

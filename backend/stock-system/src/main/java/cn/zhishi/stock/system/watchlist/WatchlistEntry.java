@@ -15,8 +15,10 @@ import java.time.OffsetDateTime;
  * 两者都**保留条目**（PRD：部分行情失败时保留股票并局部提示，不得自动移除），
  * 由 WAT-11 的 {@code limitations} 说明降级原因。
  *
- * <p>{@code latestNewsCount} 恒为 {@code null}：资讯域尚未就位（M3-04）。
- * 填 0 会告诉前端"这只股票近期没有资讯"——那是编造。
+ * <p>{@code latestNewsCount} 是**该证券已确认关联且当前可见**的资讯条数
+ * （口径由资讯域给出，与资讯中心列表同源）。{@code null} 表示"不知道"：
+ * 悬空自选拼不出对外标识，或资讯域查不到这只证券。填 0 会告诉前端
+ * "这只股票近期没有资讯"——那是编造，而"没有资讯"与"我们不知道"是两件事。
  */
 public record WatchlistEntry(
         long itemId,

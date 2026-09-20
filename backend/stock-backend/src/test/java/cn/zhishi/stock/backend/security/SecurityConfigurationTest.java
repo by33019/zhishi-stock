@@ -62,7 +62,14 @@ class SecurityConfigurationTest {
               "/api/v1/sectors/sim-bk0006",
               "/api/v1/sectors/sim-bk0006/quote",
               "/api/v1/sectors/sim-bk0006/constituents",
-              "/api/v1/securities/sim-600000/quote"}) {
+              "/api/v1/securities/sim-600000/quote",
+              // 资讯中心与个股/板块资讯区（契约 §11.1 NEWS-01~04、§9.2 STK-10、§10 SEC-07）
+              "/api/v1/news",
+              "/api/v1/news/sync-status",
+              "/api/v1/news/options",
+              "/api/v1/news/1",
+              "/api/v1/securities/sim-600000/news",
+              "/api/v1/sectors/sim-bk0006/news"}) {
             assertThat(mvc.perform(get(path)).andReturn().getResponse().getStatus())
                 .describedAs("游客访问 %s 应当放行", path)
                 .isEqualTo(200);
@@ -195,6 +202,36 @@ class SecurityConfigurationTest {
 
     @GetMapping("/api/v1/securities/{securityId}/quote")
     String securityQuote() {
+      return "ok";
+    }
+
+    @GetMapping("/api/v1/news")
+    String news() {
+      return "ok";
+    }
+
+    @GetMapping("/api/v1/news/sync-status")
+    String newsSyncStatus() {
+      return "ok";
+    }
+
+    @GetMapping("/api/v1/news/options")
+    String newsOptions() {
+      return "ok";
+    }
+
+    @GetMapping("/api/v1/news/{newsId}")
+    String newsDetail() {
+      return "ok";
+    }
+
+    @GetMapping("/api/v1/securities/{securityId}/news")
+    String securityNews() {
+      return "ok";
+    }
+
+    @GetMapping("/api/v1/sectors/{sectorId}/news")
+    String sectorNews() {
       return "ok";
     }
 

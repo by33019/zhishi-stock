@@ -7,13 +7,16 @@ AI 智能股票分析平台的服务端。Spring Boot 3.5.9 / Java 17 / Maven �
 | 模块 | 职责 | 规模 |
 | --- | --- | --- |
 | `stock-common` | 跨模块共享类型，如统一返回壳 `ApiResponse` | 2 个类 |
-| `stock-system` | 认证与用户域：登录、JWT、refresh token 轮换、权限 | 33 个类 |
-| `stock-market` | 行情域：市场总览查询、快照与缓存编排 | 15 个类 |
-| `stock-integration` | 外部数据源适配层（Provider 接口与实现） | 2 个类 |
+| `stock-system` | 认证与用户域：登录、JWT、refresh token 轮换、权限、自选中心（WAT-01~12） | 56 个类 |
+| `stock-market` | 行情域：市场总览、广度与趋势、证券主数据、榜单、板块 | 83 个类 |
+| `stock-news` | 资讯域：采集与去重、标的关联、NEWS-01~04 / STK-10 / SEC-07 | 50 个类 |
+| `stock-integration` | 外部数据源适配层（Provider 接口与实现） | 19 个类 |
 | `stock-backend` | Web 入口：控制器、安全配置、全局异常处理 | 19 个类 |
-| `stock-job` | 定时任务：行情采集（默认每 60s 一次） | 5 个类 |
+| `stock-job` | 定时任务：行情采集（默认每 60s）、资讯采集（默认每 120s） | 4 个类 |
 
-依赖方向：`stock-backend` / `stock-job` → 各业务模块 → `stock-common`。业务模块之间不互相依赖。
+依赖方向：`stock-backend` / `stock-job` → 各业务模块 → `stock-common`。业务模块之间不互相依赖；
+`stock-system` 与 `stock-news` 例外，两者都只依赖 `stock-market` 的 `domain` 包
+（字符串业务 ID ↔ 库里 bigint 代理键的桥接必须只有一处），无环。
 
 ## 构建与测试
 
@@ -28,7 +31,8 @@ mvn -f backend/pom.xml test
 mvn -f backend/pom.xml -pl stock-market -am test
 ```
 
-当前状态：**45 个测试全绿**（22 个测试类），其中集成测试会拉起真实 MySQL 与 Redis 容器。
+当前状态：**639 个测试全绿**（62 个 `*Test` 类），其中集成测试会拉起真实 MySQL 与 Redis 容器
+（`InfrastructureIntegrationTest` 下 4 个 `@Nested` 域：`WatchlistGroups` / `WatchlistItems` / `News` 等）。
 
 > **Windows + Git Bash 注意**：Maven 自带的 `bin/mvn`（bash 脚本）在 MinGW 下会因路径转换缺陷抛
 > `ClassNotFoundException: org.codehaus.plexus.classworlds.launcher.Launcher`。
@@ -59,6 +63,8 @@ mvn -f backend/pom.xml -pl stock-market -am test
 | `DEMO_USERNAME` / `DEMO_PASSWORD` | `demo` / `Stock@123` | 演示账号种子 |
 | `MARKET_COLLECT_INITIAL_DELAY_MS` | `1000` | 行情采集首次延迟（仅 `stock-job`） |
 | `MARKET_COLLECT_DELAY_MS` | `60000` | 行情采集间隔（仅 `stock-job`） |
+| `NEWS_COLLECT_INITIAL_DELAY_MS` | `1000` | 资讯采集首次延迟（仅 `stock-job`） |
+| `NEWS_COLLECT_DELAY_MS` | `120000` | 资讯采集间隔（仅 `stock-job`）；架构规定每 2 分钟 |
 
 ## 启动方式
 

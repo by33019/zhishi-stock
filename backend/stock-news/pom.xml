@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent><groupId>cn.zhishi.stock</groupId><artifactId>stock-parent</artifactId><version>0.1.0-SNAPSHOT</version></parent>
+  <artifactId>stock-news</artifactId>
+  <dependencies>
+    <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-common</artifactId><version>${project.version}</version></dependency>
+    <!--
+      关联表的 target_id 是 bigint，与 user_watchlist_item.security_id 必须同一套代理键；
+      查询层还要把 bigint 还原成契约的字符串 securityId。桥接规则只允许有一处，
+      因此这里依赖行情域的 domain 包（**不碰 application**），与 stock-system 同形。
+    -->
+    <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-market</artifactId><version>${project.version}</version></dependency>
+    <!-- 采集事务与查询都要落库；MyBatis 注解 SQL 需要 mybatis-plus 与 jdbc。 -->
+    <dependency><groupId>com.baomidou</groupId><artifactId>mybatis-plus-spring-boot3-starter</artifactId></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-jdbc</artifactId></dependency>
+    <!--
+      显式声明而不是蹭传递依赖：Fingerprint 与 JSON 扩展字段都要 Jackson
+      （M3-01 实测 stock-system 缺它导致编译不过）。照抄 stock-market 的先例。
+    -->
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-json</artifactId></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
+  </dependencies>
+</project>

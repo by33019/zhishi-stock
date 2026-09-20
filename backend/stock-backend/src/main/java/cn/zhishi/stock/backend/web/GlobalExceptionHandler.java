@@ -11,6 +11,8 @@ import cn.zhishi.stock.market.application.MarketNotFoundException;
 import cn.zhishi.stock.market.application.SecurityNotFoundException;
 import cn.zhishi.stock.market.application.SectorNotFoundException;
 import cn.zhishi.stock.market.application.SectorQuoteNotAvailableException;
+import cn.zhishi.stock.news.application.InvalidNewsQueryException;
+import cn.zhishi.stock.news.application.NewsNotFoundException;
 import cn.zhishi.stock.system.auth.AuthErrorCode;
 import cn.zhishi.stock.system.auth.AuthException;
 import cn.zhishi.stock.system.idempotency.IdempotencyKeyConflictException;
@@ -192,6 +194,46 @@ public class GlobalExceptionHandler {
             HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(ApiResponse.failure(
                 "SECTOR_QUOTE_NOT_AVAILABLE",
+                exception.getMessage(),
+                null,
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
+    /**
+     * 资讯资源不可用。
+     *
+     * <p>业务码由异常自身携带（{@code NEWS_NOT_FOUND} / {@code NEWS_WITHDRAWN} /
+     * {@code NEWS_RIGHTS_EXPIRED} / {@code SECURITY_NOT_FOUND} / {@code SECTOR_NOT_FOUND}），
+     * 不在这里靠 instanceof 推断——五种情况的 HTTP 状态相同，只有业务码不同
+     * （同 {@code SectorNotFoundException}）。合并成一个 404 会让调用方无法区分
+     * "链接写错了"与"内容被撤稿了"。
+     */
+    @ExceptionHandler(NewsNotFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> newsNotFound(
+            NewsNotFoundException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.failure(
+                exception.code(),
+                exception.getMessage(),
+                null,
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
+    /**
+     * 资讯查询参数非法。
+     *
+     * <p>与 {@code InvalidRankingQueryException} 同一条界线：只覆盖"参数本身不合法"
+     * （资讯类型不在白名单、时间格式错、分页越界、关键词过长）。筛选值在数据中不存在
+     * 不属于这里——"这只证券没有资讯"返回空页，"这只证券不存在"走 404。
+     */
+    @ExceptionHandler(InvalidNewsQueryException.class)
+    public ResponseEntity<ApiResponse<Void>> invalidNewsQuery(
+            InvalidNewsQueryException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.badRequest().body(ApiResponse.failure(
+                "INVALID_REQUEST",
                 exception.getMessage(),
                 null,
                 TraceIdFilter.current(request),

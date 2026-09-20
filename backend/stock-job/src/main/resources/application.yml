@@ -23,3 +23,7 @@ stock:
     holidays: ${MARKET_HOLIDAYS:}
     collect-initial-delay-ms: ${MARKET_COLLECT_INITIAL_DELAY_MS:1000}
     collect-delay-ms: ${MARKET_COLLECT_DELAY_MS:60000}
+  news:
+    # 架构 §"新闻/公告增量采集 每 2 分钟"。不传游标：增量判据由来源 ID 幂等承担。
+    collect-initial-delay-ms: ${NEWS_COLLECT_INITIAL_DELAY_MS:1000}
+    collect-delay-ms: ${NEWS_COLLECT_DELAY_MS:120000}

@@ -8,10 +8,13 @@ import cn.zhishi.stock.market.domain.QuoteSnapshotBatchProvider;
 import cn.zhishi.stock.market.domain.SecurityIdentity;
 import cn.zhishi.stock.market.domain.SecurityIdentityProvider;
 import cn.zhishi.stock.market.domain.SecuritySummary;
+import cn.zhishi.stock.news.domain.NewsCountProvider;
+import cn.zhishi.stock.news.domain.NewsTimestamps;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -47,14 +50,11 @@ public class WatchlistItemService {
     private static final int MAX_PAGE_SIZE = 100;
     private static final int MAX_MEMBERSHIP_IDS = 50;
 
-    /** 资讯域尚未就位（M3-04）时，每个概览响应都必须说明这一点。 */
-    private static final String NEWS_NOT_IMPLEMENTED =
-            "最新资讯数尚未实现（资讯 Provider 见 M3-04），latestNewsCount 恒为 null";
-
     private final WatchlistItemRepository items;
     private final WatchlistGroupRepository groups;
     private final SecurityIdentityProvider securities;
     private final QuoteSnapshotBatchProvider quotes;
+    private final NewsCountProvider newsCounts;
     private final LongSupplier idGenerator;
     private final Clock clock;
 
@@ -63,12 +63,14 @@ public class WatchlistItemService {
             WatchlistGroupRepository groups,
             SecurityIdentityProvider securities,
             QuoteSnapshotBatchProvider quotes,
+            NewsCountProvider newsCounts,
             LongSupplier idGenerator,
             Clock clock) {
         this.items = items;
         this.groups = groups;
         this.securities = securities;
         this.quotes = quotes;
+        this.newsCounts = newsCounts;
         this.idGenerator = idGenerator;
         this.clock = clock;
     }
@@ -82,10 +84,16 @@ public class WatchlistItemService {
                 entriesOf(userId, groupId, includeQuote), effectivePage, effectiveSize);
     }
 
-    /** WAT-06 的无分页版本，供 WAT-01 的 {@code includeItems=true} 复用。 */
+    /**
+     * WAT-06 的无分页版本，供 WAT-01 的 {@code includeItems=true} 复用。
+     *
+     * <p>WAT-06 没有 {@code newsSince} 参数，因此资讯数取**不限下界**的口径
+     * （该证券全部可见且已确认关联的资讯条数）。这与 WAT-11 传了 {@code newsSince}
+     * 时的窗口口径是同一条实现，只是窗口端点为空。
+     */
     public List<WatchlistEntry> entriesOf(long userId, long groupId, boolean includeQuote) {
         requireActive(userId, groupId);
-        return assemble(items.findByGroup(userId, groupId), includeQuote).entries();
+        return assemble(items.findByGroup(userId, groupId), includeQuote, null).entries();
     }
 
     /**
@@ -116,9 +124,9 @@ public class WatchlistItemService {
                     .findBySecurity(userId, groupId, identity.storageId())
                     .orElseThrow(() -> new IllegalStateException(
                             "唯一索引冲突，但按 (分组, 证券) 读不回已存在的自选项"));
-            return toEntry(existing, identity, null);
+            return toEntry(existing, identity, null, Map.of());
         }
-        return toEntry(item, identity, null);
+        return toEntry(item, identity, null, Map.of());
     }
 
     /**
@@ -222,14 +230,15 @@ public class WatchlistItemService {
      * <p>降级不失败：缺主数据、缺行情、缺资讯都只进 {@link WatchlistOverview#limitations()}，
      * 条目一律保留（PRD："部分行情失败时保留股票并局部提示，不得自动移除"）。
      */
-    public WatchlistOverview overview(long userId, Long groupId) {
+    public WatchlistOverview overview(long userId, Long groupId, String newsSince) {
+        OffsetDateTime since = parseNewsSince(newsSince);
         List<WatchlistGroup> activeGroups = groups.findActiveByUser(userId);
         Assembled assembled;
         if (groupId == null) {
-            assembled = assemble(orderedItems(userId, activeGroups), true);
+            assembled = assemble(orderedItems(userId, activeGroups), true, since);
         } else {
             WatchlistGroup group = requireActive(userId, groupId);
-            assembled = assemble(items.findByGroup(userId, group.groupId()), true);
+            assembled = assemble(items.findByGroup(userId, group.groupId()), true, since);
         }
         QuoteBatch batch = assembled.batch();
         return new WatchlistOverview(
@@ -291,7 +300,8 @@ public class WatchlistItemService {
      * 由此概览在"没有任何自选项"时的数据状态按 {@link QuoteBatch} 的空批次口径为
      * {@code UNAVAILABLE}，而不是谎称有数据。
      */
-    private Assembled assemble(List<WatchlistItem> stored, boolean includeQuote) {
+    private Assembled assemble(
+            List<WatchlistItem> stored, boolean includeQuote, OffsetDateTime newsSince) {
         if (stored.isEmpty()) {
             return new Assembled(List.of(), null);
         }
@@ -300,15 +310,46 @@ public class WatchlistItemService {
                 .collect(Collectors.toCollection(LinkedHashSet::new));
         Map<Long, SecurityIdentity> identities = securities.findByStorageIds(storageIds);
         QuoteBatch batch = includeQuote ? QuoteBatch.of(quotes.fetchBatch(MARKET_CODE)) : null;
+        Map<String, Integer> newsCounts = newsCountsOf(identities.values(), newsSince);
         return new Assembled(
                 stored.stream()
-                        .map(item -> toEntry(item, identities.get(item.securityId()), batch))
+                        .map(item -> toEntry(
+                                item, identities.get(item.securityId()), batch, newsCounts))
                         .toList(),
                 batch);
     }
 
+    /**
+     * 每只证券的资讯条数。
+     *
+     * <p>{@link NewsCountProvider#countSince} 只返回**有条数**的证券，因此这里的 Map
+     * 查不到就等于"0 条"。对外**仍然写成 {@code null}**：M3-03 立下的口径是"缺失即 `null`"，
+     * 与"口径宁可留空也不编造"一致——代价是**"0 条"这个事实也被写成了"不知道"**。
+     *
+     * <p><b>这条口径有缺陷，见 spec §8.4 与已知问题 #20。</b>此前这里的注释说
+     * "后者在资讯源不可用时才是真相"，但 {@code countSince} 无论资讯源是否可用都只返回
+     * 有条数的证券，**没有任何代码路径产生"未知"**。要真正区分，需要让 WAT-11 也带上
+     * 资讯域的新鲜度（那是给契约加字段）。本轮不动，只把事实记准。
+     *
+     * <p>传入的是**对外 securityId**，不是库里的代理键：代理键只在持久化层有意义，
+     * 用它当键会让"资讯数"与"跳转链接"对不上（M2-06 / M2-11 的同类问题）。
+     */
+    private Map<String, Integer> newsCountsOf(
+            Collection<SecurityIdentity> identities, OffsetDateTime newsSince) {
+        if (identities.isEmpty()) {
+            return Map.of();
+        }
+        List<String> outwardIds = identities.stream()
+                .map(SecurityIdentity::securityId)
+                .toList();
+        return newsCounts.countSince(outwardIds, newsSince);
+    }
+
     private WatchlistEntry toEntry(
-            WatchlistItem item, SecurityIdentity identity, QuoteBatch batch) {
+            WatchlistItem item,
+            SecurityIdentity identity,
+            QuoteBatch batch,
+            Map<String, Integer> newsCounts) {
         SecuritySummary summary = identity == null ? null : identity.summary();
         QuoteSnapshot quote = identity == null || batch == null
                 ? null
@@ -322,8 +363,9 @@ public class WatchlistItemService {
                 toOffsetDateTime(item.createdAt()),
                 summary,
                 quote,
-                // 资讯域未就位（M3-04）：null 表示"不知道"，0 会谎称"没有资讯"。
-                null);
+                // 悬空自选（主数据里没有这只证券）时连对外标识都拼不出来，只能是 null。
+                // 查得到就是真实条数，查不到保持 null——0 会谎称"这只股票没有资讯"。
+                identity == null ? null : newsCounts.get(identity.securityId()));
     }
 
     /**
@@ -364,7 +406,6 @@ public class WatchlistItemService {
         if (missingQuotes > 0) {
             limitations.add(missingQuotes + " 只自选证券当前没有行情快照，已保留自选关系");
         }
-        limitations.add(NEWS_NOT_IMPLEMENTED);
         return List.copyOf(limitations);
     }
 
@@ -385,6 +426,23 @@ public class WatchlistItemService {
             throw invalidRequest("securityIds 必须为 1 至 " + MAX_MEMBERSHIP_IDS + " 个");
         }
         return List.copyOf(new LinkedHashSet<>(tokens));
+    }
+
+    /**
+     * WAT-11 的 {@code newsSince}：接受 ISO-8601 时间或纯日期，为空表示**不限下界**。
+     *
+     * <p>刻意不给默认窗口（比如"最近 7 天"）：那是一个凭空的规定，会让"这只票最近很安静"
+     * 与"我们把窗口设错了"看起来一模一样。契约把它列为可选参数，为空就是不过滤。
+     *
+     * <p>解析走 {@code NewsTimestamps}——与资讯中心的 {@code startAt} 同一份口径，
+     * 同一串时间在两个接口里必须落到同一个时刻。
+     */
+    private OffsetDateTime parseNewsSince(String newsSince) {
+        try {
+            return NewsTimestamps.parse(newsSince, "newsSince", false, clock.getZone());
+        } catch (IllegalArgumentException exception) {
+            throw invalidRequest(exception.getMessage());
+        }
     }
 
     private static int validatePage(Integer page) {

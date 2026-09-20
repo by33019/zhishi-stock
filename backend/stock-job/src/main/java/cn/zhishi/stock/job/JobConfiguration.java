@@ -1,15 +1,41 @@
 package cn.zhishi.stock.job;
 
+import cn.zhishi.stock.integration.market.SimulatedLimitRuleProvider;
 import cn.zhishi.stock.integration.market.SimulatedQuoteProvider;
+import cn.zhishi.stock.integration.market.SimulatedSecurityIdentityProvider;
+import cn.zhishi.stock.integration.market.SimulatedSecurityMasterProvider;
+import cn.zhishi.stock.integration.market.SimulatedSecurityQuoteProvider;
+import cn.zhishi.stock.integration.market.SimulatedSectorIdentityProvider;
+import cn.zhishi.stock.integration.market.SimulatedSectorProvider;
 import cn.zhishi.stock.integration.market.SimulatedTradingCalendarProvider;
+import cn.zhishi.stock.integration.news.SimulatedNewsProvider;
+import cn.zhishi.stock.integration.news.SimulatedRelationCatalogProvider;
 import cn.zhishi.stock.market.application.MarketIngestionService;
+import cn.zhishi.stock.market.domain.LimitRuleProvider;
 import cn.zhishi.stock.market.domain.MarketOverviewArchive;
 import cn.zhishi.stock.market.domain.MarketOverviewStore;
 import cn.zhishi.stock.market.domain.QuoteProvider;
+import cn.zhishi.stock.market.domain.SecurityIdentityProvider;
+import cn.zhishi.stock.market.domain.SecurityMasterProvider;
+import cn.zhishi.stock.market.domain.SecurityQuoteProvider;
+import cn.zhishi.stock.market.domain.SectorIdentityProvider;
+import cn.zhishi.stock.market.domain.SectorProvider;
 import cn.zhishi.stock.market.domain.TradingCalendarProvider;
 import cn.zhishi.stock.market.infrastructure.JdbcMarketOverviewArchive;
 import cn.zhishi.stock.market.infrastructure.MarketOverviewJsonCodec;
 import cn.zhishi.stock.market.infrastructure.RedisMarketOverviewStore;
+import cn.zhishi.stock.news.application.NewsIngestionService;
+import cn.zhishi.stock.news.domain.NewsArticleStore;
+import cn.zhishi.stock.news.domain.NewsProvider;
+import cn.zhishi.stock.news.domain.NewsRelationStore;
+import cn.zhishi.stock.news.domain.NewsSourceStore;
+import cn.zhishi.stock.news.domain.RelationCatalogProvider;
+import cn.zhishi.stock.news.infrastructure.MyBatisNewsArticleStore;
+import cn.zhishi.stock.news.infrastructure.MyBatisNewsRelationStore;
+import cn.zhishi.stock.news.infrastructure.MyBatisNewsSourceStore;
+import cn.zhishi.stock.news.infrastructure.NewsArticleMapper;
+import cn.zhishi.stock.news.infrastructure.NewsRelationMapper;
+import cn.zhishi.stock.news.infrastructure.NewsSourceMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
 import java.time.Duration;
@@ -61,6 +87,9 @@ public class JobConfiguration {
      * 一旦配置了节假日，采集任务会认为当天是交易日并落盘快照，
      * 而查询侧按节假日回退到上一交易日——两边对"今天是哪一天"给出不同答案，
      * 且不会有任何测试报错。
+     *
+     * <p>资讯采集同样吃这一份日历（{@code SimulatedNewsProvider} 用它决定发布时间
+     * 落在哪个交易日的时段内），所以它必须是**这一个** Bean，不能再造第二个。
      */
     @Bean
     TradingCalendarProvider tradingCalendarProvider(
@@ -86,5 +115,125 @@ public class JobConfiguration {
             MarketOverviewArchive archive,
             Clock clock) {
         return new MarketIngestionService(provider, store, archive, clock);
+    }
+
+    // ---------------------------------------------------------------- 资讯域
+    //
+    // 资讯采集要落库，所以这里必须把资讯域的装配链补齐。这一段与
+    // `stock-backend` 的 `BackendConfiguration` **刻意同形**：两边各自持有一份
+    // "资讯域由哪些实现组成"的答案，一旦分叉，采集端写进去的关联与查询端读出来的
+    // 关联就会对不上，而且不会有任何测试报错（M2-10 的教训）。
+    //
+    // 但这里**只装配采集所需的部分**：不声明 `NewsQueryService`——定时任务不查询，
+    // 把它拖进来会让 job 依赖整个查询侧的口径，白白扩大两处必须同步的范围。
+
+    @Bean
+    LimitRuleProvider limitRuleProvider() {
+        return new SimulatedLimitRuleProvider();
+    }
+
+    @Bean
+    SecurityQuoteProvider securityQuoteProvider(LimitRuleProvider limitRuleProvider) {
+        return new SimulatedSecurityQuoteProvider(limitRuleProvider);
+    }
+
+    /** 资讯里出现的证券名与关联解析的匹配目录，都投影自这一份主数据。 */
+    @Bean
+    SecurityMasterProvider securityMasterProvider(
+            SecurityQuoteProvider securityQuoteProvider,
+            TradingCalendarProvider tradingCalendarProvider,
+            Clock clock) {
+        return new SimulatedSecurityMasterProvider(
+                securityQuoteProvider, tradingCalendarProvider, clock);
+    }
+
+    @Bean
+    SectorProvider sectorProvider(SecurityMasterProvider securityMasterProvider) {
+        return new SimulatedSectorProvider(securityMasterProvider);
+    }
+
+    /**
+     * 证券身份（字符串 {@code securityId} ↔ 关联表 bigint 代理键）的唯一解析入口。
+     *
+     * <p>关联表把 {@code target_id} 统一定义为 bigint（V4），与
+     * {@code user_watchlist_item.security_id} 是**同一套**代理键。构词规则只在
+     * {@code SimulatedSecurityIds} 里定义一份，这里不重复。
+     */
+    @Bean
+    SecurityIdentityProvider securityIdentityProvider(
+            SecurityMasterProvider securityMasterProvider) {
+        return new SimulatedSecurityIdentityProvider(securityMasterProvider);
+    }
+
+    /** 板块侧与证券侧同因同形。 */
+    @Bean
+    SectorIdentityProvider sectorIdentityProvider(SectorProvider sectorProvider) {
+        return new SimulatedSectorIdentityProvider(sectorProvider);
+    }
+
+    @Bean
+    NewsProvider newsProvider(
+            Clock clock,
+            SecurityMasterProvider securityMasterProvider,
+            SectorProvider sectorProvider,
+            TradingCalendarProvider tradingCalendarProvider) {
+        return new SimulatedNewsProvider(
+                clock, securityMasterProvider, sectorProvider, tradingCalendarProvider);
+    }
+
+    @Bean
+    NewsSourceStore newsSourceStore(NewsSourceMapper mapper, Clock clock) {
+        return new MyBatisNewsSourceStore(mapper, clock);
+    }
+
+    /**
+     * 稿件仓储依赖来源仓储：契约要求列表里不出现"来源缺失"的稿件
+     * （等价于 {@code INNER JOIN news_source}），来源当前状态是可见性判据的一部分。
+     */
+    @Bean
+    NewsArticleStore newsArticleStore(
+            NewsArticleMapper articles,
+            NewsSourceStore sources,
+            NewsRelationMapper relations,
+            Clock clock) {
+        return new MyBatisNewsArticleStore(articles, sources, relations, clock);
+    }
+
+    @Bean
+    NewsRelationStore newsRelationStore(NewsRelationMapper mapper) {
+        return new MyBatisNewsRelationStore(mapper);
+    }
+
+    /** 关联解析所需的证券/板块目录，投影自行情域主数据——不在这里另造一份名字表。 */
+    @Bean
+    RelationCatalogProvider relationCatalogProvider(
+            SecurityMasterProvider securityMasterProvider,
+            SecurityIdentityProvider securityIdentityProvider,
+            SectorProvider sectorProvider,
+            SectorIdentityProvider sectorIdentityProvider) {
+        return new SimulatedRelationCatalogProvider(
+                securityMasterProvider,
+                securityIdentityProvider,
+                sectorProvider,
+                sectorIdentityProvider);
+    }
+
+    @Bean
+    NewsIngestionService newsIngestionService(
+            NewsProvider newsProvider,
+            NewsSourceStore newsSourceStore,
+            NewsArticleStore newsArticleStore,
+            NewsRelationStore newsRelationStore,
+            RelationCatalogProvider relationCatalogProvider,
+            LongSupplier jobDatabaseIdGenerator,
+            Clock clock) {
+        return new NewsIngestionService(
+                newsProvider,
+                newsSourceStore,
+                newsArticleStore,
+                newsRelationStore,
+                relationCatalogProvider,
+                jobDatabaseIdGenerator,
+                clock);
     }
 }

@@ -46,8 +46,9 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 /**
  * 自选中心聚合接口契约（{@code RESTful-API.md} §12.2 WAT-11、WAT-12）。
  *
- * <p>WAT-11 的两个要点在这里被钉住：**降级不失败**（缺行情/缺主数据/缺资讯都只进
- * {@code limitations}）与**不静默忽略过滤条件**（{@code newsSince} 直接 400）。
+ * <p>WAT-11 的三个要点在这里被钉住：**降级不失败**（缺行情/缺主数据都只进
+ * {@code limitations}）、**{@code latestNewsCount} 为空时是 null 不是 0**、
+ * 以及 {@code newsSince} 原样交给用例层解析（不在这里静默忽略）。
  */
 class WatchlistOverviewControllerContractTest {
 
@@ -56,9 +57,6 @@ class WatchlistOverviewControllerContractTest {
   private static final long ITEM_ID = 8_000_000_000_001L;
   private static final String GROUP_ID_TEXT = "7000000000001";
   private static final String SECURITY_ID = "sim-600519";
-  private static final List<String> NEWS_LIMITATION =
-      List.of("最新资讯数尚未实现（资讯 Provider 见 M3-04），latestNewsCount 恒为 null");
-
   private static final Clock CLOCK =
       Clock.fixed(Instant.parse("2026-09-20T06:30:00Z"), ZoneId.of("Asia/Shanghai"));
 
@@ -69,7 +67,7 @@ class WatchlistOverviewControllerContractTest {
 
   @Test
   void wat11ReturnsGroupsItemsMarketStatusAndTheBatchStatus() throws Exception {
-    when(items.overview(USER_ID, null)).thenReturn(overview(List.of(entry())));
+    when(items.overview(USER_ID, null, null)).thenReturn(overview(List.of(entry())));
     when(marketStatus.getStatus("CN", null)).thenReturn(marketStatusValue());
 
     mvc()
@@ -88,12 +86,13 @@ class WatchlistOverviewControllerContractTest {
         .andExpect(jsonPath("$.data.snapshotVersion").value("sim-20260920"))
         .andExpect(jsonPath("$.data.dataStatus").value("REALTIME"))
         .andExpect(jsonPath("$.data.dataTime").value("2026-09-20T15:00:00+08:00"))
-        .andExpect(jsonPath("$.data.limitations[0]").value(containsString("M3-04")));
+        // 本次没有降级：资讯数已接真实口径，"资讯未实现"不再是降级说明
+        .andExpect(jsonPath("$.data.limitations.length()").value(0));
   }
 
   @Test
   void wat11PassesTheGroupFilterThrough() throws Exception {
-    when(items.overview(USER_ID, GROUP_ID)).thenReturn(overview(List.of(entry())));
+    when(items.overview(USER_ID, GROUP_ID, null)).thenReturn(overview(List.of(entry())));
     when(marketStatus.getStatus("CN", null)).thenReturn(marketStatusValue());
 
     mvc()
@@ -102,12 +101,12 @@ class WatchlistOverviewControllerContractTest {
             .principal(authentication()))
         .andExpect(status().isOk());
 
-    verify(items).overview(USER_ID, GROUP_ID);
+    verify(items).overview(USER_ID, GROUP_ID, null);
   }
 
   @Test
   void wat11KeepsThePageAliveAndExplainsWhatIsDegraded() throws Exception {
-    when(items.overview(USER_ID, null)).thenReturn(new WatchlistOverview(
+    when(items.overview(USER_ID, null, null)).thenReturn(new WatchlistOverview(
         List.of(group()),
         List.of(entry()),
         "",
@@ -115,7 +114,7 @@ class WatchlistOverviewControllerContractTest {
         null,
         List.of(
             "1 只自选证券不在证券主数据中，仅返回自选关系",
-            "最新资讯数尚未实现（资讯 Provider 见 M3-04），latestNewsCount 恒为 null")));
+            "1 只自选证券当前没有行情快照，已保留自选关系")));
     when(marketStatus.getStatus("CN", null)).thenReturn(marketStatusValue());
 
     mvc()
@@ -129,21 +128,40 @@ class WatchlistOverviewControllerContractTest {
   }
 
   @Test
-  void wat11RejectsNewsSinceInsteadOfSilentlyIgnoringTheFilter() throws Exception {
+  void wat11PassesNewsSinceThroughToTheUseCase() throws Exception {
+    when(items.overview(USER_ID, null, "2026-09-01")).thenReturn(overview(List.of(entry())));
+    when(marketStatus.getStatus("CN", null)).thenReturn(marketStatusValue());
+
     mvc()
         .perform(get("/api/v1/watchlists/overview")
-            .param("newsSince", "2026-09-01T00:00:00Z")
+            .param("newsSince", "2026-09-01")
+            .principal(authentication()))
+        .andExpect(status().isOk());
+
+    verify(items).overview(USER_ID, null, "2026-09-01");
+  }
+
+  /** 解析在用例层，非法取值必须响亮失败而不是被当成"不过滤"。 */
+  @Test
+  void wat11RejectsAnUnparseableNewsSince() throws Exception {
+    when(items.overview(anyLong(), any(), any()))
+        .thenThrow(new WatchlistException(
+            WatchlistErrorCode.INVALID_REQUEST,
+            "newsSince 必须是 ISO-8601 时间（如 2026-09-18T10:00:00+08:00）或日期（如 2026-09-18）"));
+
+    mvc()
+        .perform(get("/api/v1/watchlists/overview")
+            .param("newsSince", "昨天")
             .principal(authentication()))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
-        .andExpect(jsonPath("$.message").value(containsString("M3-04")));
-
-    verify(items, never()).overview(anyLong(), any());
+        .andExpect(jsonPath("$.message").value(containsString("newsSince")));
   }
 
   @Test
   void wat11TreatsABlankNewsSinceAsAbsent() throws Exception {
-    when(items.overview(USER_ID, null)).thenReturn(overview(List.of(entry())));
+    // 空白原样透传（"不筛选"的判定在用例层），因此这里桩的就是那串空白
+    when(items.overview(USER_ID, null, "  ")).thenReturn(overview(List.of(entry())));
     when(marketStatus.getStatus("CN", null)).thenReturn(marketStatusValue());
 
     mvc()
@@ -161,6 +179,34 @@ class WatchlistOverviewControllerContractTest {
             .principal(authentication()))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+  }
+
+  /** 资讯数来自资讯域，字段名必须出现在响应体里（契约 WAT-06/WAT-11 都列了它）。 */
+  @Test
+  void wat11ReturnsTheLatestNewsCountOfEachSecurity() throws Exception {
+    when(items.overview(USER_ID, null, null)).thenReturn(overview(List.of(entry(3))));
+    when(marketStatus.getStatus("CN", null)).thenReturn(marketStatusValue());
+
+    mvc()
+        .perform(get("/api/v1/watchlists/overview").principal(authentication()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.items[0].latestNewsCount").value(3));
+  }
+
+  /**
+   * 资讯域没给出答案时字段是 {@code null}，不是 {@code 0}。
+   *
+   * <p>{@code 0} 会被读成"这只股票近期没有资讯"——那是编造；{@code null} 才是"我们不知道"。
+   */
+  @Test
+  void wat11KeepsLatestNewsCountNullWhenUnknown() throws Exception {
+    when(items.overview(USER_ID, null, null)).thenReturn(overview(List.of(entry())));
+    when(marketStatus.getStatus("CN", null)).thenReturn(marketStatusValue());
+
+    mvc()
+        .perform(get("/api/v1/watchlists/overview").principal(authentication()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.items[0].latestNewsCount").value(nullValue()));
   }
 
   // ---------- WAT-12 ----------
@@ -248,7 +294,7 @@ class WatchlistOverviewControllerContractTest {
         "sim-20260920",
         MarketOverview.DataStatus.REALTIME,
         OffsetDateTime.parse("2026-09-20T15:00:00+08:00"),
-        NEWS_LIMITATION);
+        List.of());
   }
 
   private static WatchlistGroup group() {
@@ -256,13 +302,17 @@ class WatchlistOverviewControllerContractTest {
   }
 
   private static WatchlistEntry entry() {
+    return entry(null);
+  }
+
+  private static WatchlistEntry entry(Integer latestNewsCount) {
     return new WatchlistEntry(
         ITEM_ID, GROUP_ID, 600_519L, 0, 0, OffsetDateTime.now(CLOCK),
         new cn.zhishi.stock.market.domain.SecuritySummary(
             SECURITY_ID, "SH.600519", "600519", "模拟证券600519", "SH", "STOCK", "MAIN",
             "LISTED", false, false, 2, null, null),
         null,
-        null);
+        latestNewsCount);
   }
 
   private static MarketStatus marketStatusValue() {

@@ -70,6 +70,10 @@ public class SecurityConfiguration {
                                 "/api/v1/sectors",
                                 "/api/v1/sectors/**")
                         .permitAll()
+                        // 资讯中心是契约 §11.1 标为 PUBLIC 的公开页面；STK-10 / SEC-07 的资讯区
+                        // 也在这两个前缀下，已由上面的 securities/sectors 规则覆盖。
+                        .requestMatchers(HttpMethod.GET, "/api/v1/news", "/api/v1/news/**")
+                        .permitAll()
                         .anyRequest()
                         .authenticated())
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)

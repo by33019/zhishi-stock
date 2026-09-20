@@ -7,6 +7,8 @@
   <artifactId>stock-integration</artifactId>
   <dependencies>
     <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-market</artifactId><version>${project.version}</version></dependency>
+    <!-- 资讯 Provider 适配器（SimulatedNewsProvider）实现 stock-news 的采集端口。 -->
+    <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-news</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>org.springframework</groupId><artifactId>spring-context</artifactId></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
   </dependencies>

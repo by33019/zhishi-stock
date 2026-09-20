@@ -10,6 +10,21 @@ import cn.zhishi.stock.market.domain.MarketOverview;
 import cn.zhishi.stock.market.domain.MarketOverviewArchive;
 import cn.zhishi.stock.market.domain.MarketOverviewStore;
 import cn.zhishi.stock.market.domain.QuoteProvider;
+import cn.zhishi.stock.news.domain.NewsArticle;
+import cn.zhishi.stock.news.domain.NewsArticleStore;
+import cn.zhishi.stock.news.domain.NewsContentStatus;
+import cn.zhishi.stock.news.domain.NewsDedupStatus;
+import cn.zhishi.stock.news.domain.NewsOriginalAccessStatus;
+import cn.zhishi.stock.news.domain.NewsRecord;
+import cn.zhishi.stock.news.domain.NewsRelation;
+import cn.zhishi.stock.news.domain.NewsRelationMethod;
+import cn.zhishi.stock.news.domain.NewsRelationStore;
+import cn.zhishi.stock.news.domain.NewsRelationStatus;
+import cn.zhishi.stock.news.domain.NewsSource;
+import cn.zhishi.stock.news.domain.NewsSourceStore;
+import cn.zhishi.stock.news.domain.NewsSourceType;
+import cn.zhishi.stock.news.domain.NewsTargetType;
+import cn.zhishi.stock.news.domain.NewsType;
 import cn.zhishi.stock.system.auth.AuthErrorCode;
 import cn.zhishi.stock.system.auth.AuthException;
 import cn.zhishi.stock.system.auth.AuthenticationService;
@@ -21,8 +36,11 @@ import cn.zhishi.stock.system.watchlist.WatchlistGroupRepository;
 import cn.zhishi.stock.system.watchlist.WatchlistItem;
 import cn.zhishi.stock.system.watchlist.WatchlistItemRepository;
 import java.nio.file.Path;
+import java.math.BigDecimal;
 import java.time.Clock;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -603,6 +621,215 @@ class InfrastructureIntegrationTest {
                     "SELECT COUNT(*) FROM user_watchlist_item WHERE group_id = ?",
                     Integer.class,
                     groupId);
+        }
+    }
+    /**
+     * 资讯域三张表（V4）的持久化往返。
+     *
+     * <p>为什么必须有真库：单测里的内存桩是**按对契约的理解手写**的，而真实列名、
+     * {@code authorized_summary} 的别名、{@code ck_stock_news_canonical} 这条 CHECK 约束、
+     * {@code uk_stock_news_source_content} 的唯一索引冲突行为，任何一处写错都不会让单测变红
+     * （M3-03 的教训：真实数据里有没预料到的组合）。
+     *
+     * <p>每个用例用各自的新主键，彼此不干扰、也不依赖执行顺序。
+     */
+    @Nested
+    class News {
+
+        private static final AtomicLong IDS = new AtomicLong(9_400_000_000_000L);
+
+        @Autowired NewsSourceStore newsSources;
+        @Autowired NewsArticleStore newsArticles;
+        @Autowired NewsRelationStore newsRelations;
+
+        @Test
+        void roundTripsASourceIncludingItsRightsWindow() {
+            NewsSource source = source("SIM_IT_ROUNDTRIP");
+
+            newsSources.ensureAll(List.of(source));
+
+            NewsSource stored = newsSources.findByCode("SIM_IT_ROUNDTRIP").orElseThrow();
+            assertThat(stored.sourceId()).isEqualTo(source.sourceId());
+            assertThat(stored.sourceName()).isEqualTo("集成测试来源");
+            assertThat(stored.sourceType()).isEqualTo(NewsSourceType.EXCHANGE);
+            assertThat(stored.authorizationStatus())
+                    .isEqualTo(NewsSource.AuthorizationStatus.AUTHORIZED);
+            assertThat(stored.rightsValidFrom()).isEqualTo(LocalDate.of(2026, 1, 1));
+            assertThat(stored.rightsValidTo()).isEqualTo(LocalDate.of(2027, 1, 1));
+            assertThat(stored.allowAiAnalysis()).isFalse();
+            assertThat(stored.status()).isEqualTo(NewsSource.SourceStatus.ACTIVE);
+            assertThat(stored.version()).isZero();
+            assertThat(newsSources.findById(source.sourceId())).isPresent();
+        }
+
+        @Test
+        void ensureAllInsertsOnlyMissingSourcesAndNeverOverwritesTheAuthorization() {
+            NewsSource declared = source("SIM_IT_ENSURE");
+
+            newsSources.ensureAll(List.of(declared));
+            // 第二次登记：同一 source_code 应当被跳过，而不是改掉人工设定的授权状态
+            newsSources.ensureAll(List.of(new NewsSource(
+                    IDS.incrementAndGet(), "SIM_IT_ENSURE", "被改名了", NewsSourceType.MEDIA, null,
+                    NewsSource.AuthorizationStatus.SUSPENDED, null, null, true,
+                    NewsSource.SourceStatus.ACTIVE, null, null, 0)));
+
+            NewsSource stored = newsSources.findByCode("SIM_IT_ENSURE").orElseThrow();
+            assertThat(stored.sourceId()).isEqualTo(declared.sourceId());
+            assertThat(stored.sourceName()).isEqualTo("集成测试来源");
+            assertThat(stored.authorizationStatus())
+                    .isEqualTo(NewsSource.AuthorizationStatus.AUTHORIZED);
+        }
+
+        /**
+         * 采集健康状态写回，但 {@code DISABLED} 不能被"采集成功"复活。
+         *
+         * <p>{@code CASE WHEN status = 'DISABLED'} 这段 SQL 只有真库能验证：
+         * 写成直接赋值不会有任何单测变红，只会让"停用某个来源"在下一次定时任务后静默失效。
+         */
+        @Test
+        void recordsSuccessAndFailureWithoutRevivingADisabledSource() {
+            NewsSource disabled = new NewsSource(
+                    IDS.incrementAndGet(), "SIM_IT_DISABLED", "已停用来源", NewsSourceType.MEDIA, null,
+                    NewsSource.AuthorizationStatus.AUTHORIZED, null, null, true,
+                    NewsSource.SourceStatus.DISABLED, null, null, 0);
+            NewsSource active = source("SIM_IT_HEALTH");
+            newsSources.ensureAll(List.of(disabled, active));
+
+            OffsetDateTime at = OffsetDateTime.now(clock).withNano(0);
+            newsSources.recordSyncSuccess(List.of(disabled.sourceId(), active.sourceId()), at);
+
+            NewsSource storedDisabled = newsSources.findById(disabled.sourceId()).orElseThrow();
+            assertThat(storedDisabled.status()).isEqualTo(NewsSource.SourceStatus.DISABLED);
+            assertThat(storedDisabled.lastSuccessAt()).isNotNull();
+
+            NewsSource storedActive = newsSources.findById(active.sourceId()).orElseThrow();
+            assertThat(storedActive.status()).isEqualTo(NewsSource.SourceStatus.ACTIVE);
+            assertThat(storedActive.version()).isEqualTo(1);
+
+            newsSources.recordSyncFailure(List.of(active.sourceId()), at);
+            assertThat(newsSources.findById(active.sourceId()).orElseThrow().status())
+                    .isEqualTo(NewsSource.SourceStatus.DEGRADED);
+        }
+
+        @Test
+        void roundTripsAnArticleWithItsSourceAndConfirmedRelations() {
+            NewsSource source = source("SIM_IT_ARTICLE");
+            newsSources.ensureAll(List.of(source));
+            NewsArticle article = article(IDS.incrementAndGet(), source.sourceId(), "content-1", null);
+            newsArticles.insert(article);
+            NewsRelation relation = new NewsRelation(
+                    IDS.incrementAndGet(), article.newsId(), NewsTargetType.SECURITY, 600_519L,
+                    NewsRelationMethod.EXPLICIT, new BigDecimal("1.00000"),
+                    NewsRelationStatus.CONFIRMED, "结构化证券代码");
+            newsRelations.insertAll(List.of(relation));
+
+            NewsRecord record = newsArticles.find(article.newsId()).orElseThrow();
+
+            // authorized_summary AS summary：别名写错时这里会读到 null
+            assertThat(record.article().summary()).isEqualTo("集成测试摘要");
+            assertThat(record.article().newsType()).isEqualTo(NewsType.NEWS);
+            assertThat(record.article().languageCode()).isEqualTo("zh-CN");
+            assertThat(record.article().originalAccessStatus())
+                    .isEqualTo(NewsOriginalAccessStatus.AVAILABLE);
+            assertThat(record.source().sourceCode()).isEqualTo("SIM_IT_ARTICLE");
+            assertThat(record.confirmedRelations())
+                    .singleElement()
+                    .satisfies(stored -> {
+                        assertThat(stored.targetType()).isEqualTo(NewsTargetType.SECURITY);
+                        assertThat(stored.targetId()).isEqualTo(600_519L);
+                        assertThat(stored.confidenceScore()).isEqualByComparingTo("1.00000");
+                        assertThat(stored.reasonSummary()).isEqualTo("结构化证券代码");
+                    });
+        }
+
+        /** 指纹查找只认 {@code ORIGINAL}：否则 canonical 会连成链。 */
+        @Test
+        void findsOnlyOriginalNewsByFingerprint() {
+            NewsSource source = source("SIM_IT_FINGERPRINT");
+            newsSources.ensureAll(List.of(source));
+            String fingerprint = "a".repeat(64);
+            long originalId = IDS.incrementAndGet();
+            long duplicateId = IDS.incrementAndGet();
+            newsArticles.insert(article(originalId, source.sourceId(), "fp-a", null, fingerprint));
+            newsArticles.insert(article(
+                    duplicateId, source.sourceId(), "fp-b", originalId, fingerprint));
+
+            assertThat(newsArticles.findOriginalNewsIdByFingerprint(fingerprint))
+                    .contains(originalId);
+        }
+
+        @Test
+        void rejectsADuplicateSourceContentAndReportsItAsAlreadyStored() {
+            NewsSource source = source("SIM_IT_DEDUP");
+            newsSources.ensureAll(List.of(source));
+            newsArticles.insert(article(IDS.incrementAndGet(), source.sourceId(), "same-content", null));
+
+            assertThat(newsArticles.existsBySourceContent(source.sourceId(), "same-content")).isTrue();
+            assertThatThrownBy(() -> newsArticles.insert(
+                    article(IDS.incrementAndGet(), source.sourceId(), "same-content", null)))
+                    .isInstanceOf(DuplicateKeyException.class);
+        }
+
+        /**
+         * 来源缺失的稿件不出现在 {@code findAll()} 里（等价于 {@code INNER JOIN news_source}）。
+         *
+         * <p>没有外键约束，所以"稿件指向一个不存在的来源"在库里是允许的——
+         * 这条正是靠应用层的连接语义挡住的，也只有真库能验证。
+         */
+        @Test
+        void hidesArticlesWhoseSourceIsMissing() {
+            NewsSource source = source("SIM_IT_ORPHAN");
+            newsSources.ensureAll(List.of(source));
+            long orphanId = IDS.incrementAndGet();
+            newsArticles.insert(article(IDS.incrementAndGet(), source.sourceId(), "kept", null));
+            newsArticles.insert(article(orphanId, 9_999_999_999_999L, "orphaned", null));
+
+            assertThat(newsArticles.findAll())
+                    .extracting(record -> record.article().newsId())
+                    .doesNotContain(orphanId);
+            // 按 id 直接取同样取不到：来源是可见性判据的一部分，不能靠列表过滤兜底
+            assertThat(newsArticles.find(orphanId)).isEmpty();
+        }
+
+        private NewsSource source(String sourceCode) {
+            return new NewsSource(
+                    IDS.incrementAndGet(), sourceCode, "集成测试来源", NewsSourceType.EXCHANGE, null,
+                    NewsSource.AuthorizationStatus.AUTHORIZED,
+                    LocalDate.of(2026, 1, 1), LocalDate.of(2027, 1, 1), false,
+                    NewsSource.SourceStatus.ACTIVE, null, null, 0);
+        }
+
+        private NewsArticle article(
+                long newsId, long sourceId, String sourceContentId, Long canonicalNewsId) {
+            return article(newsId, sourceId, sourceContentId, canonicalNewsId, "b".repeat(64));
+        }
+
+        private NewsArticle article(
+                long newsId,
+                long sourceId,
+                String sourceContentId,
+                Long canonicalNewsId,
+                String fingerprint) {
+            OffsetDateTime publishedAt =
+                    OffsetDateTime.now(clock).withNano(0).minusMinutes(5);
+            return new NewsArticle(
+                    newsId,
+                    sourceId,
+                    sourceContentId,
+                    NewsType.NEWS,
+                    "集成测试标题",
+                    "集成测试摘要",
+                    "记者",
+                    "https://example.com/news/" + newsId,
+                    "zh-CN",
+                    publishedAt,
+                    publishedAt.plusMinutes(1),
+                    fingerprint,
+                    canonicalNewsId,
+                    canonicalNewsId == null ? NewsDedupStatus.ORIGINAL : NewsDedupStatus.DUPLICATE,
+                    NewsContentStatus.PUBLISHED,
+                    NewsOriginalAccessStatus.AVAILABLE,
+                    null);
         }
     }
 }

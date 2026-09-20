@@ -38,7 +38,6 @@ import java.util.Map;
 public class SimulatedSectorProvider implements SectorProvider {
 
   private static final String SUPPORTED_MARKET = "CN";
-  private static final String ID_PREFIX = "sim-bk";
   private static final String CODE_PREFIX = "BK";
 
   /** 关系生效起点。取与 {@code SimulatedSecurityQuoteProvider.EARLIEST_LISTING} 同日，表示"自最早上市起"。 */
@@ -212,7 +211,9 @@ public class SimulatedSectorProvider implements SectorProvider {
   }
 
   private static String sectorId(int ordinal) {
-    return ID_PREFIX + padded(ordinal);
+    // 构词规则的唯一定义在 SimulatedSectorIds：M3-04 起资讯关联表要反解这个字符串
+    // 才能回显板块，"产出方自己拼一遍"就会变成可被打破的前提。
+    return SimulatedSectorIds.sectorIdOf(ordinal);
   }
 
   private static String sectorCode(int ordinal) {

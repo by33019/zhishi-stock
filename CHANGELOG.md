@@ -23,6 +23,74 @@
 
 ---
 
+## 2026-09-20 — M3-04 资讯域（第 7 个模块）+ 定时采集落库
+
+### 新增
+
+- **新模块 `backend/stock-news`**（50 个主代码 + 7 个测试文件）：
+  - `domain` 36：7 个枚举（`NewsType` / `NewsContentStatus` / `NewsOriginalAccessStatus` /
+    `NewsDedupStatus` / `NewsRelationStatus` / `NewsRelationMethod` / `NewsTargetType`）、
+    `NewsSource` / `NewsArticle` / `NewsRelation` / `NewsDetail` / `NewsRecord`、
+    `NewsSummary` / `NewsRelationSummary` / `NewsPage` / `NewsOptions` / `NewsSyncStatus`、
+    三个纯函数（`NewsFingerprint` / `NewsDeduplicator` / `NewsRelationResolver`）、
+    六个端口（`NewsProvider` / `NewsArticleStore` / `NewsSourceStore` / `NewsRelationStore` /
+    `RelationCatalogProvider` / `NewsCountProvider`）
+  - `application` 5：`NewsIngestionService`（采集 + 去重 + 关联 + 落库）、
+    `NewsQueryService`（六个查询接口的业务规则，**兼作** `NewsCountProvider`）
+  - `infrastructure` 9：三套 `Mapper` + `Row` + `MyBatis*Store`
+- **六个契约接口**（全部 PUBLIC）：NEWS-01 `GET /news`、NEWS-02 `GET /news/{newsId}`、
+  NEWS-03 `GET /news/sync-status`、NEWS-04 `GET /news/options`、
+  STK-10 `GET /securities/{securityId}/news`、SEC-07 `GET /sectors/{sectorId}/news`。
+  **六个端点写在同一个 `NewsController` 里**：STK-10 / SEC-07 的路径虽挂在 `securities` / `sectors` 下，
+  但资源属资讯域，写进行情侧控制器会让 Web 层反向依赖资讯域
+- `integration/news/SimulatedNewsProvider`、`SimulatedRelationCatalogProvider`（确定性模拟源 + 关联目录）
+- `market/domain/SectorIdentity(Provider)`、`integration/market/SimulatedSectorIds`、
+  `SimulatedSectorIdentityProvider`：板块侧身份桥接（关联表 `target_id` 统一为 bigint，与证券侧同因同形）
+- `stock-job/ScheduledNewsCollector`：`@Scheduled` fixedDelay 2 分钟（`stock.news.collect-delay-ms`）
+
+### 变更
+
+- `backend/pom.xml` 加第 7 个模块 `stock-news`；`stock-integration` / `stock-backend` / `stock-job` /
+  `stock-system` 各加 `stock-news` 依赖；`stock-job` 另显式声明 `mybatis-plus-spring-boot3-starter`
+- **`stock-job` 新增 `@MapperScan(basePackages = "cn.zhishi.stock.news", annotationClass = Mapper.class)`**：
+  漏掉它整个应用起不来（`No qualifying bean of type ...Mapper available`），
+  而报错指向配置类、不指向扫描范围；`annotationClass` 也不能省，否则资讯域的三十多个领域端口接口
+  会被 MyBatis 注册成 Mapper
+- `integration/market/SimulatedHashing` 的 `SplitMix64` 放开为 `public`（资讯 Provider 复用，**不新写第二份哈希**）
+- `integration/market/SimulatedSectorProvider` 改为投影自 `SecurityMasterProvider`
+- `WatchlistItemService.overview(...)` 新增 `newsSince` 参数并接 `NewsCountProvider`；
+  `WatchlistOverviewController` 删掉 `newsSince` 的占位 400 分支改为透传
+- `NewsSyncStatus` 新增 `dataStatus()`：`OK→REALTIME / DEGRADED→DELAYED / UNAVAILABLE→UNAVAILABLE`。
+  **刻意不产出 `STALE`**——资讯没有定义"多久算陈旧"的阈值，没有阈值就不编造
+
+### 修复
+
+- **`NewsQueryService.validateKeyword` 此前从未被调用**：keyword 长度上限 50 形同虚设，
+  超长关键词被当成正常筛选条件照常执行，且没有任何测试会变红。已在唯一出口 `page(NewsQuery)` 接上
+  （e2e 实测：51 字符关键词返回 400）
+- `WatchlistItemService` 的 `NEWS_NOT_IMPLEMENTED` 占位说明（`limitations` 里的假条目）已删除
+- `NewsCountProvider` 与 `WatchlistItemService` 的注释此前声称"0 条"与"不知道"可区分，
+  但实现里**没有任何代码路径产生"未知"**——注释改为陈述事实并指向已知问题 #20（**行为不变**）
+
+### 已知问题
+
+- **新增 #20**：WAT-11 的 `latestNewsCount` 无法表达"0 条"（M3-04 e2e 实测，本轮记录不修）
+- **#8 部分关闭**：SEC-07 板块资讯已交付，仅剩 SEC-05 板块走势
+- **#10 更新**：M3-03 自选页已不再依赖 STK-05
+
+### 验证
+
+- `mvn verify` 与 `TZ=UTC mvn test` 均 **BUILD SUCCESS**，8 个模块全绿
+- 后端 **639** 用例（`stock-news` 89 / `stock-backend` 181 / `stock-job` 12，由 2 扩到 12）；
+  前端 133 用例未回归（本轮未改前端）
+- `InfrastructureIntegrationTest` 新增 `@Nested News` 7 项，**本机 Docker 真实 MySQL 8.4 实测通过**
+- **真实端到端联调**：Docker 起 MySQL 8.4 + Redis 8.2 + `stock-api` + `stock-job`，空库 Flyway V1→V8，
+  库内数据**全部由真实定时任务采集而来**；第二轮采集零新增行（来源 ID 幂等生效）、
+  停用来源的 `last_success_at` 始终 `NULL`、跨来源重复稿被指纹判为 `DUPLICATE` 并折叠到主记录、
+  **只有 CANDIDATE 关联的稿件在列表与板块视图中都不可见**
+
+---
+
 ## 2026-09-20 — M3-03 前端 `/watchlist` 接真实 API（自选闭环端到端可用）
 
 ### 新增

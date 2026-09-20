@@ -14,6 +14,12 @@
       stock-market 不依赖 stock-system，因此不构成循环。
     -->
     <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-market</artifactId><version>${project.version}</version></dependency>
+    <!--
+      自选项要回显 latestNewsCount（WAT-06 / WAT-11），资讯数属于资讯域的事实，
+      用户域只应拿到"一个能问数的端口"。与上面 stock-market 的依赖同因同形：
+      **只依赖 domain 包，不碰 application**。stock-news 不依赖 stock-system，因此无环。
+    -->
+    <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-news</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-security</artifactId></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-redis</artifactId></dependency>
     <!-- 幂等守卫要把"首次提交的请求体 + 首次返回的数据"存成 JSON 再回放（契约 §3.7）。 -->
