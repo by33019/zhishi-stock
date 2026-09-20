@@ -267,12 +267,57 @@
   cursor: pointer;
 }
 
-.global-search__results button:hover { background: var(--paper); }
-.global-search__results button span:first-child { text-align: left; }
+.global-search__results button:hover,
+.global-search__results button.is-active { background: var(--paper); }
+.global-search__results button span:first-child { text-align: left; min-width: 0; }
 .global-search__results strong,
 .global-search__results small { display: block; }
 .global-search__results strong { color: var(--ink); font-size: var(--text-body); }
 .global-search__results small { margin-top: 2px; color: var(--ink-faint); font-size: var(--text-caption); }
+
+/* 命中片段：只加粗与底色，不改字号——否则列表的基线会随命中位置跳动。 */
+.global-search__results mark {
+  padding: 0 1px;
+  border-radius: 3px;
+  background: var(--gold-soft);
+  color: inherit;
+  font-weight: 800;
+}
+
+/* 状态徽标（停牌 / 退市 / ST）。它是文字而非仅靠颜色，色盲用户也能分辨。 */
+.global-search__badge {
+  flex: none;
+  margin-left: 8px;
+  padding: 2px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--paper-muted);
+  color: var(--ink-soft);
+  font-size: var(--text-caption);
+  font-weight: 700;
+}
+
+/* 面板内的说明行：加载中 / 无结果 / 失败重试。 */
+.global-search__status {
+  padding: 9px 8px;
+  color: var(--ink-faint);
+  font-size: var(--text-caption);
+  line-height: 1.6;
+}
+
+.global-search__status small { display: block; margin-top: 2px; }
+
+.global-search__status button {
+  margin-top: 8px;
+  padding: 5px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--white);
+  color: var(--ink);
+  font-size: var(--text-caption);
+  font-weight: 700;
+  cursor: pointer;
+}
 
 .topbar__actions {
   display: flex;

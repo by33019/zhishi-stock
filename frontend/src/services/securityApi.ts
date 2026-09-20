@@ -1,5 +1,17 @@
 import { apiRequest, toQueryString } from './apiClient'
-import type { KlineQuery, KlineSeries, QuoteSnapshot } from '@/types/domain'
+import type { KlineQuery, KlineSeries, QuoteSnapshot, SecuritySearchResult } from '@/types/domain'
+
+/**
+ * STK-01：搜索建议。
+ *
+ * `q` 由调用方保证已裁剪且非空——契约要求 1–50 字符，空串会被后端判成 400。
+ * `limit` 显式传值而不是依赖后端默认的 10：PRD QTE-01 要求"最多 10 条"，
+ * 依赖默认值会让这条需求在别人改默认值时静默失效。
+ */
+export function searchSecurities(q: string, limit = 10) {
+  const search = toQueryString({ q, limit })
+  return apiRequest<SecuritySearchResult>(`/securities/search?${search}`)
+}
 
 /** STK-04：个股最新快照。 */
 export function getSecurityQuote(securityId: string) {

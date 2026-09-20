@@ -23,6 +23,42 @@
 
 ---
 
+## 2026-09-20 — M2-09 全局搜索接真实接口（STK-01）
+
+### 新增
+
+- `services/securityApi.ts` 新增 `searchSecurities(q, limit)`；`limit` 显式传 10 而不依赖后端默认值，避免 PRD「最多 10 条」在别人改默认值时静默失效
+- `components/GlobalSearch.test.ts`（13 项）
+- 设计文档 `docs/superpowers/specs/2026-09-20-global-search.md`
+
+### 变更
+
+- **`components/GlobalSearch.vue` 重写**：输入即查 `GET /securities/search`，300ms 防抖；`↑`/`↓` 移动、`Enter` 选中、`Esc` 收起、`⌘K`/`Ctrl+K` 聚焦；点击组件外部关闭
+- 结果项展示名称、交易所 · 代码，命中片段用响应里的 `highlight` **原文**高亮；停牌 / 退市 / 待上市 / ST 显示状态徽标
+- 失败时展示后端文案与 `traceId` 并提供重试，**关键词保留在输入框**；无结果与空输入各有明确文案
+- 复用 `useRemoteData`，直接获得请求序号守卫（防抖只降低并发概率，不消除）
+- `focused` 与 `open` 拆成两个状态：点击外部会让面板收起但输入框仍握着光标，用一个状态会让输入框在有光标时看起来失焦
+- 补 `role="combobox"` + `aria-activedescendant` + `aria-selected`：焦点始终在输入框上，读屏软件只能靠 `aria-activedescendant` 得知当前高亮哪一项
+- `<kbd>` 按平台显示 `⌘ K` 或 `Ctrl K`，不再固定显示 Mac 写法
+
+### 修复
+
+- **全局搜索框此前从未发出过任何请求**：3 条写死的建议（浦发银行 / 宁德时代 / 中芯国际）、每条固定显示编造的 `+2.74%`、**点击任一条都跳到 `/stocks/19876543210001`**——该 ID 在证券主数据里不存在，个股详情页必然 404。这是全站最显眼的入口，点谁都坏
+- 点击外部关闭改用 document 监听判断点击落点，替换原型的 `@blur` + `setTimeout(120ms)` + `@mousedown.prevent`（那是靠时间窗赌顺序，机器卡顿时点击会丢）
+
+### 移除
+
+- 原型写死的 3 条建议与固定涨跌幅（涨跌幅见下方"未交付"）
+- 占位符「搜索股票、代码或板块」改为「输入代码或名称搜索证券」——STK-01 只搜证券，输入"银行"得到的是名字含"银行"的股票而非板块
+
+### 未交付（已记入 `PROJECT_STATUS.md` 已知问题 #10）
+
+- **搜索建议不展示涨跌幅**。PRD QTE-01 的输出列要求它，但 STK-01 响应里没有任何价格字段；补齐需要
+  `STK-05 POST /quotes/securities/batch-query`，而该接口**后端未实现且 `TASKS.md` 未排期**。
+  逐条调 STK-04 是 10 条建议 11 次请求，与 PRD「输入后 500 毫秒内出现结果」冲突。
+
+---
+
 ## 2026-09-20 — M2-08 前端接入 rankings / sectors / sectors:id / stocks:id
 
 ### 新增
