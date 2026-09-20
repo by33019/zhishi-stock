@@ -497,3 +497,123 @@ export interface ConstituentQuery {
   /** 1 至 100，默认 20。 */
   size?: number
 }
+
+/**
+ * 自选分组摘要，对应 WAT-01 / WAT-11 的 `groups[]`。
+ *
+ * WAT-11 的 `groups[]` **不带** `items`（那是 WAT-01 `includeItems=true` 才有的字段），
+ * 所以这里不声明它——声明成可选会让调用方写出 `group.items?.length ?? group.itemCount`，
+ * 于是两处口径分叉且都不会报错。
+ */
+export interface WatchlistGroup {
+  groupId: string
+  groupName: string
+  sortNo: number
+  isDefault: boolean
+  /** 由服务端统计。**不要**用客户端列表长度替代：那会让侧栏与列表互相矛盾。 */
+  itemCount: number
+  version: number
+}
+
+/**
+ * 自选项行，对应 WAT-06 / WAT-11 的 `items[]`。
+ *
+ * `security` 与 `quote` 都可能为 `null`：前者是"证券不在主数据里"，后者是"该证券当前没有快照"。
+ * 契约要求"行情不可用时仍返回自选关系"，因此**条目一定在**，调用方不得因此过滤掉它。
+ *
+ * `latestNewsCount` 在资讯 Provider 就位（M3-04）之前恒为 `null`。
+ * 渲染成 `0` 就是编造"这只股票今天没有新闻"。
+ */
+export interface WatchlistItem {
+  itemId: string
+  groupId: string
+  security: SecuritySummary | null
+  sortNo: number
+  version: number
+  createdAt: string
+  quote: QuoteSnapshot | null
+  latestNewsCount: number | null
+}
+
+/**
+ * WAT-11 自选中心首屏聚合响应。
+ *
+ * 一次请求同时给出分组、自选行情与市场状态，且 `snapshotVersion` / `dataTime` / `dataStatus`
+ * 描述的是**同一批**自选行情——因此页面可以放心把它们并排展示，不存在"两个时刻混在一屏"。
+ *
+ * `limitations` 是契约"数据状态字段"的落点：人可读的降级说明，空数组表示没有任何降级。
+ * 资讯域就位前它必然非空。
+ */
+export interface WatchlistOverview {
+  groups: WatchlistGroup[]
+  items: WatchlistItem[]
+  marketStatus: MarketStatus
+  /** 整批为空时为 `''`（后端不编造版本号），展示层据此显示 `--`。 */
+  snapshotVersion: string
+  dataStatus: DataStatus
+  dataTime: string | null
+  limitations: string[]
+}
+
+/**
+ * WAT-07 的响应。
+ *
+ * 契约在这里列了 `createdAt`、**没有** `quote` 与 `latestNewsCount`（与 WAT-06 的差异是契约明写的）。
+ * 因此它**不是** {@link WatchlistItem} 的别名，也不能写成 `Partial<WatchlistItem>`。
+ */
+export interface CreatedWatchlistItem {
+  itemId: string
+  groupId: string
+  security: SecuritySummary | null
+  sortNo: number
+  version: number
+  createdAt: string
+}
+
+/**
+ * WAT-09 的响应。
+ *
+ * `merged=true` 表示目标组已有同证券：**源行被删除**，这里返回的是目标组那一行
+ * （它的 `version` 不变）。前端不得假设"返回的一定是刚移动的那一行"。
+ */
+export interface MovedWatchlistItem {
+  itemId: string
+  groupId: string
+  sortNo: number
+  version: number
+  merged: boolean
+}
+
+/** WAT-10 响应元素：更新后的项顺序与版本。 */
+export interface WatchlistItemOrder {
+  itemId: string
+  groupId: string
+  sortNo: number
+  version: number
+}
+
+/** WAT-08 响应。`deleted` 反映真实影响行数（重复删除是幂等成功，但 `deleted` 为 `false`）。 */
+export interface DeletedWatchlistItem {
+  deleted: boolean
+}
+
+/**
+ * WAT-02 的响应。
+ *
+ * 契约在这里列了 `createdAt`、**没有** `itemCount`——新建分组必然为空，
+ * 服务端不返回这个字段，前端也不该自己填 `0`。
+ */
+export interface CreatedWatchlistGroup {
+  groupId: string
+  groupName: string
+  sortNo: number
+  isDefault: boolean
+  version: number
+  createdAt: string
+}
+
+/** WAT-04 响应。`movedItemCount` 是搬移到目标组的条数（合并掉的重复项不计入）。 */
+export interface DeletedWatchlistGroup {
+  deleted: boolean
+  movedItemCount: number
+}

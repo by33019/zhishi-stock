@@ -1,6 +1,9 @@
 # 知势前端
 
-AI 智能股票分析平台的 Vue 3 前端。11 个路由页面均已实现；其中 `/market`（市场总览）与 `/login`（登录）已接入真实后端 API，其余页面仍使用 `src/services/mockApi.ts` 提供的演示数据，接口结构对齐 `docs/RESTful-API.md`。
+AI 智能股票分析平台的 Vue 3 前端。11 个路由页面均已实现；其中行情、板块、个股、自选与登录
+已接入真实后端 API，`/news` 仍用 `src/services/mockApi.ts`（只剩 `getNews` 一个函数，
+归 M3-05），`/ai`、`/history`、`/admin` 是本地演示数据的静态页面。接口结构对齐
+`docs/RESTful-API.md`。
 
 ## 技术栈
 
@@ -62,16 +65,16 @@ E2E_BASE_URL=http://127.0.0.1:8088 npm run e2e:real
 | 路由 | 页面 | 访问级别 | 数据来源 |
 | --- | --- | --- | --- |
 | `/market` | 市场总览 | 游客 | **真实 API** |
-| `/rankings` | 行情榜单 | 游客 | Mock |
-| `/sectors` | 板块分析 | 游客 | Mock |
-| `/sectors/:id` | 板块详情 | 游客 | Mock |
-| `/stocks/:id` | 个股详情 | 游客 | Mock |
-| `/news` | 资讯中心 | 游客 | Mock |
-| `/watchlist` | 我的自选 | 登录用户 | Mock |
-| `/ai` | AI 研究工作台 | 登录用户 | Mock |
-| `/history` | 分析历史 | 登录用户 | Mock |
+| `/rankings` | 行情榜单 | 游客 | **真实 API** |
+| `/sectors` | 板块分析 | 游客 | **真实 API** |
+| `/sectors/:id` | 板块详情 | 游客 | **真实 API** |
+| `/stocks/:id` | 个股详情 | 游客 | **真实 API** |
+| `/news` | 资讯中心 | 游客 | Mock（`getNews`，M3-05） |
+| `/watchlist` | 我的自选 | 登录用户 | **真实 API** |
+| `/ai` | AI 研究工作台 | 登录用户 | 本地演示数据（M3-10） |
+| `/history` | 分析历史 | 登录用户 | 本地演示数据（M3-10） |
 | `/login` | 登录 | 游客 | **真实 API** |
-| `/admin` | 系统运营 | 管理员 | Mock |
+| `/admin` | 系统运营 | 管理员 | 本地演示数据（M3-11） |
 
 `/` 与未匹配路径均重定向到 `/market`。
 

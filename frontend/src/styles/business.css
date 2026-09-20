@@ -360,10 +360,20 @@
 .watch-groups { align-self: start; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--panel-bg); box-shadow: var(--shadow-soft); }
 .watch-groups header { display: flex; align-items: center; justify-content: space-between; padding: 4px 6px 12px; color: var(--ink-faint); font-size: var(--text-label); font-weight: 700; }
 .watch-groups header button { width: 25px; height: 25px; display: grid; place-items: center; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: transparent; cursor: pointer; }
-.watch-groups > button { width: 100%; min-height: 42px; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--ink-soft); font-size: var(--text-body); cursor: pointer; }
-.watch-groups > button span { display: flex; align-items: center; gap: 8px; }
-.watch-groups > button b { color: var(--ink-faint); font-size: var(--text-caption); }
-.watch-groups > button.active { background: var(--nav); color: var(--white); }
+/* 分组行是一个容器（标签 + 操作入口 + 内联表单），因此标签的样式挂在类上而不是 `> button`。 */
+.watch-group { display: flex; align-items: center; gap: 2px; }
+.watch-group-tab { flex: 1; min-width: 0; min-height: 42px; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--ink-soft); font-size: var(--text-body); cursor: grab; text-align: left; }
+.watch-group-tab span { display: flex; align-items: center; gap: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.watch-group-tab b { color: var(--ink-faint); font-size: var(--text-caption); }
+.watch-group-tab.active { background: var(--nav); color: var(--white); }
+.watch-group-tab.active b { color: rgba(242, 234, 219, 0.7); }
+.watch-group-menu { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 6px 10px; }
+.watch-group-menu button { padding: 6px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); color: var(--ink-soft); font-size: var(--text-label); cursor: pointer; text-align: left; }
+.watch-group-menu button:disabled { opacity: 0.45; cursor: not-allowed; }
+.watch-group-form { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 6px 10px; }
+.watch-group-form input,
+.watch-group-form select { flex: 1 1 90px; min-width: 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); color: var(--ink); font-size: var(--text-label); }
+.watch-group-form button { padding: 6px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--nav); color: var(--white); font-size: var(--text-label); cursor: pointer; }
 .watch-groups footer { margin-top: 10px; padding: 12px 7px 2px; border-top: 1px solid var(--line); color: var(--ink-faint); font-size: var(--text-caption); line-height: 1.5; }
 .watch-insight { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px 22px; border-radius: var(--radius-md); background: var(--nav); color: var(--nav-text); }
 .watch-insight h2 { margin: 5px 0; font-family: var(--font-serif); font-size: var(--text-section-title); }
@@ -380,7 +390,10 @@
 .watch-price { display: flex; align-items: baseline; gap: 8px; margin-top: 16px; }
 .watch-price strong { font-size: 25px; }
 .watch-price span { font-size: var(--text-body); font-weight: 800; }
-.watch-sparkline { width: 100%; height: 45px; margin: 12px 0; opacity: 0.78; }
+/* 卡片的可拖拽排序与"卡片次要操作"是两件事，拖拽手柄由 article 自身承担。 */
+.watch-cards article[draggable='true'] { cursor: grab; }
+.watch-item-menu { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; }
+.watch-item-menu button { padding: 6px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); color: var(--ink-soft); font-size: var(--text-label); cursor: pointer; text-align: left; }
 .watch-cards dl { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0; }
 .watch-cards dl > div { padding: 8px; background: var(--paper); }
 .watch-cards dt { color: var(--ink-faint); font-size: var(--text-caption); }
@@ -396,6 +409,18 @@
 .watch-card-action--remove:hover { background: rgba(151, 78, 65, 0.1); color: #8f5147; }
 .watch-card-action:focus-visible,
 .watch-detail-link:focus-visible { position: relative; z-index: 1; outline: 2px solid var(--gold); outline-offset: -2px; }
+
+/* 自选页：写操作提示、降级说明与选股面板。 */
+.watch-action-error { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin: 0 0 12px; padding: 10px 14px; border: 1px solid rgba(151, 78, 65, 0.35); border-radius: var(--radius-md); background: rgba(151, 78, 65, 0.08); color: #8f5147; font-size: var(--text-body); }
+.watch-action-error small { color: var(--ink-faint); }
+.watch-limitations { margin: 0 0 12px; padding: 10px 14px 10px 30px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--paper); color: var(--ink-soft); font-size: var(--text-label); line-height: 1.7; }
+.watch-add-panel { display: flex; flex-direction: column; gap: 8px; margin: 0 0 12px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--panel-bg); box-shadow: var(--shadow-soft); }
+.watch-add-panel > p { margin: 0; color: var(--ink-faint); font-size: var(--text-label); }
+.watch-add-panel form { display: flex; gap: 8px; }
+.watch-add-panel input { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink); font-size: var(--text-body); }
+.watch-add-panel form button { padding: 8px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--nav); color: var(--white); font-size: var(--text-body); cursor: pointer; }
+.watch-add-options { display: flex; flex-direction: column; gap: 4px; }
+.watch-add-options button { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink-soft); font-size: var(--text-body); cursor: pointer; text-align: left; }
 
 .ai-workspace-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 30px; margin-bottom: 24px; }
 .ai-workspace-head > div:first-child { max-width: 790px; }

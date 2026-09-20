@@ -79,7 +79,7 @@
 
 - [x] **M3-01** P0 自选分组 CRUD（后端，V5 表） — 已完成，见下方详情
 - [x] **M3-02** P0 自选项 CRUD + 排序 + 行情概览 — 已完成，见下方详情
-- [ ] **M3-03** P0 前端 watchlist 接真实 API — 依赖：M3-02
+- [x] **M3-03** P0 前端 watchlist 接真实 API — 已完成，见下方详情
 - [ ] **M3-04** P0 资讯 Provider 抽象 + 模拟源 + 去重 + 标的关联 — 依赖：M2-04
 - [ ] **M3-05** P1 前端 news 接真实 API — 依赖：M3-04
 - [ ] **M3-06** P0 AI Provider 抽象 + 确定性模拟实现 — 依赖：M3-04
@@ -965,7 +965,7 @@ WAT-02 的 `createdAt` 取自应用 `Clock`，表里的列只作审计。
 | 自选页首屏批量行情（STK-05 `POST /quotes/securities/batch-query`） | 已知问题 #10；WAT-06 已能按需取整批，STK-05 是给前端一次问多只用的 |
 | 前端 `/watchlist` 接真实接口 | M3-03 |
 | 自选写操作 60/min 限流（§22.1） | 全站限流基础设施尚不存在（已知问题 #17） |
-| SSE `watchlist` 频道（§20.2） | M3-03 前端接入时一并评估 |
+| SSE `watchlist` 频道（§20.2） | **M3-03 已评估：本轮不做**，见 M3-03 交付详情"关键取舍" |
 
 ### 验证结果
 
@@ -983,6 +983,81 @@ WAT-02 的 `createdAt` 取自应用 `Clock`，表里的列只作审计。
 >    `Jackson2ObjectMapperBuilder + setMessageConverters` 写法，否则时间断言静默失真。
 > 2. 契约测试的桩要能区分入参：WAT-10 的桩一开始返回固定 `itemId`，
 >    于是"请求 `["2","1"]`、响应却是同一个 id"这个真实缺陷被桩掩盖了。
+
+---
+
+## M3-03 交付详情
+
+> Spec：`docs/superpowers/specs/2026-09-20-watchlist-page.md`
+
+**目标**：把 `/watchlist` 从"分组写死 + 复用 `mockApi` 的榜单行"换成真实接口，
+并把契约 §12.1/§12.2 的自选写操作接上。
+
+### 交付
+
+| 文件 | 内容 |
+| --- | --- |
+| `services/watchlistApi.ts`（新） | 9 个端点：WAT-02/03/04/05/07/08/09/10/11。只拼参，不筛选、不格式化、不本地排序 |
+| `services/watchlistApi.test.ts`（新） | 9 项，断言 method / 路径 / `Idempotency-Key` / `If-Match` / body 形状 |
+| `types/domain.ts` | 新增 `WatchlistGroup` / `WatchlistItem` / `WatchlistOverview` / `CreatedWatchlistItem` / `MovedWatchlistItem` / `WatchlistItemOrder` / `DeletedWatchlistItem` / `CreatedWatchlistGroup` / `DeletedWatchlistGroup` |
+| `pages/WatchlistPage.vue` | 全量重写（约 440 行）：首屏一次 WAT-11、分组切换、增删移排、选股面板、导语由真实行情算出 |
+| `pages/WatchlistPage.test.ts` | 重写为 25 项 |
+| `styles/business.css` | 分组菜单 / 卡片操作组 / 提示条；删除 `.watch-sparkline` |
+| `services/mockApi.ts` | 移除 `rankingRows` **与已无消费者的 `getMarketOverview()`**，只剩 `getNews`（M3-05 整体删除） |
+
+### 关键取舍
+
+- **首屏只发一次 WAT-11**，不调 WAT-01 / WAT-06 / MKT-02。三次请求意味着三个时刻的数据并排展示，
+  而 WAT-11 的 `snapshotVersion` / `dataTime` / `dataStatus` 描述的是**同一批**快照。
+- **切换分组在完整响应内选择，不传 `groupId`。** 传它需要"先请求拿分组清单、再带 `groupId` 请求第二次"，
+  中间那一帧会把所有分组的股票都画出来再收敛（卡片闪一下）。这是**刻意偏离**"筛选一律走服务端"的既有规矩，
+  代价与理由写在 spec §3.3 / §7。侧栏 `itemCount` 与列表行数同源，不会互相矛盾。
+- **写操作后重新拉取整个 WAT-11，不做乐观更新。** 服务端会改写 `sortNo` / `version`，
+  WAT-09 还可能删掉源行——本地推断必然在服务端改动时静默出错。e2e 印证：WAT-10 重排后 `version` 0→1。
+- **`Idempotency-Key` 由页面生成并传入 service。** 键的语义是"一次用户意图"，
+  只有页面知道"重试复用、换 body 换新键"。在 service 里 `randomUUID()` 会让每次重试都变成新写入意图。
+  e2e 实测同一键重放返回**同一条** `itemId`。
+- **拖放用组件状态传下标，不用 `dataTransfer`。** jsdom 里不存在 `dataTransfer`，
+  靠它传数据会让排序**无法被测试**。
+- **移除卡片 sparkline 与 `latestNewsCount`。** 前者契约没有批量 K 线接口，后者在资讯 Provider
+  就位前恒为 `null`（渲染 `0` 就是编造"这只股票今天没有新闻"）。
+- **停牌单独计数，判据是 `security.isSuspended`。** 停牌股**有**快照且 `changeRate` 为 `"0.0000"`，
+  按数值算会被计入"平盘"——数字看起来对、结论其实错（详见 spec §8.4）。
+- **不渲染 `snapshotVersion`、不展示 `marketStatus`。** 前者是开发者向信息（数据截止时间已表达新鲜度，
+  本页所有卡片来自同一次响应，不存在批次混排）；后者顶栏 `useMarketStatus` 已全局展示，页面里再放一份是重复。
+- **SSE `watchlist` 频道不做。** 契约 §20.2 的推送频道对 WAT-01~12 都不是必需；
+  当前每次写操作后本页自己重拉，多端一致性属于独立增量。**本轮评估结论：不需要。**
+
+### 不在本轮范围
+
+| 项 | 归属 |
+| --- | --- |
+| WAT-12（`/watchlists/membership`）"已自选"回显 | 消费者是榜单 / 板块 / 个股页，不是自选页 |
+| WAT-06 列表分页 | 自选规模是几十条；引入分页要额外维护"当前页"状态 |
+| `latestNewsCount` 的真实值 | M3-04（资讯 Provider） |
+| AI 解读 / 分析本组按钮 | M3-10（按钮已 `disabled` 且 `title` 写明归属任务） |
+| 自选写操作 60/min 限流 | 全站限流基础设施尚不存在（已知问题 #17） |
+
+### 验证结果
+
+| 项 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 0 错误 |
+| `npx vitest --configLoader runner --run` | **133 项通过 / 20 文件**（M3-03 前 101，净增 32） |
+| `TZ=UTC` 复跑 | 133 项同样全绿 |
+| `npx vite build --configLoader runner` | 成功（`WatchlistPage` 14.11 kB / gzip 5.14 kB） |
+| 红灯 | `WatchlistPage.test.ts` 首跑 **18 failed / 1 passed**，页面还是旧实现，是真实红灯 |
+| **真实端到端联调** | 本机 Docker 起 MySQL 8.4 + Redis + `stock-backend`（dev profile），空库 Flyway V1→V8，`curl` 按前端**完全相同的请求形状**走完 WAT-01/02/03/04/07/09/10/11 并逐字段核对 |
+
+> **e2e 查出两个单测发现不了的缺陷（已写进 spec §8.4）**：
+> 1. 空自选时后端返回 `dataStatus=UNAVAILABLE` / `dataTime=null`（不发起整批取数），
+>    旧逻辑仍挂出"当前展示最近有效快照（数据截止 --）"——**新注册用户的第一屏就在编造一次不存在的快照**。
+> 2. 停牌股 `isSuspended: true` 但 `quote` 非空、`changeRate="0.0000"`，被算进"平盘"。
+>
+> 共同点：**单测夹具是按对契约的理解手写的，真实数据里有没预料到的组合。**
+
+> **另一条值得记住的实测事实**：WAT-09 用过期 `version` 返回的是 **404 不是 409**
+> （第一次移动已删掉源行，按 `(user, group, itemId)` 查不到）。"版本不对"不一定表现为 409。
 
 ---
 
@@ -1004,3 +1079,4 @@ WAT-02 的 `createdAt` 取自应用 `Clock`，表里的列只作审计。
 - [x] M2-11（2026-09-20）
 - [x] M3-01（2026-09-20）
 - [x] M3-02（2026-09-20）
+- [x] M3-03（2026-09-20）

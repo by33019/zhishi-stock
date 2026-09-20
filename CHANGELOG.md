@@ -23,6 +23,60 @@
 
 ---
 
+## 2026-09-20 — M3-03 前端 `/watchlist` 接真实 API（自选闭环端到端可用）
+
+### 新增
+
+- **`frontend/src/services/watchlistApi.ts`**：WAT-02/03/04/05/07/08/09/10/11 共 9 个端点。
+  只拼参，不筛选、不格式化、不做本地排序；`Idempotency-Key` **由调用方传入**
+  （键的语义是"一次用户意图"，只有页面知道"重试复用、换 body 换新键"）
+- **`frontend/src/services/watchlistApi.test.ts`**：9 项，断言每个端点的 method / 路径 /
+  `Idempotency-Key` / `If-Match` / body 形状
+- `frontend/src/types/domain.ts` 新增 9 个契约类型：`WatchlistGroup`、`WatchlistItem`、
+  `WatchlistOverview`、`CreatedWatchlistItem`、`MovedWatchlistItem`、`WatchlistItemOrder`、
+  `DeletedWatchlistItem`、`CreatedWatchlistGroup`、`DeletedWatchlistGroup`
+
+### 变更
+
+- **`frontend/src/pages/WatchlistPage.vue` 全量重写**（约 440 行）：
+  - 首屏**只发一次** `GET /watchlists/overview`，分组 + 自选行情 + 市场状态 + 数据状态来自**同一批**快照
+  - 切换分组**不产生新请求**，在完整响应内按 `groupId` 选择（侧栏 `itemCount` 与列表行数因此必然自洽）
+  - 写操作后**重新拉取**而不是乐观更新：服务端会改写 `sortNo` / `version`，WAT-09 还可能删掉源行
+  - 分组重排 / 组内重排用 HTML5 拖放，**用组件状态传下标而非 `dataTransfer`**（jsdom 里不存在，
+    靠它传数据会让排序无法被测试）
+  - 导语的涨 / 跌 / 平只数由真实行情算出；**停牌单独计数**且不计入涨跌分母
+  - 选股面板走 STK-01，显式提交而非输入即搜
+- `frontend/src/pages/WatchlistPage.test.ts` 重写为 **25 项**（原 19 项里 2 个断言写错已改，另新增 6 项）
+- `frontend/src/styles/business.css`：新增分组菜单 / 分组名表单 / 卡片操作组 / 提示条样式
+- `frontend/README.md`：路由表的数据来源列与实际对齐（此前只标了 `/market` 与 `/login`，
+  漏掉 M2-08~M2-11 接入的 4 个页面）
+
+### 修复
+
+- **空自选时页面在编造一次不存在的快照**：后端在没有任何自选项时**不发起整批取数**，
+  返回 `dataStatus = 'UNAVAILABLE'` / `snapshotVersion = ''` / `dataTime = null`；
+  旧逻辑 `dataStatus !== 'REALTIME'` 为真，于是在空列表上挂出"当前展示最近有效快照（数据截止 --）"。
+  **新注册用户的第一屏就是这个**。改为提示条只在"当前分组真的有卡片"时出现
+- **停牌股被算成"平盘"**：真实数据里 `sim-300750` 是 `isSuspended: true` 但 `quote` **非空**、
+  `changeRate` 为 `"0.0000"`，按数值算会落进"平盘"，而它今天根本没有价格发现。
+  判据改为 `security.isSuspended`，并把"快照里没有涨跌幅"一并归入"无有效行情"一档，
+  使 `共 N = 上涨 + 下跌 + 平盘 + 无有效行情` 恒成立
+- 移除 `WatchlistPage.vue` 里未使用的 `Search` 图标导入（`vue-tsc` 报 TS6133）
+
+### 移除
+
+- **`frontend/src/services/mockApi.ts` 移除 `rankingRows`**（`/watchlist` 是它最后一个消费者）
+  与**已无消费者的 `getMarketOverview()`**（最后一个调用方在 M2-08 总览页接上 MKT-01 时消失，
+  此后只剩自己的测试在读）。该文件现在只剩 `getNews`，归 M3-05 整体删除
+- `business.css` 删除 `.watch-sparkline`；自选卡片不再渲染分时 sparkline 与 `latestNewsCount`
+  （契约没有批量 K 线接口、资讯 Provider 未就位，画出来就是编造）
+
+### 文档
+
+- 新增 `docs/superpowers/specs/2026-09-20-watchlist-page.md`（含 §8 验收结果与 e2e 实测发现）
+
+---
+
 ## 2026-09-20 — M3-02 自选项 CRUD + 排序 + 行情概览（自选中心后端 12 接口全通）
 
 ### 新增
