@@ -23,6 +23,49 @@
 
 ---
 
+## 2026-09-20 — M3-06 AI Provider 抽象 + 确定性模拟实现（第 8 个模块 `stock-ai`）
+
+### 新增
+
+- **`backend/stock-ai`**（后端第 8 个模块）：AI 域从「V6 九张表零行零引用」推进到「接口可用、上下文可固化、引用可核对」。
+  - `domain/`：`AiSceneCatalog`（5 个场景的静态规则表）、`AiContextBuilder`（一次取数固化成快照与证据候选）、
+    `LlmProviderPort` / `AiContentHasher` 两个端口、8 个枚举与 13 个值类型。
+  - `application/`：`AiContextPreviewService`（AI-02 用例：场景 → 区间 → 目标矩阵 → 取数 → 预览）。
+  - **`LlmEvidence` 类型上不含 URL**——把「模型不生成可信 URL」做成类型保证，而不是事后校验。
+- **`stock-integration/ai/SimulatedLlmProvider`**：确定性模拟 LLM。同一请求逐位相同；六章节按序切片产出；
+  引用编号只取任务固化的证据候选集合内；用量按字符数估算；
+  故障注入 `NONE` / `INVALID_CITATION` / `TIMEOUT` / `RATE_LIMIT`。
+- **`stock-integration/ai/SimulatedContentHasher`**：确定性内容哈希
+  （`hashOf(Map)` 用 `TreeMap` 保证与迭代顺序无关）。
+- **`stock-news`：`NewsEvidenceProvider` 端口 + `NewsQueryService` 实现**——关闭 M3-04 留下的
+  `news_source.allow_ai_analysis` 消费侧欠账；复用既有 `visible()` 过滤链，AI 侧只叠一层来源授权；
+  `limit` 在**过滤之后**截断。
+- **`stock-backend/web/AiController`**：AI-01 `GET /api/v1/ai/scenes`、AI-02 `POST /api/v1/ai/context-previews`，
+  均 `USER` 权限。
+- 测试：`stock-ai` 71 项、`NewsEvidenceQueryTest` 14 项、`SimulatedLlmProviderTest` 16 项、
+  `AiControllerContractTest` 8 项、`SecurityConfigurationTest` +1 项。
+
+### 变更
+
+- `BackendConfiguration` 新增 5 个 Bean；`NewsEvidenceProvider` **复用**已有的 `newsQueryService` Bean
+  （不新声明，避免「哪些资讯可见」出现两份实现）。
+- `application.yml` 新增 `stock.ai.provider-code` / `model-code` / `news-evidence-limit` 三项。
+- `stock-backend` 与 `stock-integration` 的 `pom.xml` 新增 `stock-ai` 依赖；
+  根 `pom.xml` 的 `<modules>` 注册 `stock-ai`。
+- `AiContextBuilder` 的市场代码常量删除，改用资讯域 `NewsMarketTargets.CN`（同一事实只允许一处定义）。
+
+### 修复
+
+- **上下文哈希对数据时间不敏感**：`contextData` 漏了 `dataTime`，两个不同批次的同一只证券会被判成「同一份事实」。
+- **`InvalidAiContextQueryException` 业务码错误**：区间/场景不合法曾被报成 `AI_TARGET_INVALID`，改为 `INVALID_REQUEST`。
+- 三处「空结果也能通过」的断言补了对照组或数量前置（详见 `TASKS.md` 的 M3-06 交付详情）。
+
+### 文档
+
+- 新增 `docs/superpowers/specs/2026-09-20-ai-provider.md`（设计文档，含改动清单与验收结果回填）。
+
+---
+
 ## 2026-09-20 — M3-05 前端 `/news` 接真实资讯接口（mock 通路清零）
 
 ### 新增

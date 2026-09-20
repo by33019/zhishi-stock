@@ -36,6 +36,12 @@ stock:
     scenario: ${MARKET_SCENARIO:NORMAL}
     # 模拟交易日历的节假日集合，逗号分隔 ISO 日期。真实日历源就位后此项不再需要。
     holidays: ${MARKET_HOLIDAYS:}
+  ai:
+    # AI Provider 与模型标识。当前只有确定性模拟实现，真实 LLM 源就位后换实现即可。
+    provider-code: ${AI_PROVIDER_CODE:SIMULATED}
+    model-code: ${AI_MODEL_CODE:sim-analyst-v1}
+    # 单个任务可进入 AI 上下文的资讯证据条数上限。
+    news-evidence-limit: ${AI_NEWS_EVIDENCE_LIMIT:20}
   seed:
     demo-username: ${DEMO_USERNAME:demo}
     demo-password: ${DEMO_PASSWORD:Stock@123}

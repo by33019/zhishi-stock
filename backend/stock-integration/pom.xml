@@ -9,6 +9,11 @@
     <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-market</artifactId><version>${project.version}</version></dependency>
     <!-- 资讯 Provider 适配器（SimulatedNewsProvider）实现 stock-news 的采集端口。 -->
     <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-news</artifactId><version>${project.version}</version></dependency>
+    <!--
+      LLM Provider 适配器（SimulatedLlmProvider）实现 stock-ai 的 LlmProviderPort，
+      并实现其 AiContentHasher 端口。架构 §11.3 明确"LlmProviderPort 由 stock-integration 实现"。
+    -->
+    <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-ai</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>org.springframework</groupId><artifactId>spring-context</artifactId></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
   </dependencies>

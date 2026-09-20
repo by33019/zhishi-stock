@@ -118,6 +118,30 @@ public final class NewsFixtures {
                 base.version());
     }
 
+    /**
+     * 授权有效但**不允许进入 AI 上下文**的来源（{@code allow_ai_analysis = 0}）。
+     *
+     * <p>它是 M3-06 的 `allow_ai_analysis` 消费侧的判据来源：资讯列表里能看到的稿件，
+     * 若来自这个来源，就**不能**成为 AI 证据。
+     */
+    public static NewsSource sourceWithoutAi(long id, String code) {
+        NewsSource base = source(id, code);
+        return new NewsSource(
+                base.sourceId(),
+                base.sourceCode(),
+                base.sourceName(),
+                base.sourceType(),
+                base.homepageUrl(),
+                base.authorizationStatus(),
+                base.rightsValidFrom(),
+                base.rightsValidTo(),
+                false,
+                base.status(),
+                base.lastSuccessAt(),
+                base.lastFailureAt(),
+                base.version());
+    }
+
     /** 授权期已过的来源。 */
     public static NewsSource expiredRights(long id, String code, java.time.LocalDate validTo) {
         NewsSource base = source(id, code);
@@ -171,6 +195,46 @@ public final class NewsFixtures {
                 dedupStatus,
                 contentStatus,
                 NewsOriginalAccessStatus.UNKNOWN,
+                rightsExpireAt);
+    }
+
+    /**
+     * 指定**发布时间**与内容授权失效时间的稿件。
+     *
+     * <p>上面那个 8 参重载的第 8 个参数是 {@code rightsExpireAt}，发布时间恒为 {@link #PUBLISHED}。
+     * 需要按发布时间做区间/排序断言时用它——把发布时间传给 {@code rightsExpireAt}
+     * 会让稿件直接"授权过期"而不可见，而断言失败的信息只会说"列表是空的"，
+     * 看起来像过滤链坏了，实际是夹具参数传错了位置。
+     */
+    public static NewsArticle article(
+            long newsId,
+            long sourceId,
+            String title,
+            String summary,
+            NewsDedupStatus dedupStatus,
+            Long canonicalNewsId,
+            NewsContentStatus contentStatus,
+            OffsetDateTime publishedAt,
+            OffsetDateTime rightsExpireAt) {
+        NewsArticle base = article(
+                newsId, sourceId, title, summary, dedupStatus, canonicalNewsId, contentStatus, null);
+        return new NewsArticle(
+                base.newsId(),
+                base.sourceId(),
+                base.sourceContentId(),
+                base.newsType(),
+                base.title(),
+                base.summary(),
+                base.authorName(),
+                base.originalUrl(),
+                base.languageCode(),
+                publishedAt,
+                base.collectedAt(),
+                base.contentFingerprint(),
+                base.canonicalNewsId(),
+                base.dedupStatus(),
+                base.contentStatus(),
+                base.originalAccessStatus(),
                 rightsExpireAt);
     }
 

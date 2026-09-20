@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent><groupId>cn.zhishi.stock</groupId><artifactId>stock-parent</artifactId><version>0.1.0-SNAPSHOT</version></parent>
+  <artifactId>stock-ai</artifactId>
+  <dependencies>
+    <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-common</artifactId><version>${project.version}</version></dependency>
+    <!--
+      AI 上下文要取行情快照、板块关系与证券/板块身份，因此显式依赖行情域。
+      stock-news 已传递依赖 stock-market，但这里仍显式声明——不蹭传递依赖
+      （同 stock-news 显式声明 spring-boot-starter-json 的先例）。
+    -->
+    <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-market</artifactId><version>${project.version}</version></dependency>
+    <!--
+      资讯证据走 stock-news 的 NewsEvidenceProvider 端口：可见性判据（内容状态、去重、
+      来源授权、内容授权期、关联确认）只允许有一处实现，AI 侧不重写第二份。
+    -->
+    <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-news</artifactId><version>${project.version}</version></dependency>
+    <!--
+      显式声明而不是蹭传递依赖：对外响应体用 Jackson 注解控制字段（同 SecuritySummary / Sector）。
+    -->
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-json</artifactId></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
+  </dependencies>
+</project>

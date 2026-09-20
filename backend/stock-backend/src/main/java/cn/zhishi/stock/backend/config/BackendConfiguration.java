@@ -1,7 +1,14 @@
 package cn.zhishi.stock.backend.config;
 
+import cn.zhishi.stock.ai.application.AiContextPreviewService;
+import cn.zhishi.stock.ai.domain.AiContentHasher;
+import cn.zhishi.stock.ai.domain.AiContextBuilder;
+import cn.zhishi.stock.ai.domain.AiSceneCatalog;
+import cn.zhishi.stock.ai.domain.LlmProviderPort;
 import cn.zhishi.stock.backend.security.JwtAuthenticationFilter;
 import cn.zhishi.stock.backend.web.TraceIdFilter;
+import cn.zhishi.stock.integration.ai.SimulatedContentHasher;
+import cn.zhishi.stock.integration.ai.SimulatedLlmProvider;
 import cn.zhishi.stock.integration.market.SimulatedKlineProvider;
 import cn.zhishi.stock.integration.market.SimulatedLimitRuleProvider;
 import cn.zhishi.stock.integration.market.SimulatedQuoteProvider;
@@ -45,6 +52,7 @@ import cn.zhishi.stock.news.application.NewsIngestionService;
 import cn.zhishi.stock.news.application.NewsQueryService;
 import cn.zhishi.stock.news.domain.NewsArticleStore;
 import cn.zhishi.stock.news.domain.NewsCountProvider;
+import cn.zhishi.stock.news.domain.NewsEvidenceProvider;
 import cn.zhishi.stock.news.domain.NewsProvider;
 import cn.zhishi.stock.news.domain.NewsRelationStore;
 import cn.zhishi.stock.news.domain.NewsSourceStore;
@@ -528,5 +536,66 @@ public class BackendConfiguration {
             TradingCalendarProvider tradingCalendarProvider,
             Clock clock) {
         return new MarketStatusQueryService(tradingCalendarProvider, clock);
+    }
+
+    // ---------- AI 域（M3-06） ----------
+
+    /** AI 场景目录：纯静态规则表，没有依赖，也不依赖时钟。 */
+    @Bean
+    AiSceneCatalog aiSceneCatalog() {
+        return new AiSceneCatalog();
+    }
+
+    /** 上下文内容哈希：模拟实现是确定性的，同一内容两次构建得到同一个 hash。 */
+    @Bean
+    AiContentHasher aiContentHasher() {
+        return new SimulatedContentHasher();
+    }
+
+    /**
+     * AI 任务上下文构建器。
+     *
+     * <p>资讯证据端口**复用** {@code newsQueryService}——它已实现
+     * {@code NewsEvidenceProvider}。再声明一个只做取证的 Bean，会让"哪些资讯可进 AI"
+     * 出现两份实现，而口径分歧不会报错，只会让预览说 20 条、报告里只有 18 条
+     * （同 {@code NewsCountProvider} 的处理方式）。
+     */
+    @Bean
+    AiContextBuilder aiContextBuilder(
+            QuoteSnapshotBatchProvider quoteSnapshotBatchProvider,
+            MarketOverviewQueryService marketOverviewQueryService,
+            SectorProvider sectorProvider,
+            NewsEvidenceProvider newsEvidenceProvider,
+            AiContentHasher aiContentHasher,
+            @Value("${stock.ai.news-evidence-limit:20}") int newsEvidenceLimit) {
+        return new AiContextBuilder(
+                quoteSnapshotBatchProvider,
+                marketOverviewQueryService,
+                sectorProvider,
+                newsEvidenceProvider,
+                aiContentHasher,
+                newsEvidenceLimit);
+    }
+
+    @Bean
+    AiContextPreviewService aiContextPreviewService(
+            AiSceneCatalog aiSceneCatalog,
+            AiContextBuilder aiContextBuilder,
+            SecurityIdentityProvider securityIdentityProvider,
+            SectorIdentityProvider sectorIdentityProvider) {
+        return new AiContextPreviewService(
+                aiSceneCatalog, aiContextBuilder, securityIdentityProvider, sectorIdentityProvider);
+    }
+
+    /**
+     * LLM Provider 端口。当前只有确定性模拟实现；换真实供应商时改这里一处即可，
+     * 用例层不认识具体实现（架构 §11.3）。
+     */
+    @Bean
+    LlmProviderPort llmProviderPort(
+            AiContentHasher aiContentHasher,
+            @Value("${stock.ai.provider-code:SIMULATED}") String providerCode,
+            @Value("${stock.ai.model-code:sim-analyst-v1}") String modelCode) {
+        return new SimulatedLlmProvider(aiContentHasher, providerCode, modelCode);
     }
 }

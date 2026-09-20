@@ -22,6 +22,7 @@
     <module>stock-system</module>
     <module>stock-market</module>
     <module>stock-news</module>
+    <module>stock-ai</module>
     <module>stock-integration</module>
     <module>stock-backend</module>
     <module>stock-job</module>

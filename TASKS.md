@@ -82,7 +82,7 @@
 - [x] **M3-03** P0 前端 watchlist 接真实 API — 已完成，见下方详情
 - [x] **M3-04** P0 资讯 Provider 抽象 + 模拟源 + 去重 + 标的关联 — 已完成，见下方详情
 - [x] **M3-05** P1 前端 news 接真实 API — 已完成，见下方详情
-- [ ] **M3-06** P0 AI Provider 抽象 + 确定性模拟实现 — 依赖：M3-04
+- [x] **M3-06** P0 AI Provider 抽象 + 确定性模拟实现 — 已完成，见下方详情
 - [ ] **M3-07** P0 AI 任务编排 + SSE 流式契约（V6 表） — 依赖：M3-06
 - [ ] **M3-08** P0 AI 报告/证据/反馈持久化 — 依赖：M3-07
 - [ ] **M3-09** P1 AI 配额与用量统计 — 依赖：M3-07
@@ -1226,6 +1226,82 @@ WAT-02 的 `createdAt` 取自应用 `Clock`，表里的列只作审计。
 - **② 只记录**：`GET /news/options` 的 `availableTimeRange` 多了契约外的 `empty` 字段
   （`NewsTimeRange.isEmpty()` 被 Jackson 当 getter），记入已知问题 #21。
 
+## M3-06 交付详情
+
+**目标**：AI Provider 抽象 + 确定性模拟实现——把 AI 域从「V6 九张表零行零引用」推进到
+「接口可用、上下文可固化、引用可核对」。
+
+### 交付
+
+| 文件 | 动作 | 说明 |
+| --- | --- | --- |
+| `backend/stock-ai/` | **新增模块**（第 8 个） | 31 个 main 类型 + 4 个测试类；**不引入 MyBatis**（本轮不落库） |
+| `.../domain/AiSceneCatalog.java` | 新增 | 5 个场景的静态规则表（类型白名单、目标数量区间、`defaultRange` 档位、`questionMaxLength=500`） |
+| `.../domain/AiContextBuilder.java` | 新增 | 一次取数固化 `AiContextSnapshot` + `AiEvidenceCandidate`；缺行情/资讯/板块只记 `limitations`，不抛异常 |
+| `.../domain/LlmProviderPort.java` | 新增 | 端口：`complete(LlmRequest, Consumer<LlmChunk>)`；**`LlmEvidence` 类型上不含 URL** |
+| `.../application/AiContextPreviewService.java` | 新增 | AI-02 用例：场景 → 区间 → 目标矩阵 → 取数 → 预览 |
+| `stock-news/.../domain/NewsEvidenceProvider.java` | 新增 | 端口；由 `NewsQueryService` 实现，在既有 `visible()` 之上叠 `allow_ai_analysis` |
+| `stock-integration/ai/SimulatedLlmProvider.java` | 新增 | 确定性模拟 LLM（六章节 + 引用约束 + 故障注入四态） |
+| `stock-integration/ai/SimulatedContentHasher.java` | 新增 | 确定性内容哈希 |
+| `stock-backend/web/AiController.java` | 新增 | AI-01 `GET /ai/scenes`、AI-02 `POST /ai/context-previews` |
+| `stock-backend/config/BackendConfiguration.java` | 修改 | 5 个新 Bean；`NewsEvidenceProvider` 复用 `newsQueryService` |
+| `resources/application.yml` | 修改 | `stock.ai.*` 三项 |
+
+### 关键取舍
+
+1. **`LlmEvidence` 类型上不含 URL**：把「模型不生成可信 URL」做成**类型保证**而不是事后校验——
+   校验器总会有漏掉某种 URL 形态的窗口，而类型不会。
+2. **`defaultRange` 返回档位而不是日期区间**：AI-01 是静态目录，返回具体日期会让同一份场景定义
+   在两次请求间变化，并被迫依赖时钟。
+3. **资讯可见性判据只有一份**：`NewsQueryService.visible()`；AI 侧只在其上叠 `allowAiAnalysis`。
+   在 `stock-ai` 里重写一遍会得到两处「哪些资讯可见」的知识，而口径分歧**不会报错**。
+4. **`dataCategories` 只列实际取到的类别**：V6 的 CHECK 有 7 类，本轮只接入 `QUOTE` / `SECTOR` / `NEWS`。
+   为未接入的 4 类补一个「看起来合法的截止时间」就是编造。
+5. **核心行情缺失时 `canGenerate=false` 而不抛 400**：预览的用途正是「提交前告知」，
+   抛 400 会让用户看不到「为什么不能生成」。
+6. **`limit` 在过滤链之后截断**：先截断再过滤会把「最新 20 条里有 15 条不允许进 AI」静默压成 5 条可用证据。
+7. **`newsCount` 由已构建的证据计数得出**，不另起一次查询——否则会有「预览说 20 条、报告里 18 条」的窗口。
+8. **市场代码白名单只有一处**：复用资讯域的 `NewsMarketTargets`，顺带删掉 `AiContextBuilder` 里重复的 `MARKET_CODE` 常量。
+9. **`application.yml` 只写 3 项 `stock.ai.*`**：`prompt-version` / `content-schema-version` 的消费方在 M3-07，
+   没有消费方的配置项，读的人无法判断它到底影响什么。
+10. **故障注入默认 `NONE`**：不把「故意产出非法引用」塞进正常路径，否则正常链路永远跑不通。
+
+### 不在本轮范围
+
+| 不做的事 | 归属 |
+| --- | --- |
+| 任务状态机、SSE 流式契约、`ai_task` 落库 | M3-07 |
+| 报告 / 证据 / 反馈持久化（V6 的 9 张表仍为零行） | M3-08 |
+| 配额与用量统计 | M3-09 |
+| 前端 `/ai` 工作台接真实接口 | M3-10 |
+| 真实 LLM Provider（`LlmProviderPort` 端口已就位，替换实现即可） | 真实数据源接入时 |
+| `KLINE` / `BUSINESS` / `CALENDAR` / `RULE` 四类上下文 | 各自数据源就位后 |
+
+### 验证结果
+
+| 项目 | 结果 |
+| --- | --- |
+| `mvn test`（默认时区） | 9 模块全绿，**后端 749 项**（common 1 / market 156 / news 103 / system 89 / **ai 71** / integration 127 / backend 190 / job 12） |
+| `TZ=UTC mvn test` | 同样全绿（CI 是 UTC） |
+| `InfrastructureIntegrationTest` | **本轮实测通过**（本机 Docker 可用，Testcontainers 真实 MySQL 8.4 + Redis） |
+| 真实端到端联调 | **真实端到端通过**（Docker 全栈 + `frontend/e2e/ai.real.mjs`）：未登录 AI-01 / AI-02 均 401；AI-01 返回 5 个场景且无内部 Prompt；AI-02 的 `QUOTE` 截止时间 = `2026-09-18T15:00:00+08:00`（真实行情批次，不是「现在」）；`COMPARE` 两标的与单标的的行情截止时间一致；7 种非法请求全部 400 且业务码正确（3 种 `INVALID_REQUEST` + 4 种 `AI_TARGET_INVALID`）。另做**受控实验**验证 `allow_ai_analysis`：临时关闭 `SIM_MEDIA_A` 的授权后，`/news` 列表 `total` 仍为 1，而 AI-02 的 `newsCount` 由 1 变 0、`dataCategories` 由 `[QUOTE, NEWS]` 变 `[QUOTE]`；恢复后复原（详见 spec §8.3） |
+
+### 本轮修掉的两个缺陷
+
+1. **上下文哈希对数据时间不敏感**：`AiContextBuilder` 的 `contextData` 漏了 `dataTime`，
+   导致两个不同批次的同一只证券会被判成「同一份事实」。
+   由 `AiContextBuilderTest.contentHashChangesWithContent` 抓出。
+2. **`InvalidAiContextQueryException` 的业务码是 `AI_TARGET_INVALID`**：区间不合法被报成「目标不合法」。
+   改为 `INVALID_REQUEST`——契约 §13.5 只为「目标」定义了 `AI_TARGET_INVALID`。
+
+### 主动加固的假绿
+
+3 处「空结果也能通过」的断言补了对照组或数量前置：
+
+- `AiSceneCatalogTest.everySceneHasNameAndDescription` 对空列表 for 循环空转 → 加 `hasSize(5)` 前置；
+- `NewsEvidenceQueryTest` 4 项 `isEmpty()` 断言在空实现下会通过 → 各加「确认关联的正常稿件」作对照组；
+- `AiControllerContractTest.sceneCatalogCarriesNoInternalPrompt` 只断言「不含某字段」 → 加 `$.data.length()=5` 前置。
+
 ---
 
 ## 已完成
@@ -1249,3 +1325,4 @@ WAT-02 的 `createdAt` 取自应用 `Clock`，表里的列只作审计。
 - [x] M3-03（2026-09-20）
 - [x] M3-04（2026-09-20）
 - [x] M3-05（2026-09-20）
+- [x] M3-06（2026-09-20）

@@ -1,5 +1,7 @@
 package cn.zhishi.stock.backend.web;
 
+import cn.zhishi.stock.ai.application.InvalidAiContextQueryException;
+import cn.zhishi.stock.ai.application.InvalidAiTargetException;
 import cn.zhishi.stock.common.api.ApiResponse;
 import cn.zhishi.stock.market.application.InvalidKlineParameterException;
 import cn.zhishi.stock.market.application.InvalidRankingQueryException;
@@ -234,6 +236,44 @@ public class GlobalExceptionHandler {
             HttpServletRequest request) {
         return ResponseEntity.badRequest().body(ApiResponse.failure(
                 "INVALID_REQUEST",
+                exception.getMessage(),
+                null,
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
+    /**
+     * AI 目标不合法。
+     *
+     * <p>业务码由异常自身携带（{@code AI_TARGET_INVALID}，契约 §13.5 的异常码表）。
+     * 与下面的 {@code InvalidAiContextQueryException} 分成两个方法而不是合并：
+     * "目标选错了"与"范围或场景给错了"是前端要给出不同就地提示的两件事。
+     */
+    @ExceptionHandler(InvalidAiTargetException.class)
+    public ResponseEntity<ApiResponse<Void>> invalidAiTarget(
+            InvalidAiTargetException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.badRequest().body(ApiResponse.failure(
+                exception.code(),
+                exception.getMessage(),
+                null,
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
+    /**
+     * AI 上下文预览的场景或区间参数不合法。
+     *
+     * <p>业务码是 {@code INVALID_REQUEST}（与其它参数类异常一致）：契约 §13.5 只为
+     * "目标"定义了 {@code AI_TARGET_INVALID}，为"区间不合法"新造一个 {@code AI_} 前缀的码
+     * 会让前端不得不认识一个契约里没有的取值。
+     */
+    @ExceptionHandler(InvalidAiContextQueryException.class)
+    public ResponseEntity<ApiResponse<Void>> invalidAiContextQuery(
+            InvalidAiContextQueryException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.badRequest().body(ApiResponse.failure(
+                exception.code(),
                 exception.getMessage(),
                 null,
                 TraceIdFilter.current(request),

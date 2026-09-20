@@ -7,7 +7,7 @@
 
 ## 1. 一句话状态
 
-**"知势" AI 智能股票分析平台**：设计文档完备、数据库迁移完备、前端高保真原型可跑、后端首个纵向切片（认证 + 市场总览）已跑通并合入 `main`，**且全栈 Compose 端到端验收已通过**（真实 API + 登录 + Cookie 恢复 + 退出 + 路由保护全链路）。工程地基已完备：mvn 修复、数据库两条迁移路径验证、CI 四作业、容器构建稳定性修复、项目文档补全、本地 dev 联调打通。**M1 除「GitHub 分支保护」需用户操作外全部完成**；**M2 全部 11 个任务已完成**（MKT-01~04、STK-01/02/04/07、QTE-01、SEC-01~04/06，以及前端四页接入、全局搜索、市场状态真实化与总览板块预览真实化）。市场域已从"首页一张硬编码快照"扩展为可查询的状态 / 广度 / 趋势 / 证券 / 榜单 / 板块六组接口，广度与趋势均由确定性模拟数据按规则真实计算；证券主数据（5149 只）已可搜索与分页筛选；个股详情已可查完整快照与日/周/月 K 线；全市场榜单已可按涨跌幅 / 成交额排序并多条件筛选分页；**板块已可排行、下钻到详情与成分股，且 `sectorId` 在 STK-02 与 QTE-01 上成为真实可用的筛选键**（此前是硬编码空页）；**前端 4 个页面 + 顶栏全局搜索 + 顶栏市场状态已从原型数据切到真实接口**——页面展示的每个数字都能在接口响应里找到来源，没有来源的字段（市盈率、市值、业务描述、板块走势、AI 速览、搜索建议的涨跌幅等）一律显示"尚未实现"而不是保留编造值；**总览快照的 `tradeDate` / `marketStatus` / `dataTime` 已由交易日历推导**，非交易日回退到最近有效收盘并标 `CLOSED`（此前周日会报"今天是交易日、正在交易中"）；**总览的榜单预览与板块预览都已投影自各自的榜单取数路径**，页面上的跳转主键（`securityId` / `sectorId`）全部可被对应详情接口解析（此前首页三张板块卡片点进去全部 404）。**M3 已开工**：第一个任务 **M3-01（自选分组 CRUD，WAT-01~WAT-05）已完成**——V5 的 `user_watchlist_group` / `user_watchlist_item` 两张表从 M1 起"结构就绪、无代码引用"，现在接上了应用层；接口带**真正生效**的 `Idempotency-Key` 幂等（24h 窗口，可复用组件）与 `If-Match` 乐观锁（版本不匹配 409），分组名合法性、默认分组唯一性、软删后同名可重建、搬移时合并目标组重复项这些不变量既有应用层实现、也有真实 MySQL 8.4 实测。**第二个任务 M3-02（自选项 CRUD + 排序 + 行情概览，WAT-06~WAT-12）也已完成**——自选项的增删改查、原子重排、以及 `GET /watchlists/overview` 聚合（分组 + 自选项 + 市场状态 + 快照版本 + `limitations`）全部落地；同组同证券是**成功幂等**而不是 409，移动时撞车走**合并**（删源行、目标行 `version` 不变），概览**降级不失败**（悬空证券 / 缺行情只写进 `limitations`，不编造 `snapshotVersion`）；契约与前端用的字符串 `securityId`（`sim-600519`）与库里 bigint 代理键之间的桥接抽成了独立端口 `SecurityIdentityProvider`，构词规则只有一处定义、全市场 5149 只往返有测试守着；M3-01 刻意留下的 `includeItems=true` 显式 400（已知问题 #15）本轮补成真实数据。**至此自选中心后端（WAT-01~WAT-12）12 个接口全部可用，前端接入是下一步 M3-03。** **第三个任务 M3-03（前端 `/watchlist` 接真实 API）也已完成**——自选页从"分组写死 + 复用 `mockApi` 的榜单行"换成真实接口：首屏**只发一次** `GET /watchlists/overview` 取全（分组 + 自选行情 + 市场状态 + 数据状态，四者来自同一批快照，不存在"两个时刻混在一屏"），分组切换在完整响应内选择而不重新请求，增删移排全部接上并带 `Idempotency-Key` / `If-Match`，导语的涨跌只数由真实行情算出且**停牌单独计数**；卡片上两个没有数据源的字段（分时 sparkline、`latestNewsCount`）**直接不渲染**——画出来就是编造。`mockApi` 至此只剩 `getNews` 一个函数（M3-05 整体删除）。本轮**做了真实端到端联调**（本机 Docker 起 MySQL 8.4 + Redis + 后端，空库 Flyway V1→V8，用前端完全相同的请求形状走完 WAT-01/02/03/04/07/09/10/11），并因此查出两个单测发现不了的缺陷：**空自选时页面在编造一次不存在的快照**（后端此时返回 `dataStatus=UNAVAILABLE`、不发起整批取数），以及**停牌股被算成"平盘"**（真实数据里停牌股有快照且 `changeRate="0.0000"`）。两个都已修复并补上测试。 **第四个任务 M3-04（资讯 Provider 抽象 + 模拟源 + 去重 + 标的关联）也已完成**——资讯域独立成仓库第 7 个模块 `stock-news`（domain 36 / application 5 / infrastructure 9），`NewsIngestionService` 走「取数 → 登记来源 → 授权闸门 → **来源 ID 幂等** → **内容指纹去重** → 落库 → 仅主记录解析关联」，`NewsQueryService` 用一个 6 步可见性过滤链同时支撑六个契约接口（NEWS-01~04 / STK-10 / SEC-07）；**这是仓库里第一个把模拟 Provider 的产出写进 MySQL 的里程碑**（去重需要跨批次记忆、`content_fingerprint` 是唯一索引的一部分、关联有生命周期，三条都不是内存无状态计算能回答的）；定时采集由 `stock-job` 的 `ScheduledNewsCollector` 每 2 分钟驱动，失败时在采集事务回滚之后用 `REQUIRES_NEW` 独立事务留痕再向上抛；**e2e 实测**：真实定时任务两轮采集，第二轮**零新增行**（来源 ID 幂等生效）、停用来源的 `last_success_at` 始终 `NULL`、跨来源重复稿被指纹判为 `DUPLICATE` 并折叠到主记录、**只有 CANDIDATE 关联的稿件在列表与板块视图中都不可见**（“低置信不进默认视图”只有真库能验）；同时关闭了 M3-02 / M3-03 留下的 `latestNewsCount` 与 `newsSince` 两处欠账（后者此前是显式 400 占位）。**至此 M3 已完成 4/12，自选闭环与资讯域两条链路都可端到端跑通。** **第五个任务 M3-05（前端 `/news` 接真实 API）也已完成**——资讯页从 `mockApi` 的 3 条写死稿件换成 NEWS-01（列表）+ NEWS-04（受控筛选项）：**筛选与分页全部走服务端**（`newsTypes` / `keyword` / `page` / `size`），**类型标签由服务端给的 `newsTypes` 动态生成**（前端只保留「枚举值 → 中文名」的显示映射，未知取值回退为原值），关键字改为**显式提交**（与 M3-03 的选股面板同一套约定），原文链接按 `originalAccessStatus` 渲染，关联标的渲染成可跳转标签（`MARKET` 与空 `targetId` 不跳转）；**侧栏「今日事件密度 286 条」与「高频主题 42/36/29/18」这两块编造数据被降级为「尚未实现」**——它们连模拟源都没有。`services/mockApi.ts` 与其测试**整体删除**，仓库里从此不再有 mock 通路。本轮同样**做了真实端到端联调**（Playwright 打开真实 `/news` 页），并因此查出：**`originalAccessStatus` 在模拟源里一律是 `UNKNOWN`，按初稿「只认 `AVAILABLE`」的规则会让「查看原文」8 条全部消失**（已改为 `UNKNOWN` 也给链接并标注状态未知），以及 `GET /news/options` 的 `availableTimeRange` 里多出一个契约外的 `empty` 字段（`NewsTimeRange.isEmpty()` 被 Jackson 当 getter，记入已知问题 #21）。**至此 M3 已完成 5/12，前端 11 个路由里 8 个接了真实接口。**
+**"知势" AI 智能股票分析平台**：设计文档完备、数据库迁移完备、前端高保真原型可跑、后端首个纵向切片（认证 + 市场总览）已跑通并合入 `main`，**且全栈 Compose 端到端验收已通过**（真实 API + 登录 + Cookie 恢复 + 退出 + 路由保护全链路）。工程地基已完备：mvn 修复、数据库两条迁移路径验证、CI 四作业、容器构建稳定性修复、项目文档补全、本地 dev 联调打通。**M1 除「GitHub 分支保护」需用户操作外全部完成**；**M2 全部 11 个任务已完成**（MKT-01~04、STK-01/02/04/07、QTE-01、SEC-01~04/06，以及前端四页接入、全局搜索、市场状态真实化与总览板块预览真实化）。市场域已从"首页一张硬编码快照"扩展为可查询的状态 / 广度 / 趋势 / 证券 / 榜单 / 板块六组接口，广度与趋势均由确定性模拟数据按规则真实计算；证券主数据（5149 只）已可搜索与分页筛选；个股详情已可查完整快照与日/周/月 K 线；全市场榜单已可按涨跌幅 / 成交额排序并多条件筛选分页；**板块已可排行、下钻到详情与成分股，且 `sectorId` 在 STK-02 与 QTE-01 上成为真实可用的筛选键**（此前是硬编码空页）；**前端 4 个页面 + 顶栏全局搜索 + 顶栏市场状态已从原型数据切到真实接口**——页面展示的每个数字都能在接口响应里找到来源，没有来源的字段（市盈率、市值、业务描述、板块走势、AI 速览、搜索建议的涨跌幅等）一律显示"尚未实现"而不是保留编造值；**总览快照的 `tradeDate` / `marketStatus` / `dataTime` 已由交易日历推导**，非交易日回退到最近有效收盘并标 `CLOSED`（此前周日会报"今天是交易日、正在交易中"）；**总览的榜单预览与板块预览都已投影自各自的榜单取数路径**，页面上的跳转主键（`securityId` / `sectorId`）全部可被对应详情接口解析（此前首页三张板块卡片点进去全部 404）。**M3 已开工**：第一个任务 **M3-01（自选分组 CRUD，WAT-01~WAT-05）已完成**——V5 的 `user_watchlist_group` / `user_watchlist_item` 两张表从 M1 起"结构就绪、无代码引用"，现在接上了应用层；接口带**真正生效**的 `Idempotency-Key` 幂等（24h 窗口，可复用组件）与 `If-Match` 乐观锁（版本不匹配 409），分组名合法性、默认分组唯一性、软删后同名可重建、搬移时合并目标组重复项这些不变量既有应用层实现、也有真实 MySQL 8.4 实测。**第二个任务 M3-02（自选项 CRUD + 排序 + 行情概览，WAT-06~WAT-12）也已完成**——自选项的增删改查、原子重排、以及 `GET /watchlists/overview` 聚合（分组 + 自选项 + 市场状态 + 快照版本 + `limitations`）全部落地；同组同证券是**成功幂等**而不是 409，移动时撞车走**合并**（删源行、目标行 `version` 不变），概览**降级不失败**（悬空证券 / 缺行情只写进 `limitations`，不编造 `snapshotVersion`）；契约与前端用的字符串 `securityId`（`sim-600519`）与库里 bigint 代理键之间的桥接抽成了独立端口 `SecurityIdentityProvider`，构词规则只有一处定义、全市场 5149 只往返有测试守着；M3-01 刻意留下的 `includeItems=true` 显式 400（已知问题 #15）本轮补成真实数据。**至此自选中心后端（WAT-01~WAT-12）12 个接口全部可用，前端接入是下一步 M3-03。** **第三个任务 M3-03（前端 `/watchlist` 接真实 API）也已完成**——自选页从"分组写死 + 复用 `mockApi` 的榜单行"换成真实接口：首屏**只发一次** `GET /watchlists/overview` 取全（分组 + 自选行情 + 市场状态 + 数据状态，四者来自同一批快照，不存在"两个时刻混在一屏"），分组切换在完整响应内选择而不重新请求，增删移排全部接上并带 `Idempotency-Key` / `If-Match`，导语的涨跌只数由真实行情算出且**停牌单独计数**；卡片上两个没有数据源的字段（分时 sparkline、`latestNewsCount`）**直接不渲染**——画出来就是编造。`mockApi` 至此只剩 `getNews` 一个函数（M3-05 整体删除）。本轮**做了真实端到端联调**（本机 Docker 起 MySQL 8.4 + Redis + 后端，空库 Flyway V1→V8，用前端完全相同的请求形状走完 WAT-01/02/03/04/07/09/10/11），并因此查出两个单测发现不了的缺陷：**空自选时页面在编造一次不存在的快照**（后端此时返回 `dataStatus=UNAVAILABLE`、不发起整批取数），以及**停牌股被算成"平盘"**（真实数据里停牌股有快照且 `changeRate="0.0000"`）。两个都已修复并补上测试。 **第四个任务 M3-04（资讯 Provider 抽象 + 模拟源 + 去重 + 标的关联）也已完成**——资讯域独立成仓库第 7 个模块 `stock-news`（domain 36 / application 5 / infrastructure 9），`NewsIngestionService` 走「取数 → 登记来源 → 授权闸门 → **来源 ID 幂等** → **内容指纹去重** → 落库 → 仅主记录解析关联」，`NewsQueryService` 用一个 6 步可见性过滤链同时支撑六个契约接口（NEWS-01~04 / STK-10 / SEC-07）；**这是仓库里第一个把模拟 Provider 的产出写进 MySQL 的里程碑**（去重需要跨批次记忆、`content_fingerprint` 是唯一索引的一部分、关联有生命周期，三条都不是内存无状态计算能回答的）；定时采集由 `stock-job` 的 `ScheduledNewsCollector` 每 2 分钟驱动，失败时在采集事务回滚之后用 `REQUIRES_NEW` 独立事务留痕再向上抛；**e2e 实测**：真实定时任务两轮采集，第二轮**零新增行**（来源 ID 幂等生效）、停用来源的 `last_success_at` 始终 `NULL`、跨来源重复稿被指纹判为 `DUPLICATE` 并折叠到主记录、**只有 CANDIDATE 关联的稿件在列表与板块视图中都不可见**（“低置信不进默认视图”只有真库能验）；同时关闭了 M3-02 / M3-03 留下的 `latestNewsCount` 与 `newsSince` 两处欠账（后者此前是显式 400 占位）。**至此 M3 已完成 4/12，自选闭环与资讯域两条链路都可端到端跑通。** **第五个任务 M3-05（前端 `/news` 接真实 API）也已完成**——资讯页从 `mockApi` 的 3 条写死稿件换成 NEWS-01（列表）+ NEWS-04（受控筛选项）：**筛选与分页全部走服务端**（`newsTypes` / `keyword` / `page` / `size`），**类型标签由服务端给的 `newsTypes` 动态生成**（前端只保留「枚举值 → 中文名」的显示映射，未知取值回退为原值），关键字改为**显式提交**（与 M3-03 的选股面板同一套约定），原文链接按 `originalAccessStatus` 渲染，关联标的渲染成可跳转标签（`MARKET` 与空 `targetId` 不跳转）；**侧栏「今日事件密度 286 条」与「高频主题 42/36/29/18」这两块编造数据被降级为「尚未实现」**——它们连模拟源都没有。`services/mockApi.ts` 与其测试**整体删除**，仓库里从此不再有 mock 通路。本轮同样**做了真实端到端联调**（Playwright 打开真实 `/news` 页），并因此查出：**`originalAccessStatus` 在模拟源里一律是 `UNKNOWN`，按初稿「只认 `AVAILABLE`」的规则会让「查看原文」8 条全部消失**（已改为 `UNKNOWN` 也给链接并标注状态未知），以及 `GET /news/options` 的 `availableTimeRange` 里多出一个契约外的 `empty` 字段（`NewsTimeRange.isEmpty()` 被 Jackson 当 getter，记入已知问题 #21）。**至此 M3 已完成 5/12，前端 11 个路由里 8 个接了真实接口。** **第六个任务 M3-06（AI Provider 抽象 + 确定性模拟实现）也已完成**——AI 域独立成仓库第 8 个模块 `stock-ai`（31 个 main 类型 + 4 个测试类，**不引入 MyBatis**，本轮不落库），交付 AI-01 `GET /ai/scenes`（5 个场景的静态规则表：类型白名单、目标数量区间、`defaultRange` 档位、`questionMaxLength=500`）与 AI-02 `POST /ai/context-previews`（一次取数固化 `AiContextSnapshot` + `AiEvidenceCandidate`，缺行情 / 资讯 / 板块只记 `limitations` 而不抛异常）；**AI 的上下文与前端页面的数字走同一条取数路径**——行情复用 `QuoteBatch`、板块复用 `SectorQuoteCalculator`、资讯复用 `NewsQueryService.visible()` 再叠 `allow_ai_analysis`，所以「AI 看到的」与「页面上显示的」不会互相矛盾；**「模型不生成可信 URL」被做成类型保证**（`LlmEvidence` 类型上不含 URL 字段）而不是事后正则校验——校验器总会有漏掉某种 URL 形态的窗口，类型不会；`LlmProviderPort` 端口已就位，真实 LLM 接入时替换实现即可。**e2e 实测**（Docker 全栈 + `frontend/e2e/ai.real.mjs`）：未登录两个接口均 401、AI-01 不泄露内部 Prompt、AI-02 的行情截止时间 `2026-09-18T15:00:00+08:00` 来自**真实行情批次而不是「现在」**、7 种非法请求全部 400 且业务码正确；另用**受控实验**验证来源授权语义——临时关闭 `SIM_MEDIA_A` 的 `allow_ai_analysis` 后，`/news` 列表仍能看到该稿件，而 AI 上下文的 `newsCount` 由 1 变 0、`dataCategories` 由 `[QUOTE, NEWS]` 变 `[QUOTE]`，恢复后复原。本轮还顺带修掉 2 个真实缺陷（上下文哈希对数据时间不敏感、区间不合法被报成 `AI_TARGET_INVALID`），并加固了 3 处「空结果也能通过」的假绿断言。**至此 M3 已完成 6/12。**
 
 ## 2. 仓库与分支
 
@@ -27,7 +27,7 @@
 | 能力 | 状态 | 证据 |
 | --- | --- | --- |
 | `mvn`（Git Bash） | ✅ 已修复 | `mvn -v` → Maven 3.9.10（需 `JAVA_HOME` 用 Windows 路径，如 `D:/idea/JDK17`） |
-| 后端全量测试 | ✅ **639 测试通过** | common 1 / market 156 / **news 89** / system 89 / integration 111 / backend 181 / job 12，0 失败 0 错误。默认时区与 `TZ=UTC` 各跑一遍均全绿。本机 Docker 已启动，`InfrastructureIntegrationTest`（Testcontainers 真实 MySQL 8.4 + Redis）**本轮实测通过**（外层 5 + `WatchlistGroups` 10 + `WatchlistItems` 9 + `News` 7 = 31），不再是"CI 覆盖" |
+| 后端全量测试 | ✅ **749 测试通过** | common 1 / market 156 / **news 103** / system 89 / **ai 71** / integration 127 / backend 190 / job 12，0 失败 0 错误。默认时区与 `TZ=UTC` 各跑一遍均全绿。本机 Docker 已启动，`InfrastructureIntegrationTest`（Testcontainers 真实 MySQL 8.4 + Redis）**本轮实测通过**（外层 5 + `WatchlistGroups` 10 + `WatchlistItems` 9 + `News` 7 = 31），不再是"CI 覆盖" |
 | 后端 Flyway 迁移（空库路径） | ✅ 已在真实 MySQL 8.4 验证 | 集成测试断言 `flyway_schema_history` 有 8 条成功迁移 |
 | 后端 Flyway 迁移（旧库升级路径） | ✅ **首次验证通过** | baseline v1 → V2–V8 → `now at version v8`，退出码 0 |
 | 迁移后完整性校验 | ✅ 通过 | `post_migration_validation.sql` 无异常明细，`foreign_key_count = 0` |
@@ -36,6 +36,7 @@
 | 自选闭环端到端 | ✅ **M3-03 实测通过** | 本机 Docker 起 MySQL 8.4 + Redis + `stock-backend`（dev profile），空库 Flyway V1→V8，按前端**完全相同的请求形状**走完 WAT-01/02/03/04/07/09/10/11 并逐字段核对；由此查出 2 个单测发现不了的缺陷（空自选编造快照、停牌算成平盘），均已修复 |
 | 资讯域端到端 | ✅ **M3-04 实测通过** | 本机 Docker 起 MySQL 8.4 + Redis 8.2 + `stock-api` + `stock-job`，空库 Flyway V1→V8；**库里数据全部由真实定时任务采集而来（非夹具）**：5 来源 / 9 稿件（8 ORIGINAL + 1 DUPLICATE）/ 8 关联（6 CONFIRMED + 2 CANDIDATE）。第二轮采集（+120s）**零新增行** ⇒ 来源 ID 幂等生效；停用来源 `SIM_MEDIA_C` 的 `last_success_at` 始终 `NULL`；重复稿折叠到主记录且库里关联数为 0；只有 CANDIDATE 关联的稿件在 NEWS-02 与 SEC-07 里都不可见；六个接口 + WAT-11 的 `newsSince` 逐字段核对通过，6 种非法输入全部 400、4 种不存在资源全部 404 |
 | 资讯页端到端 | ✅ **M3-05 实测通过** | Docker 全栈（`mysql` / `redis` / `flyway` / `stock-api` / `stock-job` / `frontend`） + Playwright 无头浏览器打开 `http://127.0.0.1:8088/news`，脚本 `frontend/e2e/news.real.mjs`。实测：首屏**恰好 2 个请求**（`/news/options` + `/news?page=1&size=20`）；类型标签 5 个全部来自 NEWS-04；切换类型**只新增 1 个请求**且带 `newsTypes`，options 累计仍 1 次；关键字搜索**保留当前筛选条件**（`newsTypes=ANNOUNCEMENT&keyword=银行`）；关联标签里 `CN` 无链接、`002343` → `/stocks/sim-002343`；侧栏渲染「尚未实现」、页面上没有 `286` / `42`；**原文链接 8 条全部可点** |
+| AI 域端到端 | ✅ **M3-06 实测通过** | Docker 全栈（`stock-api` Healthy） + `frontend/e2e/ai.real.mjs`。实测：未登录时 AI-01 / AI-02 均 401；AI-01 返回 5 个场景且**不泄露内部 Prompt**；AI-02 的 `QUOTE` 截止时间 = `2026-09-18T15:00:00+08:00`（**真实行情批次，不是「现在」**）；`COMPARE` 的多标的与单标的行情截止时间一致；7 种非法请求全部 400 且业务码正确。另做**受控实验**验证 `allow_ai_analysis`：临时关闭 `SIM_MEDIA_A` 的授权后，`/news` 列表 `total` 仍为 1，而 AI-02 的 `newsCount` 由 1 变 0、`dataCategories` 由 `[QUOTE, NEWS]` 变 `[QUOTE]`，恢复后复原 |
 | CI | 🟢 **已在 GitHub 实际运行** | `.github/workflows/ci.yml`（**4 作业**，含旧库升级路径）；前端作业曾因时区依赖持续失败，已修复（`3fd970c`） |
 | 全栈 Compose 端到端 | ✅ **已通过** | 6 容器全部启动、无 ERROR；`npm run e2e:real` 通过 |
 | 容器镜像构建 | ✅ 稳定可重复 | 修复容器内依赖下载中断后，6 镜像连续构建成功 |
@@ -48,7 +49,7 @@
 | --- | --- | --- |
 | M1 | 合流与工程地基 | 🟢 15/16 完成（仅 M1-07 的「GitHub 分支保护」需用户操作） |
 | M2 | 市场域纵向补全（游客主流程全真实） | ✅ **11/11 完成**（M2-01 交易日历与市场状态、M2-02 市场广度、M2-03 成交趋势、M2-04 证券主数据与搜索建议、M2-05 个股快照与日/周/月 K 线、M2-06 榜单、M2-07 板块排行/详情/成分股、M2-08 前端四页接入真实接口、M2-09 全局搜索接真实接口、M2-10 市场状态真实化、M2-11 总览板块预览真实化） |
-| M3 | 用户态闭环与 AI 研究编排 | 🟡 **5/12 完成**（M3-01 自选分组 CRUD、M3-02 自选项 CRUD + 排序 + 行情概览、M3-03 前端 `/watchlist` 接真实 API、M3-04 资讯域（第 7 个模块 `stock-news`）+ 六个接口 + 定时采集落库、M3-05 前端 `/news` 接真实资讯接口；**自选闭环与资讯域两条链路都已端到端可用，且仓库里不再有 mock 通路**） |
+| M3 | 用户态闭环与 AI 研究编排 | 🟡 **6/12 完成**（M3-01 自选分组 CRUD、M3-02 自选项 CRUD + 排序 + 行情概览、M3-03 前端 `/watchlist` 接真实 API、M3-04 资讯域（第 7 个模块 `stock-news`）+ 六个接口 + 定时采集落库、M3-05 前端 `/news` 接真实资讯接口、M3-06 AI Provider 抽象（第 8 个模块 `stock-ai`）+ AI-01/AI-02 两个接口；**自选闭环、资讯域、AI 上下文预览三条链路都已端到端可用，且仓库里不再有 mock 通路**） |
 
 ## 5. 已完成能力盘点
 
@@ -57,8 +58,8 @@
 | 设计文档 | ✅ 100% | PRD 86KB、Architecture 53KB、RESTful-API 79KB + superpowers specs/plans |
 | 数据库迁移 | ✅ 结构 100% / 两条路径均验证 | Flyway V1–V8；旧库样本 149KB（原 24MB） |
 | 前端原型 | ✅ 页面 100% / 真实接入 8/11 | 11 路由全部有页面；`/market`、`/login`、`/rankings`、`/sectors`、`/sectors/:id`、`/stocks/:id`、`/watchlist`、`/news` 接真实 API；**顶栏全局搜索框已接 STK-01、顶栏市场状态与侧栏数据源已接 MKT-02**（两者都是非路由的全局组件）；`/ai`、`/history`、`/admin` 是本地演示数据的静态页面（M3-10 / M3-11）；**`services/mockApi.ts` 已随 M3-05 删除**，仓库里不再有 mock 通路 |
-| 后端 | 🟡 6/8 域 | 认证闭环 ✅、市场总览（MKT-01~04）🟡、证券主数据与个股行情（STK-01/02/04/07）🟡、榜单（QTE-01）🟡、板块（SEC-01/02/03/04/06/**07**）🟡、**自选中心（WAT-01~WAT-12）✅ 后端完整**、**资讯域（NEWS-01~04 + STK-10 + SEC-07）✅ 后端完整且落库**；AI 域未开工 |
-| 测试 | ✅ 772 个 | 后端 639 + 前端 133；无覆盖率门槛 |
+| 后端 | 🟡 7/8 域 | 认证闭环 ✅、市场总览（MKT-01~04）🟡、证券主数据与个股行情（STK-01/02/04/07）🟡、榜单（QTE-01）🟡、板块（SEC-01/02/03/04/06/**07**）🟡、**自选中心（WAT-01~WAT-12）✅ 后端完整**、**资讯域（NEWS-01~04 + STK-10 + SEC-07）✅ 后端完整且落库**、**AI 域（AI-01/AI-02）🟡 接口可用、上下文可固化、引用可核对**（任务编排与 SSE 属 M3-07，V6 的 9 张表仍为零行） |
+| 测试 | ✅ 899 个 | 后端 749 + 前端 150；无覆盖率门槛 |
 | 工程化 | 🟢 85% | CI 工作流 ✅、TASKS/STATUS/CHANGELOG ✅、根与模块 README ✅、容器构建稳定 ✅；分支保护待用户配置 |
 
 ## 6. 已知问题（按严重度）
@@ -85,8 +86,9 @@
 | 18 | 契约 §12.3 的 `WATCHLIST_ITEM_EXISTS` 没有任何端点会抛出 | 🔵 | WAT-07 要求"同组同证券"幂等成功、WAT-09 要求撞车时合并，两条路都通不到报错分支。按"不加永不触发的分支"处理，保留在契约文档里，等真实数据源接入后若产品口径变化再评估 |
 | 19 | 模拟 Provider 把"最近一个已完成交易日"当作 `REALTIME` 批次：周日拉 WAT-11 得到 `dataStatus=REALTIME` 但 `dataTime=2026-09-18T15:00:00+08:00` | 🔵 | M3-03 e2e 实测发现。真实行情源接入后此语义自然修正。**不要**在前端按"日期不是今天"自行降级——那会与后端的 `dataStatus` 打架，且周末必然误报 |
 | 20 | **WAT-11 的 `latestNewsCount` 无法表达“0 条”**：`NewsCountProvider` 的端口注释声称“0 条”与“不知道”可区分，但实现里**没有任何代码路径产生“未知”**——`countSince` 无论资讯源是否可用都只返回“有条数”的证券，于是“0 条”这个事实被写成了“不知道”，前端只能渲染“—” | 🔵 | M3-04 e2e 实测发现（`sim-600519` 无资讯 → `null`；`newsSince=2026-09-19` 时三只全 `null`）。本轮**不改**：契约 §12.2 没规定 `null`/`0` 语义，且 M3-03 已立下“缺失即 `null`”的口径。**M3-05 已定前端处置**：`null` 时**不渲染该字段**（不是渲染成“0 条”，也不是渲染成“—”）；后端语义的最终决定留到有真实资讯源之后，届时要么给 WAT-11 补一个资讯新鲜度字段（契约增量），要么把缺失当 `0`（此时“未知”只剩“悬空证券”一种）。原建议是：要么给 WAT-11 补一个资讯新鲜度字段（契约增量），要么把缺失当 `0`（此时“未知”只剩“悬空证券”一种）。**在那之前，前端不要把 `null` 渲染成“0 条”** |
-
 | 21 | **`GET /news/options` 的 `availableTimeRange` 多出一个契约外的 `empty` 字段**：`NewsTimeRange.isEmpty()` 是**无参** `isXxx()` 方法，Jackson 按 getter 规则把它序列化进了响应（契约 §4.3 只列 `startAt` / `endAt`） | 🔵 | M3-05 e2e 实测发现。修法是给该方法加 `@JsonIgnore`（一行）。**本轮不改**：M3-05 是前端里程碑、前端类型不认这个字段、功能无影响。同类风险：同模块的 `Sector.isType(SectorType)` 与 `LoginAttemptState.isLocked(Instant)` 都带参数，不受影响——**新增 record 的无参 `isXxx()` 方法前要想一下它会不会被序列化** |
+| 22 | **AI 上下文只接入了 7 类 `dataCategory` 中的 3 类**（`QUOTE` / `SECTOR` / `NEWS`；V6 的 CHECK 另列 `KLINE` / `BUSINESS` / `CALENDAR` / `RULE`） | 🔵 | M3-06 交付范围。`dataCategories` **只列实际取到的类别**——为未接入的 4 类补一个「看起来合法的截止时间」就是编造。各自数据源就位后逐个接入 |
+| 23 | **AI 域 V6 的 9 张表仍为零行零引用**（`ai_task` / `ai_report` / `ai_evidence` / `ai_feedback` 等），AI-01/AI-02 全部不落库 | 🔵 | M3-06 按「任务状态机与持久化属 M3-07/M3-08」拆分，接口形状已按契约固化，落库时用例层不变。**这与 M2-01~M2-06 的模拟 Provider 同一处置逻辑** |
 
 ### 已定位的环境故障（含根因）
 
@@ -117,7 +119,7 @@
 | 层 | 技术 |
 | --- | --- |
 | 前端 | Vue 3.5 / TypeScript 6 / Vite 8 / Vue Router 5 / Pinia 4 / ECharts 6 / Lucide；Vitest 5 + Vue Test Utils + Playwright |
-| 后端 | Spring Boot 3.5.9 / Java 17 / MyBatis-Plus 3.5.5 / jjwt 0.12.5 / Spring Security / Spring Data Redis / JdbcTemplate；Maven 多模块 **7 个** |
+| 后端 | Spring Boot 3.5.9 / Java 17 / MyBatis-Plus 3.5.5 / jjwt 0.12.5 / Spring Security / Spring Data Redis / JdbcTemplate；Maven 多模块 **8 个**（`stock-ai` 不依赖 MyBatis，本轮不落库） |
 | 数据 | MySQL 8.4（≥8.0.16）/ Redis 8.2 / Flyway V1–V8 |
 | 编排 | Docker Compose：mysql → flyway → stock-api / stock-job → frontend(nginx) |
 
@@ -163,6 +165,13 @@ docker exec -i zhishi-legacy-mysql-1 mysql -ustock -pstock_dev_password stock_sy
                                         │ NewsQueryService：6 步可见性过滤链（PUBLISHED → ORIGINAL → 来源可用
                                         │       → rights_expire_at 未过 → 只认 CONFIRMED → published_at DESC）
                                         │       一份口径同时支撑 NEWS-01~04 / STK-10 / SEC-07 与 WAT-11 的资讯数
+                                        │ AI 上下文（M3-06）：AiContextPreviewService → AiSceneCatalog（5 场景规则表）
+                                        │       → AiContextBuilder 一次取数固化 AiContextSnapshot + AiEvidenceCandidate
+                                        │       → 行情走 QuoteBatch（与榜单/板块同源）、板块走 SectorQuoteCalculator、
+                                        │         资讯走 NewsEvidenceProvider（= NewsQueryService.visible() 之上叠 allow_ai_analysis）
+                                        │       → 缺行情/资讯/板块只记 limitations，不抛异常；核心行情缺失时 canGenerate=false
+                                        │ LlmProviderPort（端口）→ SimulatedLlmProvider（确定性六章节 + 引用约束 + 故障注入四态）
+                                        │       LlmEvidence 类型上不含 URL ——「模型不生成可信 URL」是类型保证而非事后校验
                                         ▼
                               Redis 8.2 ◀──▶ MySQL 8.4
                                    ▲              ▲
@@ -180,8 +189,9 @@ docker exec -i zhishi-legacy-mysql-1 mysql -ustock -pstock_dev_password stock_sy
                     四页共用 composables/useRemoteData（三态 + 过期响应守卫）与 services/{ranking,sector,security}Api
 前端接入（M2-09）：顶栏 GlobalSearch → STK-01（300ms 防抖 + 键盘选择 + 命中高亮 + 状态徽标）
 前端接入（M2-10）：顶栏市场状态 + 侧栏数据源 → MKT-02（composables/useMarketStatus：60s 刷新 + 页面不可见暂停）
-资讯接口（M3-04，六个全 PUBLIC）：NEWS-01~04、STK-10、SEC-07 —— **前端尚未消费，归属 M3-05**
+资讯接口（M3-04，六个全 PUBLIC）：NEWS-01~04、STK-10、SEC-07 —— **前端已由 M3-05 消费**（`/news` 列表 + 筛选项）
                                         WAT-11 的 latestNewsCount / newsSince 已接真实资讯数（M3-04）
+AI 接口（M3-06，两个均需认证）：AI-01 `GET /ai/scenes`、AI-02 `POST /ai/context-previews` —— **前端尚未消费，归属 M3-10**
 ```
 
 **不可动摇的架构约束**：前端不直连任何数据源；AI 由 Spring Boot 编排第三方 LLM（不提前拆 FastAPI）；MySQL 无外键，业务写入靠应用层事务 + 乐观锁 + Outbox。
@@ -200,7 +210,7 @@ docker exec -i zhishi-legacy-mysql-1 mysql -ustock -pstock_dev_password stock_sy
 **M2 的完成含义**：游客主流程（市场总览 → 榜单 / 板块 → 板块详情 → 个股详情 + 顶栏全局搜索）的
 **每一个数字都来自真实接口**，且**每一个跳转主键都能被对应的详情接口解析**。
 后端 19 个非认证 GET 接口中（M2 的 13 个 + M3-04 新增的 6 个资讯接口），**11 个已被前端消费**
-（这个分母只统计**非认证** GET；`/watchlist-groups` 等 `USER` 接口不计入，同 `GlobalSearch.vue` 的说明）：
+（这个分母只统计**非认证** GET；`/watchlist-groups` 等 `USER` 接口与 M3-06 新增的 AI-01 / AI-02 都需认证，不计入，同 `GlobalSearch.vue` 的说明）：
 `/markets/overview`、`/markets/{code}/status`、`/stock-rankings`、`/sector-rankings`、
 `/sectors/{id}`、`/sectors/{id}/constituents`、`/securities/search`、
 `/securities/{id}/quote`、`/securities/{id}/klines`、`/news`、`/news/options`。
@@ -216,7 +226,7 @@ docker exec -i zhishi-legacy-mysql-1 mysql -ustock -pstock_dev_password stock_sy
 | `GET /news/{id}`、`GET /news/sync-status` | — | 列表页不需要：NEWS-01 已含契约 §4.3 的全部摘要字段，`dataStatus` / `lastSuccessfulSyncAt` 也与 NEWS-03 同源。**详情页未排期**，列表已能完成「看摘要 → 跳原文」 |
 | `GET /securities/{id}/news`、`GET /sectors/{id}/news` | 后续 | 个股页与板块页的资讯段，随这两页的后续工作排期 |
 
-**下一步：M3 已开工（5/12）**，按契约依赖推进：
+**下一步：M3 已开工（6/12）**，按契约依赖推进：
 
 1. ✅ M3-01 自选分组 CRUD → ✅ M3-02 自选项 CRUD + 排序 + 行情概览 → ✅ M3-03 前端 `/watchlist` 接真实 API
    —— **自选闭环已端到端可用**（后端 12 接口 + 前端页，e2e 实测）
@@ -225,7 +235,9 @@ docker exec -i zhishi-legacy-mysql-1 mysql -ustock -pstock_dev_password stock_sy
 3. ✅ **M3-05 前端 `/news` 接真实接口** —— 列表接 NEWS-01、筛选项接 NEWS-04，筛选与分页全部走服务端；
    `services/mockApi.ts` **整体删除**（仓库里不再有 mock 通路）；e2e 实测：首屏恰好 2 个请求、
    切类型只发 1 个请求且带 `newsTypes`、关键字搜索保留筛选条件
-4. **M3-06 AI Provider 抽象 + 确定性模拟实现**（依赖 M3-04，已解锁）
+4. ✅ **M3-06 AI Provider 抽象 + 确定性模拟实现** —— 第 8 个模块 `stock-ai`（31 个 main 类型 + 4 个测试类），
+   AI-01 / AI-02 两个接口；e2e 实测 + 受控实验验证 `allow_ai_analysis`；本轮顺带修掉 2 个真实缺陷
+   （上下文哈希对数据时间不敏感、区间不合法被报成 `AI_TARGET_INVALID`）
    → M3-07 编排 + SSE → M3-08 报告/证据持久化 → M3-09 配额 → M3-10 AI 工作台 + history → M3-11 后台最小集 → M3-12 热点榜单导出
 5. **STK-05 批量行情接口**（已知问题 #10）—— M2-09 遗留的搜索建议无涨跌幅依赖它；
    底层 `SimulatedQuoteSnapshotProvider` 已同时提供单只与整批，实现成本很低

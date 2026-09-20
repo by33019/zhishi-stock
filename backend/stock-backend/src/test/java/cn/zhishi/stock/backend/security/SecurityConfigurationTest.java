@@ -152,6 +152,42 @@ class SecurityConfigurationTest {
         });
   }
 
+  /**
+   * AI 是用户态资源，游客必须被挡在门外。
+   *
+   * <p>当前 {@code anyRequest().authenticated()} 已经覆盖 {@code /api/v1/ai/**}，
+   * 但把断言写下来才有意义：将来有人为了放开别的公共前缀而加宽匹配范围时，这条会变红。
+   */
+  @Test
+  void keepsAiEndpointsBehindAuthentication() {
+    new WebApplicationContextRunner()
+        .withUserConfiguration(SecurityConfiguration.class, TestEndpoints.class)
+        .withBean(JwtAuthenticationFilter.class, () -> new JwtAuthenticationFilter(
+            mock(JwtAccessTokenService.class), mock(AccessTokenBlacklist.class),
+            mock(UserAccountRepository.class)))
+        .withBean(ObjectMapper.class, () -> new ObjectMapper().findAndRegisterModules())
+        .withBean(Clock.class, Clock::systemUTC)
+        .withBean(TraceIdFilter.class, TraceIdFilter::new)
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          var mvc = MockMvcBuilders.webAppContextSetup(context)
+              .apply(springSecurity())
+              .addFilters(context.getBean(TraceIdFilter.class))
+              .build();
+          for (String[] target : new String[][] {
+              {"GET", "/api/v1/ai/scenes"},
+              {"POST", "/api/v1/ai/context-previews"}}) {
+            MockHttpServletRequestBuilder request = switch (target[0]) {
+              case "GET" -> get(target[1]);
+              default -> post(target[1]);
+            };
+            assertThat(mvc.perform(request).andReturn().getResponse().getStatus())
+                .describedAs("游客访问 %s %s 应当被拒绝", target[0], target[1])
+                .isEqualTo(401);
+          }
+        });
+  }
+
   @Configuration(proxyBeanMethods = false)
   @EnableWebMvc
   static class TestEndpoints {
@@ -237,6 +273,16 @@ class SecurityConfigurationTest {
 
     @GetMapping("/api/v1/users/me")
     String currentUser() {
+      return "ok";
+    }
+
+    @GetMapping("/api/v1/ai/scenes")
+    String aiScenes() {
+      return "ok";
+    }
+
+    @PostMapping("/api/v1/ai/context-previews")
+    String aiContextPreviews() {
       return "ok";
     }
 

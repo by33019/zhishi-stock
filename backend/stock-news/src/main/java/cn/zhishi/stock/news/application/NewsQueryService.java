@@ -10,6 +10,8 @@ import cn.zhishi.stock.news.domain.NewsArticleStore;
 import cn.zhishi.stock.news.domain.NewsContentStatus;
 import cn.zhishi.stock.news.domain.NewsCountProvider;
 import cn.zhishi.stock.news.domain.NewsDetail;
+import cn.zhishi.stock.news.domain.NewsEvidence;
+import cn.zhishi.stock.news.domain.NewsEvidenceProvider;
 import cn.zhishi.stock.news.domain.NewsMarketTargets;
 import cn.zhishi.stock.news.domain.NewsOptions;
 import cn.zhishi.stock.news.domain.NewsPage;
@@ -63,7 +65,7 @@ import java.util.Set;
  * 代价是扫描量随资讯量线性增长——真实源接入时必须下推，索引已经就绪
  * （{@code idx_stock_news_publish}、{@code idx_news_relation_target_status}）。
  */
-public class NewsQueryService implements NewsCountProvider {
+public class NewsQueryService implements NewsCountProvider, NewsEvidenceProvider {
 
     private static final int DEFAULT_PAGE = 1;
     private static final int DEFAULT_PAGE_SIZE = 20;
@@ -328,6 +330,69 @@ public class NewsQueryService implements NewsCountProvider {
         return Map.copyOf(counts);
     }
 
+    // ---------- AI 上下文证据（M3-06） ----------
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>它**复用** {@link #visible()} 这条可见性过滤链，只在其上再叠一层
+     * {@code allow_ai_analysis}：资讯域已经知道"哪些资讯可见"，
+     * AI 侧新增的知识只有一条——"来源是否允许进入 AI"。
+     * 若在这里另写一遍可见性判据，两处口径迟早分叉，而分叉不会报错，
+     * 只会让"列表里有 8 条、AI 说没有依据"同时成立。
+     *
+     * <p>{@code limit} 在**过滤之后**截断：先截断再过滤会让"最新 N 条里有若干条
+     * 不允许进 AI"静默压低可用证据量——调用方以为自己拿到了 N 条候选，
+     * 实际只有更少，而没有任何信号提示这件事。
+     */
+    @Override
+    public List<NewsEvidence> evidenceFor(
+            NewsTargetType targetType,
+            String targetId,
+            OffsetDateTime startAt,
+            OffsetDateTime endAt,
+            int limit) {
+        if (limit < 1) {
+            throw new IllegalArgumentException("limit 必须为正数：" + limit);
+        }
+        TargetFilter target = resolveTarget(targetType, targetId);
+        List<NewsRecord> matched = new ArrayList<>();
+        for (NewsRecord record : visible()) {
+            if (!record.source().allowAiAnalysis()) {
+                continue;
+            }
+            if (!matchesRange(record, startAt, endAt)) {
+                continue;
+            }
+            if (!matchesTarget(record, target)) {
+                continue;
+            }
+            matched.add(record);
+        }
+        matched.sort(BY_PUBLISHED_DESC);
+        List<NewsRecord> limited =
+                matched.size() <= limit ? matched : matched.subList(0, limit);
+        List<NewsEvidence> evidence = new ArrayList<>(limited.size());
+        for (NewsRecord record : limited) {
+            evidence.add(toEvidence(record));
+        }
+        return List.copyOf(evidence);
+    }
+
+    /** 稿件 → AI 证据的映射。只取模型与引用需要的最小字段集（架构 §11.4）。 */
+    private static NewsEvidence toEvidence(NewsRecord record) {
+        NewsArticle article = record.article();
+        return new NewsEvidence(
+                article.newsId(),
+                article.newsType(),
+                article.title(),
+                article.summary(),
+                record.source().sourceName(),
+                article.publishedAt(),
+                article.originalUrl(),
+                article.originalAccessStatus());
+    }
+
     // ---------- 共用过滤链 ----------
 
     private PageData<NewsSummary> page(NewsQuery query) {
@@ -424,31 +489,52 @@ public class NewsQueryService implements NewsCountProvider {
     private record TargetFilter(NewsTargetType type, long id) {
     }
 
+    /** 查询条件 → 目标筛选；三个筛选参数都为空时返回 {@code null} 表示"不按目标筛"。 */
+    private TargetFilter targetFilterOf(NewsQuery query) {
+        if (query.securityId() != null && !query.securityId().isBlank()) {
+            return resolveTarget(NewsTargetType.SECURITY, query.securityId());
+        }
+        if (query.sectorId() != null && !query.sectorId().isBlank()) {
+            return resolveTarget(NewsTargetType.SECTOR, query.sectorId());
+        }
+        if (query.marketCode() != null && !query.marketCode().isBlank()) {
+            return resolveTarget(NewsTargetType.MARKET, query.marketCode());
+        }
+        return null;
+    }
+
     /**
-     * 把查询条件里的对外标识解析成关联表里的代理键。
+     * 把对外标识解析成关联表里的代理键。
      *
      * <p>解析不到一律**报错而不是返回空页**：路径里的证券/板块不存在与
      * "这只证券确实没有资讯"是两件事，用空页代替 404 会让"代码打错了"
      * 看起来像"这只票很安静"。
+     *
+     * <p>列表接口（NEWS-01 / STK-10 / SEC-07）与 AI 证据取数**共用**这一处：
+     * 两处各写一遍解析，就会出现"列表按板块查得到、AI 按同一板块查不到"
+     * 这类不会报错的分叉。
      */
-    private TargetFilter targetFilterOf(NewsQuery query) {
-        if (query.securityId() != null && !query.securityId().isBlank()) {
-            SecurityIdentity identity = securityIdentities.resolve(query.securityId())
-                    .orElseThrow(() -> NewsNotFoundException.securityNotFound(query.securityId()));
-            return new TargetFilter(NewsTargetType.SECURITY, identity.storageId());
+    private TargetFilter resolveTarget(NewsTargetType targetType, String targetId) {
+        if (targetType == null) {
+            throw new IllegalArgumentException("targetType 不得为空");
         }
-        if (query.sectorId() != null && !query.sectorId().isBlank()) {
-            SectorIdentity identity = sectorIdentities.resolve(query.sectorId())
-                    .orElseThrow(() -> NewsNotFoundException.sectorNotFound(query.sectorId()));
-            return new TargetFilter(NewsTargetType.SECTOR, identity.storageId());
-        }
-        if (query.marketCode() != null && !query.marketCode().isBlank()) {
-            long storageId = NewsMarketTargets.storageIdOf(query.marketCode())
-                    .orElseThrow(() -> new InvalidNewsQueryException(
-                            "不支持的市场代码：" + query.marketCode()));
-            return new TargetFilter(NewsTargetType.MARKET, storageId);
-        }
-        return null;
+        return switch (targetType) {
+            case SECURITY -> new TargetFilter(
+                    NewsTargetType.SECURITY,
+                    securityIdentities.resolve(targetId)
+                            .orElseThrow(() -> NewsNotFoundException.securityNotFound(targetId))
+                            .storageId());
+            case SECTOR -> new TargetFilter(
+                    NewsTargetType.SECTOR,
+                    sectorIdentities.resolve(targetId)
+                            .orElseThrow(() -> NewsNotFoundException.sectorNotFound(targetId))
+                            .storageId());
+            case MARKET -> new TargetFilter(
+                    NewsTargetType.MARKET,
+                    NewsMarketTargets.storageIdOf(targetId)
+                            .orElseThrow(() -> new InvalidNewsQueryException(
+                                    "不支持的市场代码：" + targetId)));
+        };
     }
 
     // ---------- 映射 ----------
