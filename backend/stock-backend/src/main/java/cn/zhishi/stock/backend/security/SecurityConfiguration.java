@@ -60,6 +60,16 @@ public class SecurityConfiguration {
                         .requestMatchers(
                                 HttpMethod.GET, "/api/v1/securities", "/api/v1/securities/**")
                         .permitAll()
+                        // 榜单与板块是契约 §9.1 QTE-01 / §10 SEC-01~SEC-06 标为 PUBLIC 的行情数据，
+                        // 游客（未登录）的首页与板块页要直接可读；写操作不在此前缀下，因此不会顺带放开。
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/v1/stock-rankings",
+                                "/api/v1/stock-rankings/**",
+                                "/api/v1/sector-rankings",
+                                "/api/v1/sectors",
+                                "/api/v1/sectors/**")
+                        .permitAll()
                         .anyRequest()
                         .authenticated())
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)

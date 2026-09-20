@@ -70,7 +70,7 @@ class SimulatedQuoteProviderTest {
         batchProvider());
 
     List<QuoteRow> preview = provider.fetch("CN").rankings();
-    List<QuoteSnapshot> topThree = new StockRankingQueryService(batchProvider())
+    List<QuoteSnapshot> topThree = new StockRankingQueryService(batchProvider(), sectorProvider())
         .rank(new RankingCriteria("GAINERS", null, null, null, null, null, 1, 3))
         .items();
 
@@ -115,5 +115,17 @@ class SimulatedQuoteProviderTest {
     TradingCalendarProvider calendar = SimulatedTradingCalendarProvider.ofCsv(CLOCK, "");
     SecurityMasterProvider master = new SimulatedSecurityMasterProvider(quotes, calendar, CLOCK);
     return new SimulatedQuoteSnapshotProvider(quotes, master, rules, calendar, CLOCK);
+  }
+
+  /**
+   * 本用例不按板块筛选，但装配仍与生产一致：板块源投影自**同一份**模拟证券全集，
+   * 免得测试里出现"生产有 39 个板块、测试里一个都没有"这种假通过。
+   */
+  private static SimulatedSectorProvider sectorProvider() {
+    LimitRuleProvider rules = new SimulatedLimitRuleProvider();
+    SecurityQuoteProvider quotes = new SimulatedSecurityQuoteProvider(rules);
+    TradingCalendarProvider calendar = SimulatedTradingCalendarProvider.ofCsv(CLOCK, "");
+    return new SimulatedSectorProvider(
+        new SimulatedSecurityMasterProvider(quotes, calendar, CLOCK));
   }
 }

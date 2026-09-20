@@ -23,6 +23,39 @@
 
 ---
 
+## 2026-09-20 — M2-07 板块排行、详情与成分股（SEC-01 / SEC-02 / SEC-03 / SEC-04 / SEC-06）
+
+### 新增
+
+- **SEC-01 接口** `GET /api/v1/sectors`（PUBLIC）：可选 `sectorType=INDUSTRY|CONCEPT|REGION`、`parentId`、`keyword`、`status=ACTIVE|INACTIVE`（默认 `ACTIVE`）；返回 `data.items[]{Sector}`
+- **SEC-02 接口** `GET /api/v1/sector-rankings`（PUBLIC）：`sectorType`、`rankingType=GAINERS|LOSERS|TURNOVER`（默认 `GAINERS`）、分页；返回**扁平** `data`：`items[]{SectorQuote}` + 分页字段 + `sectorType` + `rankingType` + `snapshotVersion` + `dataTime` + `dataStatus`
+- **SEC-03 接口** `GET /api/v1/sectors/{sectorId}`（PUBLIC）：返回 `data{sector, parent, quote}`；停用板块仍返回 200
+- **SEC-04 接口** `GET /api/v1/sectors/{sectorId}/quote`（PUBLIC）：返回板块最新行情统计；成分全停牌时 503
+- **SEC-06 接口** `GET /api/v1/sectors/{sectorId}/constituents`（PUBLIC）：可选 `effectiveDate`、`rankingType`、分页；每项含嵌套 `quote` + `relationType` + `isPrimary` + `contributionRank`
+- **领域模型** `SectorType`、`Sector`、`SectorMember`、`SectorMembershipIndex`、`SectorLeaderStock`、`SectorQuote`、`SectorRanking`、`SectorDetail`、`SectorConstituent`、`SectorList`；统计口径的唯一实现 `SectorQuoteCalculator`（纯函数）
+- **端口** `SectorProvider`（`findAll` + 按板块分组的 `memberships`）
+- **模拟实现** `SimulatedSectorProvider`：39 个板块（5 大类 + 20 二级行业 + 8 概念 + 6 地域），成分关系投影自 `SecurityMasterProvider`、只由 `securityCode` 哈希导出
+- **应用服务** `SectorQueryService`（SEC-01/03/04/06）、`SectorRankingQueryService`（SEC-02）、`SectorCriteria` / `SectorRankingCriteria` / `ConstituentCriteria`、`SectorParameters`、异常 `InvalidSectorQueryException`（→ 400）、`SectorNotFoundException`（→ 404，业务码自带）、`SectorQuoteNotAvailableException`（→ 503）
+- **Web 层** `SectorController`（5 个端点）
+- 包级工具 `QuoteBatch`（整批快照的公共视图：批次属性 + 按证券索引 + 按成分关系取数）
+- 设计文档 `docs/superpowers/specs/2026-09-20-sector-analysis.md`
+- 前端契约类型：`SectorType`、`SectorStatus`、`SectorRelationType`、`Sector`、`SectorList`、`SectorListQuery`、`SectorLeaderStock`、`SectorQuote`、`SectorRanking`、`SectorRankingQuery`、`SectorDetail`、`SectorConstituent`、`ConstituentQuery`
+
+### 变更
+
+- `SecurityQueryService` 与 `StockRankingQueryService` 的 `sectorId` **从硬编码空页改为按成分关系真实筛选**，两者共用 `SectorMembershipIndex`
+- 抽出 `SimulatedHashing`（SplitMix64 收尾混合的唯一实现），`SimulatedSecurityQuoteProvider` 与 `SimulatedPriceSeries` 的私有 `mix` 改为复用
+- `RankingType` 新增 `hasSortKey(SectorQuote)` 与 `sectorOrder()`，板块排行与个股榜单共用同一套口径定义
+- `BackendConfiguration` 新增 `SectorProvider` / `SectorQueryService` / `SectorRankingQueryService` Bean，并同步两个既有服务的构造参数
+- `GlobalExceptionHandler` 新增板块三类异常的处理（400 / 404 带业务码 / 503）
+- 前端 `domain.ts` 的原型 `SectorQuote` 改名 `MockSectorQuote`（避免与契约类型触发声明合并，同 M2-05 的 `MockKlinePoint`），`SectorsPage.vue` 同步
+
+### 修复
+
+- **QTE-01 与板块接口此前落到 `anyRequest().authenticated()`**：契约标为 `PUBLIC`，游客访问 `/api/v1/stock-rankings` 会被 401。已在 `SecurityConfiguration` 显式放开 QTE-01 与 SEC-01~06 的 GET
+
+---
+
 ## 2026-09-19 — M2-06 榜单（QTE-01）
 
 ### 新增

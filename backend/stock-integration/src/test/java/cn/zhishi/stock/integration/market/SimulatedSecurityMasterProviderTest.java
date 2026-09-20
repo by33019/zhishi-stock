@@ -96,7 +96,7 @@ class SimulatedSecurityMasterProviderTest {
    */
   @Test
   void keepsSearchLatencyWithinBudgetOverTheFullUniverse() {
-    var service = new SecurityQueryService(PROVIDER);
+    var service = new SecurityQueryService(PROVIDER, new SimulatedSectorProvider(PROVIDER));
     for (int i = 0; i < 20; i++) {
       service.search("6000", null, null, 20);
     }

@@ -8,6 +8,7 @@ import cn.zhishi.stock.integration.market.SimulatedQuoteProvider;
 import cn.zhishi.stock.integration.market.SimulatedQuoteSnapshotProvider;
 import cn.zhishi.stock.integration.market.SimulatedSecurityMasterProvider;
 import cn.zhishi.stock.integration.market.SimulatedSecurityQuoteProvider;
+import cn.zhishi.stock.integration.market.SimulatedSectorProvider;
 import cn.zhishi.stock.integration.market.SimulatedTradingCalendarProvider;
 import cn.zhishi.stock.integration.market.SimulatedTurnoverTrendProvider;
 import cn.zhishi.stock.market.application.MarketBreadthQueryService;
@@ -15,6 +16,8 @@ import cn.zhishi.stock.market.application.MarketOverviewQueryService;
 import cn.zhishi.stock.market.application.MarketStatusQueryService;
 import cn.zhishi.stock.market.application.SecurityDetailQueryService;
 import cn.zhishi.stock.market.application.SecurityQueryService;
+import cn.zhishi.stock.market.application.SectorQueryService;
+import cn.zhishi.stock.market.application.SectorRankingQueryService;
 import cn.zhishi.stock.market.application.StockRankingQueryService;
 import cn.zhishi.stock.market.application.TurnoverTrendQueryService;
 import cn.zhishi.stock.market.domain.KlineProvider;
@@ -24,6 +27,7 @@ import cn.zhishi.stock.market.domain.MarketOverviewStore;
 import cn.zhishi.stock.market.domain.QuoteProvider;
 import cn.zhishi.stock.market.domain.QuoteSnapshotBatchProvider;
 import cn.zhishi.stock.market.domain.QuoteSnapshotProvider;
+import cn.zhishi.stock.market.domain.SectorProvider;
 import cn.zhishi.stock.market.domain.SecurityMasterProvider;
 import cn.zhishi.stock.market.domain.SecurityQuoteProvider;
 import cn.zhishi.stock.market.domain.TradingCalendarProvider;
@@ -281,8 +285,14 @@ public class BackendConfiguration {
     }
 
     @Bean
-    SecurityQueryService securityQueryService(SecurityMasterProvider securityMasterProvider) {
-        return new SecurityQueryService(securityMasterProvider);
+    SectorProvider sectorProvider(SecurityMasterProvider securityMasterProvider) {
+        return new SimulatedSectorProvider(securityMasterProvider);
+    }
+
+    @Bean
+    SecurityQueryService securityQueryService(
+            SecurityMasterProvider securityMasterProvider, SectorProvider sectorProvider) {
+        return new SecurityQueryService(securityMasterProvider, sectorProvider);
     }
 
     @Bean
@@ -312,8 +322,20 @@ public class BackendConfiguration {
 
     @Bean
     StockRankingQueryService stockRankingQueryService(
-            QuoteSnapshotBatchProvider quoteSnapshotBatchProvider) {
-        return new StockRankingQueryService(quoteSnapshotBatchProvider);
+            QuoteSnapshotBatchProvider quoteSnapshotBatchProvider, SectorProvider sectorProvider) {
+        return new StockRankingQueryService(quoteSnapshotBatchProvider, sectorProvider);
+    }
+
+    @Bean
+    SectorQueryService sectorQueryService(
+            SectorProvider sectorProvider, QuoteSnapshotBatchProvider quoteSnapshotBatchProvider) {
+        return new SectorQueryService(sectorProvider, quoteSnapshotBatchProvider);
+    }
+
+    @Bean
+    SectorRankingQueryService sectorRankingQueryService(
+            SectorProvider sectorProvider, QuoteSnapshotBatchProvider quoteSnapshotBatchProvider) {
+        return new SectorRankingQueryService(sectorProvider, quoteSnapshotBatchProvider);
     }
 
     @Bean

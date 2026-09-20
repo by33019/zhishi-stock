@@ -175,7 +175,7 @@ class SimulatedQuoteSnapshotBatchProviderTest {
   // ---------- 小工具 ----------
 
   private StockRanking ranking(String type, int page, int size) {
-    return new StockRankingQueryService(provider)
+    return new StockRankingQueryService(provider, new SimulatedSectorProvider(master))
         .rank(new RankingCriteria(type, null, null, null, null, null, page, size));
   }
 

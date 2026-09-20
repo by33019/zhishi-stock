@@ -4,10 +4,10 @@ import { onMounted, ref } from 'vue'
 
 import PageHeader from '@/components/PageHeader.vue'
 import { getMarketOverview } from '@/services/mockApi'
-import type { SectorQuote } from '@/types/domain'
+import type { MockSectorQuote } from '@/types/domain'
 import { formatChangeRate, formatMoney, trendClass } from '@/utils/format'
 
-const sectors = ref<SectorQuote[]>([])
+const sectors = ref<MockSectorQuote[]>([])
 const view = ref<'grid' | 'list'>('grid')
 
 function setView(nextView: 'grid' | 'list') {

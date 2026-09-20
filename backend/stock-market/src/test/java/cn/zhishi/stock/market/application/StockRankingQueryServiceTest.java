@@ -11,6 +11,7 @@ import cn.zhishi.stock.market.domain.StockRanking;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -170,14 +171,73 @@ class StockRankingQueryServiceTest {
     assertThat(ranking.hasNext()).isFalse();
   }
 
-  /** 板块关系数据在 M2-07 之前不存在，"该板块下没有证券"在当下是事实。 */
+  /**
+   * 板块筛选按**成分关系**取数，而不是按"证券是否属于该板块"的某种猜测。
+   *
+   * <p>桩数据里 {@link StubSectorProvider#INDUSTRY_ID} 只含 {@code sim-600001} 与
+   * {@code sim-600000}，其余 5 只有行情的证券都不在板块内。
+   */
   @Test
-  void returnsEmptyPageForSectorIdUntilSectorRelationsExist() {
+  void filtersBySectorMembership() {
     RankingCriteria criteria = new RankingCriteria(
-        "GAINERS", null, null, "bk-ai", null, null, null, null);
+        "GAINERS", null, null, StubSectorProvider.INDUSTRY_ID, null, null, null, null);
+
+    StockRanking ranking = rank(criteria);
+
+    assertThat(ids(ranking)).containsExactly("sim-600001", "sim-600000");
+    assertThat(ranking.total()).isEqualTo(2);
+  }
+
+  /** 两个板块的成分不同：一个板块的筛选结果不能"顺带"等于另一个板块的结果。 */
+  @Test
+  void keepsEachSectorMembershipIndependent() {
+    RankingCriteria group = new RankingCriteria(
+        "GAINERS", null, null, StubSectorProvider.GROUP_ID, null, null, null, null);
+
+    assertThat(ids(rank(group))).containsExactly("sim-600001", "sim-000001");
+  }
+
+  /** 板块条件与交易所条件是**交集**：不是"满足其一"。 */
+  @Test
+  void intersectsSectorWithOtherFilters() {
+    RankingCriteria criteria = new RankingCriteria(
+        "GAINERS", "SH", null, StubSectorProvider.GROUP_ID, null, null, null, null);
+
+    // 大类里的 sim-000001 在深市，被 exchangeCodes=SH 排除
+    assertThat(ids(rank(criteria))).containsExactly("sim-600001");
+  }
+
+  /**
+   * 板块 ID 不存在时返回空页而不是报错，与 {@code exchangeCodes=XX} 同口径：
+   * 合法取值只是没有数据，报 400 就把"没有数据"错报成"参数非法"。
+   */
+  @Test
+  void returnsEmptyPageForUnknownSectorIdInsteadOfFailing() {
+    RankingCriteria criteria = new RankingCriteria(
+        "GAINERS", null, null, "stub-bk-missing", null, null, null, null);
+
+    StockRanking ranking = rank(criteria);
+
+    assertThat(ranking.items()).isEmpty();
+    assertThat(ranking.total()).isZero();
+  }
+
+  /** 存在但没有成分关系的板块同样返回空页——"板块里没有证券"是事实，不是错误。 */
+  @Test
+  void returnsEmptyPageForSectorWithoutMembers() {
+    RankingCriteria criteria = new RankingCriteria(
+        "GAINERS", null, null, StubSectorProvider.EMPTY_ID, null, null, null, null);
 
     assertThat(rank(criteria).items()).isEmpty();
-    assertThat(rank(criteria).total()).isZero();
+  }
+
+  /** 空串按"未传"处理，与 {@code exchangeCodes} 的 CSV 解析口径一致。 */
+  @Test
+  void treatsBlankSectorIdAsAbsent() {
+    RankingCriteria criteria = new RankingCriteria(
+        "GAINERS", null, null, "   ", null, null, null, null);
+
+    assertThat(rank(criteria).total()).isEqualTo(7);
   }
 
   // ---------- 参数校验 ----------
@@ -276,8 +336,9 @@ class StockRankingQueryServiceTest {
   /** 批次为空时没有版本可言，返回空串而不是编造一个版本号。 */
   @Test
   void reportsUnavailableWhenBatchIsEmpty() {
-    StockRanking ranking = new StockRankingQueryService(marketCode -> List.of())
-        .rank(criteria("GAINERS"));
+    StockRanking ranking =
+        new StockRankingQueryService(marketCode -> List.of(), StubSectorProvider.empty())
+            .rank(criteria("GAINERS"));
 
     assertThat(ranking.items()).isEmpty();
     assertThat(ranking.total()).isZero();
@@ -289,12 +350,17 @@ class StockRankingQueryServiceTest {
   // ---------- 小工具 ----------
 
   private static StockRanking rank(RankingCriteria criteria) {
-    return new StockRankingQueryService(fixedBatch()).rank(criteria);
+    return new StockRankingQueryService(fixedBatch(), SECTOR_PROVIDER).rank(criteria);
   }
 
   private static QuoteSnapshotBatchProvider fixedBatch() {
     return marketCode -> BATCH;
   }
+
+  /** 大类与行业的成分刻意有重叠但不相同，用来证明两个板块各自独立取数。 */
+  private static final StubSectorProvider SECTOR_PROVIDER = StubSectorProvider.of(Map.of(
+      StubSectorProvider.INDUSTRY_ID, List.of("sim-600001", "sim-600000"),
+      StubSectorProvider.GROUP_ID, List.of("sim-600001", "sim-000001")));
 
   private static RankingCriteria criteria(String rankingType) {
     return new RankingCriteria(rankingType, null, null, null, null, null, null, null);

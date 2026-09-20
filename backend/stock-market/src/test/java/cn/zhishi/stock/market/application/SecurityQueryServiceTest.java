@@ -10,6 +10,7 @@ import cn.zhishi.stock.market.domain.SecuritySearchMatch.MatchedField;
 import cn.zhishi.stock.market.domain.SecuritySearchResult;
 import cn.zhishi.stock.market.domain.SecuritySummary;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class SecurityQueryServiceTest {
@@ -156,7 +157,7 @@ class SecurityQueryServiceTest {
 
   @Test
   void returnsEmptyResultWhenProviderHasNoUniverse() {
-    var service = new SecurityQueryService(marketCode -> List.of());
+    var service = new SecurityQueryService(marketCode -> List.of(), StubSectorProvider.empty());
 
     assertThat(service.search("600000", null, null, null).items()).isEmpty();
   }
@@ -202,13 +203,49 @@ class SecurityQueryServiceTest {
         .containsExactly("sim-300001");
   }
 
+  /**
+   * 板块筛选按成分关系取数：{@link StubSectorProvider#INDUSTRY_ID} 只含三只沪市证券。
+   *
+   * <p>与"关键字包含"这类字段筛选不同，板块条件来自**另一份数据**（关系表），
+   * 因此必须验证它是真的按关系过滤，而不是碰巧和某个字段筛选结果一致。
+   */
   @Test
-  void returnsEmptyListPageForSectorIdBecauseNoSectorRelationsExist() {
-    var page = service().list(criteria(null, null, null, null, null, "sec-1", null, null, null));
+  void filtersListBySectorMembership() {
+    var page = service().list(
+        criteria(null, null, null, null, null, StubSectorProvider.INDUSTRY_ID, null, null, null));
+
+    assertThat(ids(page)).containsExactly("sim-600000", "sim-600001", "sim-600519");
+    assertThat(page.total()).isEqualTo(3);
+  }
+
+  /** 板块条件与其它条件是**交集**：板块里的 sim-600519 不含 "6000"，被关键字排除。 */
+  @Test
+  void intersectsSectorWithOtherFilters() {
+    var page = service().list(
+        criteria("6000", null, null, null, null, StubSectorProvider.INDUSTRY_ID, null, null, null));
+
+    assertThat(ids(page)).containsExactly("sim-600000", "sim-600001");
+  }
+
+  /**
+   * 板块 ID 不存在时返回空页而不是报错，与 {@code securityType=ETF} 同口径：
+   * 合法取值只是没有数据，报 400 就把"没有数据"错报成"参数非法"。
+   */
+  @Test
+  void returnsEmptyPageForUnknownSectorIdInsteadOfFailing() {
+    var page = service().list(
+        criteria(null, null, null, null, null, "stub-bk-missing", null, null, null));
 
     assertThat(page.items()).isEmpty();
     assertThat(page.total()).isZero();
     assertThat(page.totalPages()).isZero();
+  }
+
+  /** 空串按"未传"处理，与其它查询参数的解析口径一致。 */
+  @Test
+  void treatsBlankSectorIdAsAbsent() {
+    assertThat(service().list(
+        criteria(null, null, null, null, null, "   ", null, null, null)).total()).isEqualTo(5);
   }
 
   @Test
@@ -274,8 +311,16 @@ class SecurityQueryServiceTest {
   // ---------- 辅助 ----------
 
   private static SecurityQueryService service() {
-    return new SecurityQueryService(provider(true));
+    return new SecurityQueryService(provider(true), SECTOR_PROVIDER);
   }
+
+  /**
+   * 桩板块只覆盖三只沪市证券——刻意**不是**全集的一个"整齐子集"，
+   * 否则"按板块筛选"与"按交易所筛选"会给出同样的结果，实现写错也测不出来。
+   */
+  private static final StubSectorProvider SECTOR_PROVIDER = StubSectorProvider.of(Map.of(
+      StubSectorProvider.INDUSTRY_ID, List.of("sim-600000", "sim-600001", "sim-600519"),
+      StubSectorProvider.GROUP_ID, List.of("sim-600519", "sim-000001")));
 
   private static SecurityMasterProvider provider(boolean supported) {
     return marketCode -> supported && "CN".equals(marketCode) ? UNIVERSE : List.of();

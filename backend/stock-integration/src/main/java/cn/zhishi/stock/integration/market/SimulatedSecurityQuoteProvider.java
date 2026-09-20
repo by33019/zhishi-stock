@@ -190,10 +190,7 @@ public class SimulatedSecurityQuoteProvider implements SecurityQuoteProvider {
 
     /** SplitMix64 的收尾混合：把顺序递增的序号打散成互不相关的桶号。 */
     private static long mix(long value) {
-        long z = value + 0x9E3779B97F4A7C15L;
-        z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
-        z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
-        return z ^ (z >>> 31);
+        return SimulatedHashing.mix(value);
     }
 
     /** 一段连续的证券代码。 */

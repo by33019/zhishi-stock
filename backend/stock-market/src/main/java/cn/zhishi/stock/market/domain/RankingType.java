@@ -8,7 +8,8 @@ import java.util.Locale;
 import java.util.Optional;
 
 /**
- * 榜单口径，取值与 {@code RESTful-API.md} §9.1 QTE-01 的 {@code rankingType} 对齐。
+ * 榜单口径，取值与 {@code RESTful-API.md} §9.1 QTE-01 的 {@code rankingType} 对齐；
+ * §10 SEC-02 的板块排行复用同一组口径（{@link #hasSortKey(SectorQuote)} / {@link #sectorOrder()}）。
  *
  * <p>把排序口径放在枚举上而不是用例层：三种榜单的差别**只**在"按哪个字段、朝哪个方向"，
  * 写在一起就不会出现"新增一种榜单却漏改排序"的情况。
@@ -94,6 +95,44 @@ public enum RankingType {
 
     private String keyOf(QuoteSnapshot snapshot) {
         return this == TURNOVER ? snapshot.tradeAmount() : snapshot.changeRate();
+    }
+
+    /**
+     * 板块行的排序键是否可用（SEC-02）。
+     *
+     * <p>与 {@link #hasSortKey(QuoteSnapshot)} 同义，只是行类型不同。
+     * 两个重载放在同一个枚举里：三种口径的"按哪个字段、朝哪个方向"只定义一次，
+     * 否则板块排行与个股榜单会各自演化出不同的口径。
+     */
+    public boolean hasSortKey(SectorQuote quote) {
+        return isDecimal(sectorKeyOf(quote));
+    }
+
+    /**
+     * 板块排行的比较器：主键按口径取方向，兜底键恒为 {@code sectorCode} 升序。
+     *
+     * <p>兜底键**不随主键方向翻转**，理由同 {@link #order()}：
+     * 翻转了就失去"排序稳定"的意义（PRD §7.3 QTE-02 要求排序稳定）。
+     */
+    public Comparator<SectorQuote> sectorOrder() {
+        Comparator<SectorQuote> tieBreak = Comparator.comparing(SectorQuote::sectorCode);
+        return switch (this) {
+            case GAINERS -> Comparator
+                    .comparing((SectorQuote quote) -> decimal(sectorKeyOf(quote)))
+                    .reversed()
+                    .thenComparing(tieBreak);
+            case LOSERS -> Comparator
+                    .comparing((SectorQuote quote) -> decimal(sectorKeyOf(quote)))
+                    .thenComparing(tieBreak);
+            case TURNOVER -> Comparator
+                    .comparing((SectorQuote quote) -> decimal(sectorKeyOf(quote)))
+                    .reversed()
+                    .thenComparing(tieBreak);
+        };
+    }
+
+    private String sectorKeyOf(SectorQuote quote) {
+        return this == TURNOVER ? quote.tradeAmount() : quote.changeRate();
     }
 
     private static boolean isDecimal(String value) {

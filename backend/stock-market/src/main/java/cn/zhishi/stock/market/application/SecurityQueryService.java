@@ -1,6 +1,8 @@
 package cn.zhishi.stock.market.application;
 
 import cn.zhishi.stock.common.api.PageData;
+import cn.zhishi.stock.market.domain.SectorMembershipIndex;
+import cn.zhishi.stock.market.domain.SectorProvider;
 import cn.zhishi.stock.market.domain.SecurityMasterProvider;
 import cn.zhishi.stock.market.domain.SecuritySearchMatch;
 import cn.zhishi.stock.market.domain.SecuritySearchMatch.MatchedField;
@@ -54,9 +56,12 @@ public class SecurityQueryService {
       List.of("fullSymbol", "securityCode", "securityName", "securityId");
 
   private final SecurityMasterProvider securityMasterProvider;
+  private final SectorProvider sectorProvider;
 
-  public SecurityQueryService(SecurityMasterProvider securityMasterProvider) {
+  public SecurityQueryService(
+      SecurityMasterProvider securityMasterProvider, SectorProvider sectorProvider) {
     this.securityMasterProvider = securityMasterProvider;
+    this.sectorProvider = sectorProvider;
   }
 
   /** STK-01：搜索建议。 */
@@ -90,14 +95,19 @@ public class SecurityQueryService {
     int size = validatePageSize(effective.size());
     SortSpec sort = parseSort(effective.sort());
 
-    // 板块关系数据（stock_sector / stock_security_sector）在 M2-07 之前不存在，
-    // 因此"没有任何证券属于该板块"在当下是事实，返回空页而不是报错或忽略条件。
-    if (QueryParameters.isPresent(effective.sectorId())) {
-      return PageData.slice(List.of(), page, size);
-    }
+    // 板块成分关系为空表示不参与筛选；为空串按"未传"处理（同 exchangeCodes 的解析口径）。
+    // 两个局部变量都是有效 final，可以安全地在 lambda 里引用。
+    String sectorId = QueryParameters.isPresent(effective.sectorId())
+        ? effective.sectorId().trim()
+        : null;
+    Set<String> sectorMembers = sectorId == null
+        ? Set.of()
+        : SectorMembershipIndex.securityIdsOf(
+            sectorProvider.memberships(MARKET_CODE, null), sectorId);
 
     List<SecuritySummary> filtered = securityMasterProvider.findAll(MARKET_CODE).stream()
         .filter(security -> matchesListFilters(security, effective))
+        .filter(security -> sectorId == null || sectorMembers.contains(security.securityId()))
         .sorted(sort.comparator())
         .toList();
     return PageData.slice(filtered, page, size);

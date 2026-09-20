@@ -1,13 +1,13 @@
 package cn.zhishi.stock.market.application;
 
 import cn.zhishi.stock.common.api.PageData;
-import cn.zhishi.stock.market.domain.MarketOverview;
 import cn.zhishi.stock.market.domain.QuoteSnapshot;
 import cn.zhishi.stock.market.domain.QuoteSnapshotBatchProvider;
 import cn.zhishi.stock.market.domain.RankingType;
+import cn.zhishi.stock.market.domain.SectorMembershipIndex;
+import cn.zhishi.stock.market.domain.SectorProvider;
 import cn.zhishi.stock.market.domain.SecuritySummary;
 import cn.zhishi.stock.market.domain.StockRanking;
-import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Set;
 
@@ -44,9 +44,12 @@ public class StockRankingQueryService {
   private static final boolean DEFAULT_EXCLUDE_ST = false;
 
   private final QuoteSnapshotBatchProvider batchProvider;
+  private final SectorProvider sectorProvider;
 
-  public StockRankingQueryService(QuoteSnapshotBatchProvider batchProvider) {
+  public StockRankingQueryService(
+      QuoteSnapshotBatchProvider batchProvider, SectorProvider sectorProvider) {
     this.batchProvider = batchProvider;
+    this.sectorProvider = sectorProvider;
   }
 
   /** 返回榜单的一页。 */
@@ -62,17 +65,24 @@ public class StockRankingQueryService {
         ? DEFAULT_EXCLUDE_SUSPENDED
         : effective.excludeSuspended();
 
-    List<QuoteSnapshot> batch = batchProvider.fetchBatch(MARKET_CODE);
+    // 板块条件为空表示不参与筛选；为空串按"未传"处理（同 exchangeCodes 的解析口径）。
+    // 两个局部变量都是有效 final，可以安全地在 lambda 里引用。
+    String sectorId = QueryParameters.isPresent(effective.sectorId())
+        ? effective.sectorId().trim()
+        : null;
+    Set<String> sectorMembers = sectorId == null
+        ? Set.of()
+        : SectorMembershipIndex.securityIdsOf(
+            sectorProvider.memberships(MARKET_CODE, null), sectorId);
 
-    // 板块关系数据（stock_sector / stock_security_sector）在 M2-07 之前不存在，
-    // 因此"没有任何证券属于该板块"在当下是事实，返回空页而不是报错或忽略条件。
-    List<QuoteSnapshot> ranked = QueryParameters.isPresent(effective.sectorId())
-        ? List.of()
-        : batch.stream()
-            .filter(snapshot -> matches(snapshot, exchanges, boards, excludeSt, excludeSuspended))
-            .filter(type::hasSortKey)
-            .sorted(type.order())
-            .toList();
+    QuoteBatch batch = QuoteBatch.of(batchProvider.fetchBatch(MARKET_CODE));
+
+    List<QuoteSnapshot> ranked = batch.snapshots().stream()
+        .filter(snapshot -> matches(snapshot, exchanges, boards, excludeSt, excludeSuspended))
+        .filter(snapshot -> sectorId == null || sectorMembers.contains(snapshot.security().securityId()))
+        .filter(type::hasSortKey)
+        .sorted(type.order())
+        .toList();
 
     PageData<QuoteSnapshot> sliced = PageData.slice(ranked, page, size);
     return new StockRanking(
@@ -83,9 +93,9 @@ public class StockRankingQueryService {
         sliced.totalPages(),
         sliced.hasNext(),
         type.code(),
-        snapshotVersion(batch),
-        dataTime(batch),
-        dataStatus(batch));
+        batch.version(),
+        batch.dataTime(),
+        batch.dataStatus());
   }
 
   // ---------- 筛选 ----------
@@ -107,28 +117,6 @@ public class StockRankingQueryService {
       return false;
     }
     return !(excludeSuspended && security.isSuspended());
-  }
-
-  // ---------- 批次属性 ----------
-
-  /**
-   * 整批共用的快照版本。
-   *
-   * <p>取首行的 {@code sequence} 而不是自己造一个版本号：榜单的每一行都来自同一批，
-   * 版本号本来就是这一批的属性。这样"响应版本 == 每行序列号"是构造出来的，不是约定出来的。
-   *
-   * <p>批次为空时返回空串——此时没有任何行，编造一个版本号只会让人误以为有数据。
-   */
-  private static String snapshotVersion(List<QuoteSnapshot> batch) {
-    return batch.isEmpty() ? "" : batch.get(0).sequence();
-  }
-
-  private static OffsetDateTime dataTime(List<QuoteSnapshot> batch) {
-    return batch.isEmpty() ? null : batch.get(0).dataTime();
-  }
-
-  private static MarketOverview.DataStatus dataStatus(List<QuoteSnapshot> batch) {
-    return batch.isEmpty() ? MarketOverview.DataStatus.UNAVAILABLE : batch.get(0).dataStatus();
   }
 
   // ---------- 校验 ----------

@@ -69,7 +69,7 @@
 - [x] **M2-04** P0 证券主数据与搜索建议 — 已完成，见下方详情
 - [x] **M2-05** P0 个股快照与日/周/月 K 线（STK-04 / STK-07） — 已完成，见下方详情
 - [x] **M2-06** P0 榜单（涨跌幅/成交额/换手）+ 分页筛选 — 已完成，见下方详情
-- [ ] **M2-07** P1 板块排行、详情与成分股 — 依赖：M2-04
+- [x] **M2-07** P1 板块排行、详情与成分股 — 已完成，见下方详情
 - [ ] **M2-08** P0 前端接入 rankings / sectors / sectors:id / stocks:id — 依赖：M2-05、M2-06、M2-07
 - [ ] **M2-09** P1 全局搜索接真实接口 — 依赖：M2-04
 
@@ -432,6 +432,81 @@ Spring 按可赋值性解析到同一实例。若额外声明两个返回接口�
 
 ---
 
+## M2-07 交付详情
+
+| 项 | 内容 |
+| --- | --- |
+| 接口 | `GET /api/v1/sectors`（SEC-01）、`/sector-rankings`（SEC-02）、`/sectors/{id}`（SEC-03）、`/sectors/{id}/quote`（SEC-04）、`/sectors/{id}/constituents`（SEC-06），全部 PUBLIC |
+| 参数 | SEC-01：`sectorType`、`parentId`、`keyword`、`status`（默认 `ACTIVE`）；SEC-02：`sectorType`、`rankingType`（默认 `GAINERS`）、`page`、`size`；SEC-06：`effectiveDate`、`rankingType`、`page`、`size` |
+| 返回 | SEC-01 `data.items[]{Sector}`；SEC-02 **扁平** `data`：`items[]{SectorQuote}` + 分页 + `sectorType`/`rankingType`/`snapshotVersion`/`dataTime`/`dataStatus`；SEC-03 `data{sector, parent, quote}`；SEC-04 `data{SectorQuote}`；SEC-06 标准 `PageData<SectorConstituent>`，每项含嵌套 `quote` + `relationType` + `isPrimary` + `contributionRank` |
+| 数据来源 | 新增端口 `SectorProvider`（`findAll` + 按板块分组的 `memberships`），实现 `SimulatedSectorProvider`：5 个大类 + 20 个二级行业 + 8 个概念 + 6 个地域 = **39 个板块**，成分关系投影自 `SecurityMasterProvider`，只由 `securityCode` 哈希导出（与列表顺序解耦） |
+| 统计口径 | 唯一实现在 `SectorQuoteCalculator`：`companyCount` 含停牌；`averagePrice` / `changeRate` 为**非停牌**成分股等权平均；量额用 `BigDecimal` 累加且不计停牌；领涨/领跌股与 `contributionRank` **共用同一个"有效行情"判定与同一个比较器** |
+| 参数校验 | `sectorType` / `status` / `rankingType` 不在白名单、`page`/`size` 越界、`effectiveDate` 格式非法 → 400 `INVALID_REQUEST`；`sectorId` 不存在 → 404 `SECTOR_NOT_FOUND`；SEC-04/06 目标板块停用 → 404 `SECTOR_INACTIVE`；SEC-06 无成分关系 → 404 `SECTOR_CONSTITUENTS_MISSING`；成分全停牌 → 503 `SECTOR_QUOTE_NOT_AVAILABLE`；`parentId`/`keyword` 无匹配 → 200 + 空结果 |
+| 顺带修复 | ① 拆掉 STK-02 与 QTE-01 里 `sectorId` 的 `List.of()` 短路，改为按成分关系真实筛选（共用 `SectorMembershipIndex`）；② `SecurityConfiguration` 放开 QTE-01 与 SEC-01~06 的 GET（契约标 PUBLIC，此前落到 `anyRequest().authenticated()`） |
+| 测试 | 后端 **338 测试通过**（M2-06 的 286 + 新增 52，另有 1 项 Testcontainers 用例因本机未启动 Docker 守护进程跳过）：`SectorQuoteCalculatorTest` 11 项、`SimulatedSectorProviderTest` 12 项、`SectorControllerContractTest` 24 项，`SecurityQueryServiceTest` / `StockRankingQueryServiceTest` / 两个契约测试改写 `sectorId` 断言 |
+| 前端 | `domain.ts` 新增 `SectorType` / `SectorStatus` / `SectorRelationType` / `Sector` / `SectorList` / `SectorListQuery` / `SectorLeaderStock` / `SectorQuote` / `SectorRanking` / `SectorRankingQuery` / `SectorDetail` / `SectorConstituent` / `ConstituentQuery`；原型 `SectorQuote` 改名 `MockSectorQuote`（同 M2-05 的 `MockKlinePoint`）；typecheck 0 错误、13 文件 / 37 测试全绿 |
+| 设计文档 | `docs/superpowers/specs/2026-09-20-sector-analysis.md`（11 节） |
+
+### 关键设计取舍
+
+**1. 成分关系一次全取，而不是"每个板块查一次"**
+`SectorProvider.memberships(marketCode, effectiveDate)` 一次返回按 `sectorId` 分组的全量关系。
+SEC-02 要对 39 个板块各取一次成分，端口若是 `findMembers(sectorId)`，一次排行就是 39 次全表关系计算；
+QTE-01 的 `sectorId` 筛选还要再来一遍。代价是返回值体积大，由调用方决定何时复用。
+
+**2. 板块不新增任何行情生成逻辑**
+板块行情完全由已有整批快照按成分关系分组后聚合得出。因此"成分股行情 ↔ 个股快照 ↔ 榜单"
+对同一只证券给出同一套事实，是**构造保证**而非约定。
+
+**3. 停牌股计入 `companyCount` 但不参与统计**
+停牌没有有效价格，把它的前收价混进均价会让板块均价失真；而"该板块有几只成分股"是成分事实。
+代价是 `companyCount` 与 `averagePrice` 的分母不同，前端若用前者反推后者会算错（已写入类型注释）。
+
+**4. 等权平均而非市值加权**
+模拟源没有总股本字段，编一个会让"板块涨跌幅"变成两个编造数相乘的结果。等权口径下
+`changeRate` 就是成分股涨跌幅的平均，可被逐项复核。真实数据源接入后若改口径，`SectorQuoteCalculator`
+是唯一改动点。
+
+**5. 板块平均涨跌幅可为 `null`**
+成分股全部停牌时"平均涨跌幅"没有定义。补 `0` 会被读成"板块平盘"——PRD §7.4 SEC-02 明确
+「历史断点不得补 0」。SEC-04 因此报 503 而不是返回一个 `changeRate: "0.0000"` 的对象。
+
+**6. `contributionRank` 是数据属性，不受 `rankingType` 影响**
+成分股列表默认按涨幅排序，但贡献度排名恒为"按涨跌幅降序"。若随 `rankingType` 变化，
+按跌幅排序时"第 1 名"看起来会变成板块龙头。它与 SEC-04 的 `leadingStock` 共用同一个比较器，
+`contributionRank = 1` 必然就是领涨股。
+
+**7. `Sector.status` 不进 JSON**
+`@JsonIgnore`：契约 §10 SEC-01 只列 6 个字段，而 `status` 在服务端是筛选与排序规则的输入
+（`INACTIVE` 不进排行、SEC-04/06 报 `SECTOR_INACTIVE`），不是展示字段。同 M2-04 的 `pinyin`。
+
+**8. SEC-06 每项嵌套 `quote` 而非摊平**
+契约写「`PageData<QuoteSnapshot>`；每项附 `relationType`、`isPrimary`、`contributionRank`」。
+摊平需要再造一个 19 字段记录，于是 `QuoteSnapshot` 的字段增删要同步两处且不会有测试变红。
+代价是与 QTE-01 的 `items[]` 形状不一致。
+
+**9. 抽出 `SimulatedHashing` 并回改两个既有 Provider**
+`SimulatedSecurityQuoteProvider` 与 `SimulatedPriceSeries` 各有一份私有的 SplitMix64 收尾混合，
+本轮第三个使用方出现，抽成唯一实现。改动是纯搬移，既有的确定性测试即为回归保护。
+
+**10. 板块归属由 `securityCode` 哈希导出，而非"在全集中的序号"**
+序号是列表的属性，代码是证券的属性。用序号决定归属的话，生成顺序一变同一只证券就会换板块——
+这种漂移不会有任何测试报错，只会让历史对比失去意义。已写成测试
+（`derivesMembershipFromCodeRatherThanListOrder`）。
+
+### 不在本轮范围
+
+| 项 | 归属 |
+| --- | --- |
+| SEC-05 板块走势 `/sectors/{id}/trend` | 契约列于 §10，但需要按成分股聚合出时间序列，属独立增量；已记入 `PROJECT_STATUS.md` |
+| SEC-07 板块资讯 `/sectors/{id}/news` | 依赖资讯域（M3-04） |
+| 板块 AI 解读（PRD SEC-04） | 依赖 AI 编排（M3-06 / M3-07） |
+| 板块与成分关系落库 | 与 M2-01~M2-06 一致：模拟 Provider 内存生成，`stock_sector` / `stock_security_sector` 继续空置 |
+| 前端 `/sectors`、`/sectors/:id` 接入 | M2-08（本轮只补契约类型） |
+| 板块 Excel 导出 | M3-12 |
+
+---
+
 ## 已完成
 
 - [x] 阶段 0 只读审计（2026-09-19）
@@ -443,3 +518,4 @@ Spring 按可赋值性解析到同一实例。若额外声明两个返回接口�
 - [x] M2-04（2026-09-19）
 - [x] M2-05（2026-09-19）
 - [x] M2-06（2026-09-19）
+- [x] M2-07（2026-09-20）

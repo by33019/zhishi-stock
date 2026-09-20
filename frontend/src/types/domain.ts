@@ -57,7 +57,15 @@ export interface BreadthData {
   limitDownCount: number
 }
 
-export interface SectorQuote {
+/**
+ * 板块卡片原型数据（字段是简化版，`leadingStock` 只有名称、没有可跳转的 `securityId`）。
+ *
+ * 名字带 `Mock` 前缀是为了与契约类型 {@link SectorQuote}（对应 RESTful-API.md §10 SEC-02）
+ * 区分：两者字段不同，同名会触发 TypeScript 的声明合并，
+ * 让 mock 数据因"缺少契约字段"而报错。M2-08 接入真实接口后，本类型随
+ * `/sectors` 页面一并由契约类型取代（同 {@link MockKlinePoint}）。
+ */
+export interface MockSectorQuote {
   sectorId: string
   sectorCode: string
   sectorName: string
@@ -104,7 +112,7 @@ export interface MarketOverview {
     previousAmount: string
     points: number[]
   }
-  sectors: SectorQuote[]
+  sectors: MockSectorQuote[]
   rankings: QuoteRow[]
   news: NewsItem[]
   componentStatus: Record<string, DataStatus>
@@ -346,12 +354,153 @@ export interface RankingQuery {
   exchangeCodes?: string
   /** 逗号分隔的多值筛选，如 `MAIN,GEM`。 */
   boardCodes?: string
-  /** 板块关系数据在 M2-07 之前不存在，传该参数当前必然返回空页。 */
+  /** 按板块成分关系筛选；板块 ID 不存在时返回空页。 */
   sectorId?: string
   /** 默认 `false`。 */
   excludeSt?: boolean
   /** 默认 `true`：PRD 要求停牌与无有效价格的证券默认排除。 */
   excludeSuspended?: boolean
+  page?: number
+  /** 1 至 100，默认 20。 */
+  size?: number
+}
+
+/** 板块类型，取值与 `stock_sector.sector_type` 的 CHECK 约束同集合。 */
+export type SectorType = 'INDUSTRY' | 'CONCEPT' | 'REGION'
+
+/** 板块状态。它是服务端的筛选规则输入，**不进任何响应体**。 */
+export type SectorStatus = 'ACTIVE' | 'INACTIVE'
+
+/** 证券与板块的关系类型，对应 `stock_security_sector.relation_type`。 */
+export type SectorRelationType = 'PRIMARY' | 'SECONDARY' | 'MEMBER'
+
+/**
+ * 板块主数据，对应 RESTful-API.md §10 SEC-01。
+ *
+ * `levelNo` 从 1 开始；`parentId` 为 `null` 表示一级板块。
+ * 注意**地域与概念板块的 `levelNo` 也是 1**——它们本就没有父级，
+ * 因此判断"是不是一级大类"必须同时看 `sectorType === 'INDUSTRY'`。
+ */
+export interface Sector {
+  sectorId: string
+  sectorCode: string
+  sectorName: string
+  sectorType: SectorType
+  parentId: string | null
+  levelNo: number
+}
+
+/** SEC-01 查询参数。 */
+export interface SectorListQuery {
+  sectorType?: SectorType
+  parentId?: string
+  /** 对 `sectorCode` / `sectorName` 做包含匹配，大小写不敏感。 */
+  keyword?: string
+  /** 默认 `ACTIVE`：普通用户默认只能查询有效板块。 */
+  status?: SectorStatus
+}
+
+/** SEC-01 响应。板块不分页（39 个），因此不带分页字段。 */
+export interface SectorList {
+  items: Sector[]
+}
+
+/**
+ * 板块内的领涨 / 领跌股，对应 §10 SEC-02 / SEC-04。
+ *
+ * 内嵌完整 `SecuritySummary` 而不是只给名称：前端要能直接跳转个股页，
+ * 把名称当 ID 用会跳到不存在的证券。
+ */
+export interface SectorLeaderStock {
+  security: SecuritySummary
+  latestPrice: string | null
+  changeRate: string | null
+}
+
+/**
+ * 板块行情统计，同时是 SEC-02 的 `items[]` 行与 SEC-03 / SEC-04 的核心内容。
+ *
+ * `averagePrice` / `changeRate` 可为 `null`：板块全部成分股停牌时"平均涨跌幅"没有定义。
+ * 展示层不得把 `null` 补成 `0`——那会被读成"板块平盘"。
+ *
+ * `companyCount` 含停牌成分股，而 `averagePrice` / `changeRate` 的样本**不含**停牌，
+ * 因此不能用 `companyCount` 反推均值。
+ */
+export interface SectorQuote {
+  sectorId: string
+  sectorCode: string
+  sectorName: string
+  sectorType: SectorType
+  companyCount: number
+  averagePrice: string | null
+  /** 小数比例，`0.10` 即 10%。 */
+  changeRate: string | null
+  tradeVolume: string
+  tradeAmount: string
+  leadingStock: SectorLeaderStock | null
+  laggingStock: SectorLeaderStock | null
+  dataTime: string | null
+  dataStatus: DataStatus
+}
+
+/**
+ * SEC-02 板块排行响应。
+ *
+ * 与 {@link StockRanking} 一样是**扁平**的（`items` 与分页字段同级），
+ * 因此前端可以用同一套解引用逻辑处理两个排行榜。
+ */
+export interface SectorRanking {
+  items: SectorQuote[]
+  page: number
+  size: number
+  total: number
+  totalPages: number
+  hasNext: boolean
+  /** 未指定时为 `null`（表示未按类型筛选）。 */
+  sectorType: SectorType | null
+  rankingType: RankingType
+  snapshotVersion: string
+  dataTime: string | null
+  dataStatus: DataStatus
+}
+
+/** SEC-02 查询参数。 */
+export interface SectorRankingQuery {
+  sectorType?: SectorType
+  /** 默认 `GAINERS`。 */
+  rankingType?: RankingType
+  page?: number
+  /** 1 至 100，默认 20。 */
+  size?: number
+}
+
+/** SEC-03 响应。`parent` 在一级板块或父板块不存在时为 `null`。 */
+export interface SectorDetail {
+  sector: Sector
+  parent: Sector | null
+  quote: SectorQuote
+}
+
+/**
+ * SEC-06 的成分股行。
+ *
+ * `contributionRank` 是**数据属性**（板块内按涨跌幅降序的序号，从 1 开始），
+ * 不随查询的 `rankingType` 变化：否则按跌幅排序时"第 1 名"看起来会变成板块龙头。
+ * 无有效行情的成分股（停牌等）排在有效项之后，按代码升序续号。
+ */
+export interface SectorConstituent {
+  quote: QuoteSnapshot
+  relationType: SectorRelationType
+  isPrimary: boolean
+  contributionRank: number
+}
+
+/** SEC-06 查询参数。 */
+export interface ConstituentQuery {
+  /** `yyyy-MM-dd`；缺省表示按当前有效关系解析。 */
+  effectiveDate?: string
+  /** 成分股排序口径，默认 `GAINERS`。 */
+  rankingType?: RankingType
   page?: number
   /** 1 至 100，默认 20。 */
   size?: number

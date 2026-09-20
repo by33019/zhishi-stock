@@ -4,10 +4,13 @@ import cn.zhishi.stock.common.api.ApiResponse;
 import cn.zhishi.stock.market.application.InvalidKlineParameterException;
 import cn.zhishi.stock.market.application.InvalidRankingQueryException;
 import cn.zhishi.stock.market.application.InvalidSecurityQueryException;
+import cn.zhishi.stock.market.application.InvalidSectorQueryException;
 import cn.zhishi.stock.market.application.InvalidTurnoverParameterException;
 import cn.zhishi.stock.market.application.MarketDataUnavailableException;
 import cn.zhishi.stock.market.application.MarketNotFoundException;
 import cn.zhishi.stock.market.application.SecurityNotFoundException;
+import cn.zhishi.stock.market.application.SectorNotFoundException;
+import cn.zhishi.stock.market.application.SectorQuoteNotAvailableException;
 import cn.zhishi.stock.system.auth.AuthErrorCode;
 import cn.zhishi.stock.system.auth.AuthException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -140,6 +143,51 @@ public class GlobalExceptionHandler {
             HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.failure(
                 "SECURITY_NOT_FOUND",
+                exception.getMessage(),
+                null,
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
+    /** 板块参数非法（枚举不在白名单、分页越界、日期格式错）。 */
+    @ExceptionHandler(InvalidSectorQueryException.class)
+    public ResponseEntity<ApiResponse<Void>> invalidSectorQuery(
+            InvalidSectorQueryException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.badRequest().body(ApiResponse.failure(
+                "INVALID_REQUEST",
+                exception.getMessage(),
+                null,
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
+    /**
+     * 板块资源不可用。
+     *
+     * <p>业务码由异常自身携带（{@code SECTOR_NOT_FOUND} / {@code SECTOR_INACTIVE} /
+     * {@code SECTOR_CONSTITUENTS_MISSING}），不在这里靠 instanceof 推断——
+     * 三种情况的 HTTP 状态相同，只有业务码不同（同 {@code InvalidKlineParameterException}）。
+     */
+    @ExceptionHandler(SectorNotFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> sectorNotFound(
+            SectorNotFoundException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.failure(
+                exception.code(),
+                exception.getMessage(),
+                null,
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
+    /** 板块有成分但没有一条可统计的行情（全部停牌）——数据暂时拿不到，不是调用方的问题。 */
+    @ExceptionHandler(SectorQuoteNotAvailableException.class)
+    public ResponseEntity<ApiResponse<Void>> sectorQuoteNotAvailable(
+            SectorQuoteNotAvailableException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(ApiResponse.failure(
+                "SECTOR_QUOTE_NOT_AVAILABLE",
                 exception.getMessage(),
                 null,
                 TraceIdFilter.current(request),

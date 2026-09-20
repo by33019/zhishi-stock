@@ -29,6 +29,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
@@ -143,6 +144,31 @@ class SecurityControllerContractTest {
     mvc.perform(get("/api/v1/securities").queryParam("page", "0"))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+  }
+
+  /** 板块筛选按成分关系生效：桩板块只含 {@code sim-600000}。 */
+  @Test
+  void filtersListBySectorId() throws Exception {
+    MockMvc mvc = mvc();
+
+    mvc.perform(get("/api/v1/securities")
+            .queryParam("sectorId", StubSectorProvider.INDUSTRY_ID))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.items.length()").value(1))
+        .andExpect(jsonPath("$.data.items[0].securityId").value("sim-600000"))
+        .andExpect(jsonPath("$.data.total").value(1));
+  }
+
+  /** 板块 ID 不存在时返回空页而不是 400，与其它筛选值同口径。 */
+  @Test
+  void returnsEmptyPageForUnknownSectorId() throws Exception {
+    MockMvc mvc = mvc();
+
+    mvc.perform(get("/api/v1/securities")
+            .queryParam("sectorId", "stub-bk-missing"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.items.length()").value(0))
+        .andExpect(jsonPath("$.data.total").value(0));
   }
 
   // ---------- STK-04 个股快照 ----------
@@ -271,11 +297,17 @@ class SecurityControllerContractTest {
         "CN".equals(marketCode) ? UNIVERSE : List.of();
     return MockMvcBuilders.standaloneSetup(
             new SecurityController(
-                new SecurityQueryService(provider), detailService(), CLOCK))
+                new SecurityQueryService(provider, sectorProvider()), detailService(), CLOCK))
         .setControllerAdvice(new GlobalExceptionHandler(CLOCK))
         .setMessageConverters(new MappingJackson2HttpMessageConverter(mapper))
         .addFilters(new TraceIdFilter())
         .build();
+  }
+
+  /** 桩板块只含 {@code sim-600000}，用来验证 {@code sectorId} 参数真的参与筛选。 */
+  private static StubSectorProvider sectorProvider() {
+    return StubSectorProvider.of(Map.of(
+        StubSectorProvider.INDUSTRY_ID, List.of("sim-600000")));
   }
 
   /**

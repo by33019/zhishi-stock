@@ -20,6 +20,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
@@ -185,14 +186,28 @@ class RankingControllerContractTest {
         .andExpect(jsonPath("$.data.totalPages").value(0));
   }
 
-  /** 板块关系数据在 M2-07 之前不存在，因此该条件当前必然返回空页。 */
+  /** 板块筛选按成分关系生效：桩板块只含 {@code sim-600000}，它恰是涨幅榜末位。 */
   @Test
-  void returnsEmptyPageForSectorId() throws Exception {
+  void filtersBySectorId() throws Exception {
     MockMvc mvc = mvc();
 
     mvc.perform(get("/api/v1/stock-rankings")
             .queryParam("rankingType", "GAINERS")
-            .queryParam("sectorId", "bk-ai"))
+            .queryParam("sectorId", StubSectorProvider.INDUSTRY_ID))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.items.length()").value(1))
+        .andExpect(jsonPath("$.data.items[0].security.securityId").value("sim-600000"))
+        .andExpect(jsonPath("$.data.total").value(1));
+  }
+
+  /** 板块 ID 不存在时返回空页而不是 400，与 {@code exchangeCodes=XX} 同口径。 */
+  @Test
+  void returnsEmptyPageForUnknownSectorId() throws Exception {
+    MockMvc mvc = mvc();
+
+    mvc.perform(get("/api/v1/stock-rankings")
+            .queryParam("rankingType", "GAINERS")
+            .queryParam("sectorId", "stub-bk-missing"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.items.length()").value(0))
         .andExpect(jsonPath("$.data.total").value(0));
@@ -221,11 +236,18 @@ class RankingControllerContractTest {
         .featuresToDisable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
         .build();
     return MockMvcBuilders.standaloneSetup(
-            new RankingController(new StockRankingQueryService(batchProvider()), CLOCK))
+            new RankingController(
+                new StockRankingQueryService(batchProvider(), sectorProvider()), CLOCK))
         .setControllerAdvice(new GlobalExceptionHandler(CLOCK))
         .setMessageConverters(new MappingJackson2HttpMessageConverter(mapper))
         .addFilters(new TraceIdFilter())
         .build();
+  }
+
+  /** 桩板块只含 {@code sim-600000}，用来验证 {@code sectorId} 参数真的参与筛选。 */
+  private static StubSectorProvider sectorProvider() {
+    return StubSectorProvider.of(Map.of(
+        StubSectorProvider.INDUSTRY_ID, List.of("sim-600000")));
   }
 
   private static QuoteSnapshotBatchProvider batchProvider() {
