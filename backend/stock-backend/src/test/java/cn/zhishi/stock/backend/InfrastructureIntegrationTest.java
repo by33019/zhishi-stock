@@ -18,8 +18,11 @@ import cn.zhishi.stock.system.auth.UserAccount;
 import cn.zhishi.stock.system.auth.UserAccountRepository;
 import cn.zhishi.stock.system.watchlist.WatchlistGroup;
 import cn.zhishi.stock.system.watchlist.WatchlistGroupRepository;
+import cn.zhishi.stock.system.watchlist.WatchlistItem;
+import cn.zhishi.stock.system.watchlist.WatchlistItemRepository;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -368,6 +371,231 @@ class InfrastructureIntegrationTest {
                     INSERT INTO user_watchlist_item (id, user_id, group_id, security_id, sort_no)
                     VALUES (?, ?, ?, ?, 0)
                     """, IDS.incrementAndGet(), userId, groupId, securityId);
+        }
+
+        private int countItems(long groupId) {
+            return jdbc.queryForObject(
+                    "SELECT COUNT(*) FROM user_watchlist_item WHERE group_id = ?",
+                    Integer.class,
+                    groupId);
+        }
+    }
+
+    /**
+     * {@code user_watchlist_item} 的存储契约（M3-02）。
+     *
+     * <p>M3-01 的分组干脆不读 {@code created_at}，所以列默认值的时区歧义从没暴露过；
+     * 自选项的契约要求把它回显给前端，于是改成由应用显式写入。这一组用真实 MySQL 8.4 钉住四件
+     * "看着像对但只有真库能回答"的事：
+     *
+     * <ul>
+     *   <li>唯一索引确实按 {@code (group_id, security_id)} 生效——同组同证券撞，跨组不撞；
+     *   <li>WAT-08 的删除是**硬删除**（表里没有 {@code deleted_at}），行真的消失；
+     *   <li>条件写（{@code version} 写在 {@code WHERE} 里）在版本不符时一行都不改；
+     *   <li>应用给的 {@code created_at} 被原样读回，而不是被 {@code CURRENT_TIMESTAMP(3)} 覆盖。
+     * </ul>
+     *
+     * <p>每个用例各自用一个新 {@code userId}，因此彼此不干扰、也不依赖执行顺序。
+     */
+    @Nested
+    class WatchlistItems {
+
+        private static final AtomicLong IDS = new AtomicLong(9_400_000_000_000L);
+        private static final AtomicLong USERS = new AtomicLong(9_500_000_000_000L);
+        private static final LocalDateTime CREATED = LocalDateTime.of(2026, 9, 20, 14, 30);
+
+        @Autowired WatchlistItemRepository items;
+        @Autowired WatchlistGroupRepository watchlistGroups;
+
+        @Test
+        void roundTripsTheApplicationSuppliedCreatedAt() {
+            long owner = USERS.incrementAndGet();
+            long groupId = insertGroup(owner, "默认分组");
+            // 用一个明显"不像现在"的值：如果读回来的是 2026-09-20，说明列默认值生效了，
+            // 应用写入被丢掉——那 WAT-06 回显的 createdAt 就是假的。
+            LocalDateTime written = LocalDateTime.of(2020, 1, 2, 3, 4, 5, 123_000_000);
+            long itemId = insertItem(owner, groupId, 601L, 0, written);
+
+            assertThat(items.find(owner, groupId, itemId))
+                    .hasValueSatisfying(item -> {
+                        assertThat(item.securityId()).isEqualTo(601L);
+                        assertThat(item.version()).isZero();
+                        assertThat(item.createdAt()).isEqualTo(written);
+                    });
+        }
+
+        @Test
+        void theUniqueIndexOnlyForbidsTheSameSecurityInTheSameGroup() {
+            long owner = USERS.incrementAndGet();
+            long groupId = insertGroup(owner, "默认分组");
+            insertItem(owner, groupId, 601L, 0, CREATED);
+
+            assertThatThrownBy(() -> insertItem(owner, groupId, 601L, 1, CREATED))
+                    .describedAs("同组同证券必须被唯一索引拦住")
+                    .isInstanceOf(DuplicateKeyException.class);
+
+            long otherGroup = insertGroup(owner, "另一个分组");
+            assertThat(insertItem(owner, otherGroup, 601L, 0, CREATED))
+                    .describedAs("同一只证券放进另一个分组是合法的")
+                    .isPositive();
+        }
+
+        @Test
+        void deleteIsPhysicalAndScopedToTheOwner() {
+            long owner = USERS.incrementAndGet();
+            long intruder = USERS.incrementAndGet();
+            long groupId = insertGroup(owner, "默认分组");
+            long itemId = insertItem(owner, groupId, 601L, 0, CREATED);
+
+            assertThat(items.delete(intruder, groupId, itemId))
+                    .describedAs("user_id 写在 WHERE 里，删不到别人的行")
+                    .isFalse();
+            assertThat(countItems(groupId)).isEqualTo(1);
+
+            assertThat(items.delete(owner, groupId, itemId)).isTrue();
+            assertThat(jdbc.queryForObject(
+                            "SELECT COUNT(*) FROM user_watchlist_item WHERE id = ?",
+                            Integer.class,
+                            itemId))
+                    .describedAs("WAT-08 是硬删除：行真的没了，不是打软删标记")
+                    .isZero();
+            assertThat(items.delete(owner, groupId, itemId)).isFalse();
+        }
+
+        @Test
+        void conditionalWritesDoNothingWhenTheVersionDoesNotMatch() {
+            long owner = USERS.incrementAndGet();
+            long groupId = insertGroup(owner, "源分组");
+            long target = insertGroup(owner, "目标分组");
+            long itemId = insertItem(owner, groupId, 601L, 0, CREATED);
+
+            assertThat(items.deleteIfVersion(owner, groupId, itemId, 7)).isFalse();
+            assertThat(items.updateSortNo(owner, groupId, itemId, 5, 7)).isFalse();
+            assertThat(items.moveToGroup(owner, groupId, itemId, target, 0, 7)).isFalse();
+
+            assertThat(items.find(owner, groupId, itemId))
+                    .hasValueSatisfying(item -> {
+                        assertThat(item.groupId()).isEqualTo(groupId);
+                        assertThat(item.sortNo()).isZero();
+                        assertThat(item.version()).isZero();
+                    });
+
+            assertThat(items.updateSortNo(owner, groupId, itemId, 5, 0)).isTrue();
+            assertThat(items.find(owner, groupId, itemId).orElseThrow().version()).isEqualTo(1);
+        }
+
+        @Test
+        void moveToGroupRewritesTheGroupKeepsCreatedAtAndBumpsTheVersion() {
+            long owner = USERS.incrementAndGet();
+            long source = insertGroup(owner, "源分组");
+            long target = insertGroup(owner, "目标分组");
+            LocalDateTime written = LocalDateTime.of(2026, 9, 20, 14, 30, 0, 500_000_000);
+            long itemId = insertItem(owner, source, 601L, 3, written);
+
+            assertThat(items.moveToGroup(owner, source, itemId, target, 0, 0)).isTrue();
+
+            assertThat(items.findByGroup(owner, source)).isEmpty();
+            assertThat(items.find(owner, target, itemId))
+                    .hasValueSatisfying(item -> {
+                        assertThat(item.groupId()).isEqualTo(target);
+                        assertThat(item.sortNo()).isZero();
+                        assertThat(item.version()).isEqualTo(1);
+                        assertThat(item.createdAt()).isEqualTo(written);
+                    });
+        }
+
+        @Test
+        void mergingADuplicateLeavesTheTargetRowUntouched() {
+            long owner = USERS.incrementAndGet();
+            long source = insertGroup(owner, "源分组");
+            long target = insertGroup(owner, "目标分组");
+            long duplicate = insertItem(owner, source, 601L, 0, CREATED);
+            long survivor = insertItem(owner, target, 601L, 0, CREATED);
+            long movable = insertItem(owner, source, 602L, 1, CREATED);
+
+            // 602 在目标组没有同证券项 → 搬过去，序号落到目标组末尾。
+            assertThat(items.moveToGroup(owner, source, movable, target, 1, 0)).isTrue();
+            // 601 在目标组已经有了 → 删掉源行，目标行原样留下。
+            assertThat(items.deleteIfVersion(owner, source, duplicate, 0)).isTrue();
+
+            assertThat(countItems(source)).isZero();
+            assertThat(items.findByGroup(owner, target))
+                    .extracting(
+                            WatchlistItem::itemId,
+                            WatchlistItem::securityId,
+                            WatchlistItem::sortNo,
+                            WatchlistItem::version)
+                    .containsExactly(
+                            tuple(survivor, 601L, 0, 0),
+                            tuple(movable, 602L, 1, 1));
+        }
+
+        @Test
+        void nextSortNoIsZeroForAnEmptyGroupAndFollowsTheMaximum() {
+            long owner = USERS.incrementAndGet();
+            long groupId = insertGroup(owner, "默认分组");
+
+            assertThat(items.nextSortNo(owner, groupId)).isZero();
+
+            insertItem(owner, groupId, 601L, 0, CREATED);
+            insertItem(owner, groupId, 602L, 1, CREATED);
+
+            assertThat(items.nextSortNo(owner, groupId)).isEqualTo(2);
+        }
+
+        @Test
+        void findByUserOrdersByGroupThenSortThenId() {
+            long owner = USERS.incrementAndGet();
+            long first = insertGroup(owner, "A 分组");
+            long second = insertGroup(owner, "B 分组");
+            insertItem(owner, second, 602L, 0, CREATED);
+            insertItem(owner, first, 601L, 1, CREATED);
+            insertItem(owner, first, 603L, 0, CREATED);
+
+            assertThat(items.findByUser(owner))
+                    .extracting(
+                            WatchlistItem::groupId,
+                            WatchlistItem::securityId,
+                            WatchlistItem::sortNo)
+                    .containsExactly(
+                            tuple(first, 603L, 0),
+                            tuple(first, 601L, 1),
+                            tuple(second, 602L, 0));
+        }
+
+        @Test
+        void reorderRewritesSortNumbersAndBumpsEveryVersion() {
+            long owner = USERS.incrementAndGet();
+            long groupId = insertGroup(owner, "默认分组");
+            long a = insertItem(owner, groupId, 601L, 0, CREATED);
+            long b = insertItem(owner, groupId, 602L, 1, CREATED);
+            long c = insertItem(owner, groupId, 603L, 2, CREATED);
+
+            List<Long> requested = List.of(c, a, b);
+            for (int index = 0; index < requested.size(); index++) {
+                assertThat(items.updateSortNo(owner, groupId, requested.get(index), index, 0))
+                        .isTrue();
+            }
+
+            assertThat(items.findByGroup(owner, groupId))
+                    .extracting(
+                            WatchlistItem::itemId,
+                            WatchlistItem::sortNo,
+                            WatchlistItem::version)
+                    .containsExactly(tuple(c, 0, 1), tuple(a, 1, 1), tuple(b, 2, 1));
+        }
+
+        private long insertGroup(long userId, String name) {
+            long groupId = IDS.incrementAndGet();
+            watchlistGroups.insert(new WatchlistGroup(groupId, userId, name, 0, false, 0, 0));
+            return groupId;
+        }
+
+        private long insertItem(
+                long userId, long groupId, long securityId, int sortNo, LocalDateTime createdAt) {
+            long itemId = IDS.incrementAndGet();
+            items.insert(new WatchlistItem(itemId, userId, groupId, securityId, sortNo, 0, createdAt));
+            return itemId;
         }
 
         private int countItems(long groupId) {

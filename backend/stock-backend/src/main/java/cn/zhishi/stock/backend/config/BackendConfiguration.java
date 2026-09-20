@@ -6,6 +6,7 @@ import cn.zhishi.stock.integration.market.SimulatedKlineProvider;
 import cn.zhishi.stock.integration.market.SimulatedLimitRuleProvider;
 import cn.zhishi.stock.integration.market.SimulatedQuoteProvider;
 import cn.zhishi.stock.integration.market.SimulatedQuoteSnapshotProvider;
+import cn.zhishi.stock.integration.market.SimulatedSecurityIdentityProvider;
 import cn.zhishi.stock.integration.market.SimulatedSecurityMasterProvider;
 import cn.zhishi.stock.integration.market.SimulatedSecurityQuoteProvider;
 import cn.zhishi.stock.integration.market.SimulatedSectorProvider;
@@ -28,6 +29,7 @@ import cn.zhishi.stock.market.domain.QuoteProvider;
 import cn.zhishi.stock.market.domain.QuoteSnapshotBatchProvider;
 import cn.zhishi.stock.market.domain.QuoteSnapshotProvider;
 import cn.zhishi.stock.market.domain.SectorProvider;
+import cn.zhishi.stock.market.domain.SecurityIdentityProvider;
 import cn.zhishi.stock.market.domain.SecurityMasterProvider;
 import cn.zhishi.stock.market.domain.SecurityQuoteProvider;
 import cn.zhishi.stock.market.domain.TradingCalendarProvider;
@@ -54,9 +56,13 @@ import cn.zhishi.stock.system.idempotency.IdempotencyGuard;
 import cn.zhishi.stock.system.idempotency.IdempotencyStore;
 import cn.zhishi.stock.system.idempotency.RedisIdempotencyStore;
 import cn.zhishi.stock.system.watchlist.MyBatisWatchlistGroupRepository;
+import cn.zhishi.stock.system.watchlist.MyBatisWatchlistItemRepository;
 import cn.zhishi.stock.system.watchlist.WatchlistGroupMapper;
 import cn.zhishi.stock.system.watchlist.WatchlistGroupRepository;
 import cn.zhishi.stock.system.watchlist.WatchlistGroupService;
+import cn.zhishi.stock.system.watchlist.WatchlistItemMapper;
+import cn.zhishi.stock.system.watchlist.WatchlistItemRepository;
+import cn.zhishi.stock.system.watchlist.WatchlistItemService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
 import java.time.Duration;
@@ -114,6 +120,35 @@ public class BackendConfiguration {
             LongSupplier databaseIdGenerator,
             Clock clock) {
         return new WatchlistGroupService(watchlistGroupRepository, databaseIdGenerator, clock);
+    }
+
+    @Bean
+    WatchlistItemRepository watchlistItemRepository(WatchlistItemMapper mapper) {
+        return new MyBatisWatchlistItemRepository(mapper);
+    }
+
+    /** 证券身份（字符串 {@code securityId} ↔ 自选表 bigint 代理键）的唯一解析入口。 */
+    @Bean
+    SecurityIdentityProvider securityIdentityProvider(
+            SecurityMasterProvider securityMasterProvider) {
+        return new SimulatedSecurityIdentityProvider(securityMasterProvider);
+    }
+
+    @Bean
+    WatchlistItemService watchlistItemService(
+            WatchlistItemRepository watchlistItemRepository,
+            WatchlistGroupRepository watchlistGroupRepository,
+            SecurityIdentityProvider securityIdentityProvider,
+            QuoteSnapshotBatchProvider quoteSnapshotBatchProvider,
+            LongSupplier databaseIdGenerator,
+            Clock clock) {
+        return new WatchlistItemService(
+                watchlistItemRepository,
+                watchlistGroupRepository,
+                securityIdentityProvider,
+                quoteSnapshotBatchProvider,
+                databaseIdGenerator,
+                clock);
     }
 
     /** 契约 §3.7：幂等键有效窗口默认 24 小时。 */

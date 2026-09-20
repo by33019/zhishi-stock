@@ -77,8 +77,8 @@
 
 ## M3：用户态闭环与 AI 研究编排
 
-- [ ] **M3-01** P0 自选分组 CRUD（后端，V5 表） — 依赖：M2-04
-- [ ] **M3-02** P0 自选项 CRUD + 排序 + 行情概览 — 依赖：M3-01
+- [x] **M3-01** P0 自选分组 CRUD（后端，V5 表） — 已完成，见下方详情
+- [x] **M3-02** P0 自选项 CRUD + 排序 + 行情概览 — 已完成，见下方详情
 - [ ] **M3-03** P0 前端 watchlist 接真实 API — 依赖：M3-02
 - [ ] **M3-04** P0 资讯 Provider 抽象 + 模拟源 + 去重 + 标的关联 — 依赖：M2-04
 - [ ] **M3-05** P1 前端 news 接真实 API — 依赖：M3-04
@@ -909,10 +909,80 @@ WAT-02 的 `createdAt` 取自应用 `Clock`，表里的列只作审计。
 | 前端 | 未改动；复跑确认 `npm run typecheck` 0 错误、**19 文件 / 101 项通过**、`vite build` 成功 |
 | 红灯 | 用例层 30/31 失败（`UnsupportedOperationException`）+ 合并顺序 mock 校验失败，均为真实红灯 |
 
-> **surefire 报数怪癖**：加 `@Nested` 后控制台会打印
-> `InfrastructureIntegrationTest: Tests run: 0` 与 `...$WatchlistGroups: Tests run: 15`，
+> **surefire 报数怪癖**：加 `@Nested` 后控制台会把**外层类的用例并进第一个 `@Nested` 那行**，
+> 并给外层打印 `Tests run: 0`。M3-02 之后实测：`...$WatchlistItems: Tests run: 14`（= 外层 5 + 自己 9）、
+> `...$WatchlistGroups: Tests run: 10`、`InfrastructureIntegrationTest: Tests run: 0`，
 > 看着像外层 5 个用例没跑。以 `target/surefire-reports/TEST-*.xml` 的 `<testcase>` 为准：
-> 5（外层）+ 10（内层）= 15。**总数不要用控制台分行数字相加。**
+> 5（外层）+ 10 + 9 = 24。**总数不要用控制台分行数字相加**（相加会漏掉外层那 5 个）。
+
+---
+
+## M3-02 交付详情
+
+> Spec：`docs/superpowers/specs/2026-09-20-watchlist-items.md`
+
+**目标**：把契约 §12.2 的自选项接口与聚合接口接上应用层，并把 M3-01 刻意留下的
+`includeItems=true` 显式 400（已知问题 #15）补成真实数据。
+
+### 交付
+
+| 编号 | 接口 | 要点 |
+| --- | --- | --- |
+| WAT-06 | `GET /watchlist-groups/{id}/items` | 应用层分页（`page`/`size`），`includeQuote` 决定是否取整批行情 |
+| WAT-07 | `POST /watchlist-groups/{id}/items` | `Idempotency-Key` 生效；同组同证券**幂等成功**并返回已存在的那条 |
+| WAT-08 | `DELETE /watchlist-groups/{id}/items/{itemId}` | **硬删除**（表无 `deleted_at`），无 `If-Match`，`deleted` 反映真实影响行数 |
+| WAT-09 | `PATCH /watchlist-groups/{id}/items/{itemId}` | `If-Match` 乐观锁；目标组已有同证券时**合并**（删源行、目标行 version 不变） |
+| WAT-10 | `PUT /watchlist-groups/{id}/items/order` | 原子重排；集合不匹配 **409**，重复/空值 **400**（与 WAT-05 的 400 刻意不同） |
+| WAT-11 | `GET /watchlists/overview` | 聚合：分组 + 自选项 + 市场状态 + 快照版本 + `limitations`；**降级不失败** |
+| WAT-12 | `GET /watchlists/membership` | `securityIds` 逗号分隔 1~50 个；返回**单值** Map（按分组顺序取首个命中的组） |
+
+### 关键取舍
+
+- **`securityId` 的字符串 ↔ bigint 代理键桥接抽成独立端口。** 契约与前端用 `"sim-600519"`，
+  而 `user_watchlist_item.security_id` 是 `bigint`。没有在自选模块里就地拼字符串，
+  而是新增 `SecurityIdentityProvider`（`market.domain`）+ `SimulatedSecurityIds`（**唯一**的构词规则定义），
+  并把 `SimulatedSecurityQuoteProvider` / `SimulatedSectorProvider` 里两处手工拼接改为调用它。
+  这样主数据、行情、板块成分、身份解析四者不可能分叉。整机 5149 只全量往返有测试守着。
+- **`createdAt` 改为应用显式写入，与 M3-01 的取舍相反。** M3-01 干脆不读 `created_at`
+  （列默认值是 MySQL 会话时区的墙上时间）；WAT-06 要求回显，所以写入用 `LocalDateTime.now(clock)`、
+  回读按同一个 `Clock` 的时区解释。真实 MySQL 实测毫秒级无损往返。
+- **WAT-07 是成功幂等，不是 409。** 撞唯一索引后回查并返回已存在的那条。
+  因此契约 §12.3 的 `WATCHLIST_ITEM_EXISTS` **没有任何端点会抛**，按"不加永不触发的分支"处理，
+  记为已知问题 #18 而不是实现它。
+- **WAT-11 的降级策略**：悬空证券 → `security: null`，缺行情 → `quote: null`，
+  两者都保留在列表里并写进人类可读的 `limitations`；整批为空时 `snapshotVersion` 为 `""`、
+  `dataStatus` 为 `UNAVAILABLE`——不编造一个版本号。
+- **`newsSince` 直接 400**（不静默忽略），与 `SecurityQueryService` 的白名单口径一致；
+  `latestNewsCount` 恒为 `null`（资讯 Provider 见 M3-04），而不是 `0`。
+- **空自选不触发整批取数**：`assemble` 在列表为空时短路，避免为 0 条自选生成 5149 只的行情批次。
+- **`stock-system` 新增 `stock-market` 编译依赖**（只用到 `domain` 包，无环）。
+
+### 不在本轮范围
+
+| 项 | 归属 |
+| --- | --- |
+| `latestNewsCount` / `newsSince` 的真实值 | M3-04（资讯 Provider） |
+| 自选页首屏批量行情（STK-05 `POST /quotes/securities/batch-query`） | 已知问题 #10；WAT-06 已能按需取整批，STK-05 是给前端一次问多只用的 |
+| 前端 `/watchlist` 接真实接口 | M3-03 |
+| 自选写操作 60/min 限流（§22.1） | 全站限流基础设施尚不存在（已知问题 #17） |
+| SSE `watchlist` 频道（§20.2） | M3-03 前端接入时一并评估 |
+
+### 验证结果
+
+| 项 | 结果 |
+| --- | --- |
+| 后端 | **507 项通过**（common 1 / system 83 / market 156 / integration 111 / backend 155 / job 2），本次新增 **81 项** |
+| `TZ=UTC` 复跑 | 后端 507 项**同样全绿**（时间相关断言与运行环境时区解耦） |
+| 真实 MySQL 8.4 | 本机 Docker 可用，`InfrastructureIntegrationTest$WatchlistItems` **9 项实测通过**（唯一索引作用域、硬删除、条件写不生效、移动保 `createdAt`、合并、`nextSortNo`、排序、`created_at` 往返） |
+| 前端 | 未改动；复跑确认 `npm run typecheck` 0 错误、**19 文件 / 101 项通过**、`vite build` 成功 |
+| 红灯 | stock-system 38 项 + stock-integration 5 项失败，全部来自 `UnsupportedOperationException("尚未实现")` 与断言，**不是编译错误** |
+
+> **踩到的两个坑（已写进 spec §6.4）**：
+> 1. 独立 `MockMvc` 的默认 Jackson **不关** `WRITE_DATES_AS_TIMESTAMPS`（那是 Spring Boot 自动配置干的），
+>    会把 `OffsetDateTime` 序列化成 epoch 数字。新契约测试必须沿用 `MarketControllerContractTest` 的
+>    `Jackson2ObjectMapperBuilder + setMessageConverters` 写法，否则时间断言静默失真。
+> 2. 契约测试的桩要能区分入参：WAT-10 的桩一开始返回固定 `itemId`，
+>    于是"请求 `["2","1"]`、响应却是同一个 id"这个真实缺陷被桩掩盖了。
 
 ---
 
@@ -933,3 +1003,4 @@ WAT-02 的 `createdAt` 取自应用 `Clock`，表里的列只作审计。
 - [x] M2-10（2026-09-20）
 - [x] M2-11（2026-09-20）
 - [x] M3-01（2026-09-20）
+- [x] M3-02（2026-09-20）

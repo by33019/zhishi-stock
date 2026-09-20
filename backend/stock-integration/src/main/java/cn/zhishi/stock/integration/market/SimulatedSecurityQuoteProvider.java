@@ -90,7 +90,7 @@ public class SimulatedSecurityQuoteProvider implements SecurityQuoteProvider {
         String securityCode = block.prefix() + padded(offset + block.start());
         BigDecimal previousClose = previousClose(ordinal);
         SecurityQuote withoutRule = new SecurityQuote(
-                "sim-" + securityCode,
+                SimulatedSecurityIds.securityIdOf(securityCode),
                 securityCode,
                 block.exchange(),
                 "模拟证券" + securityCode,

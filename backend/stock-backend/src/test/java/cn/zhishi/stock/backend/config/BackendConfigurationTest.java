@@ -5,6 +5,7 @@ import static org.mockito.Mockito.mock;
 
 import cn.zhishi.stock.market.application.MarketOverviewQueryService;
 import cn.zhishi.stock.market.application.SecurityQueryService;
+import cn.zhishi.stock.market.domain.SecurityIdentityProvider;
 import cn.zhishi.stock.market.domain.SecurityMasterProvider;
 import cn.zhishi.stock.market.domain.SecurityQuoteProvider;
 import cn.zhishi.stock.backend.security.JwtAuthenticationFilter;
@@ -17,6 +18,9 @@ import cn.zhishi.stock.system.idempotency.IdempotencyStore;
 import cn.zhishi.stock.system.watchlist.WatchlistGroupMapper;
 import cn.zhishi.stock.system.watchlist.WatchlistGroupRepository;
 import cn.zhishi.stock.system.watchlist.WatchlistGroupService;
+import cn.zhishi.stock.system.watchlist.WatchlistItemMapper;
+import cn.zhishi.stock.system.watchlist.WatchlistItemRepository;
+import cn.zhishi.stock.system.watchlist.WatchlistItemService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
@@ -33,6 +37,7 @@ class BackendConfigurationTest {
         .withUserConfiguration(BackendConfiguration.class)
         .withBean(SysUserMapper.class, () -> mock(SysUserMapper.class))
         .withBean(WatchlistGroupMapper.class, () -> mock(WatchlistGroupMapper.class))
+        .withBean(WatchlistItemMapper.class, () -> mock(WatchlistItemMapper.class))
         .withBean(StringRedisTemplate.class, () -> mock(StringRedisTemplate.class))
         .withBean(JdbcTemplate.class, () -> mock(JdbcTemplate.class))
         .withBean(ObjectMapper.class, ObjectMapper::new)
@@ -50,6 +55,9 @@ class BackendConfigurationTest {
           assertThat(context).hasSingleBean(TraceIdFilter.class);
           assertThat(context).hasSingleBean(WatchlistGroupService.class);
           assertThat(context).hasSingleBean(WatchlistGroupRepository.class);
+          assertThat(context).hasSingleBean(WatchlistItemService.class);
+          assertThat(context).hasSingleBean(WatchlistItemRepository.class);
+          assertThat(context).hasSingleBean(SecurityIdentityProvider.class);
           assertThat(context).hasSingleBean(IdempotencyStore.class);
           assertThat(context).hasSingleBean(IdempotencyGuard.class);
           FilterRegistrationBean<?> registration =

@@ -23,6 +23,54 @@
 
 ---
 
+## 2026-09-20 — M3-02 自选项 CRUD + 排序 + 行情概览（自选中心后端 12 接口全通）
+
+### 新增
+
+- **WAT-06~WAT-12 自选与聚合接口**：`/api/v1/watchlist-groups/{groupId}/items` 的列表 / 新增 / 删除 / 移动 /
+  重排，以及 `/api/v1/watchlists/overview`（聚合）与 `/api/v1/watchlists/membership`（单值 Map）
+- `stock-market/domain` 新增 `SecurityIdentity`、`SecurityIdentityProvider`：
+  契约与前端用字符串 `securityId`（`sim-600519`），库里 `user_watchlist_item.security_id` 是 `bigint`，
+  两者的映射收在一个端口里而不是散在自选模块
+- `stock-integration/market` 新增 `SimulatedSecurityIds`（**唯一**的构词规则定义）与
+  `SimulatedSecurityIdentityProvider`（投影自 `SecurityMasterProvider`，5149 只全量往返有测试）
+- `stock-system/watchlist` 新增 `WatchlistItem` / `WatchlistItemRow` / `WatchlistItemRepository` /
+  `MyBatisWatchlistItemRepository` / `WatchlistItemMapper` / `WatchlistItemService` /
+  `WatchlistEntry` / `WatchlistOverview` / `WatchlistMembership` / `MovedItem`
+- `stock-backend` 新增 `WatchlistItemController`、`WatchlistOverviewController`
+- 测试：`SimulatedSecurityIdentityProviderTest`(5)、`WatchlistItemServiceTest`(32)、
+  `MyBatisWatchlistItemRepositoryTest`(6)、`WatchlistItemControllerContractTest`(19)、
+  `WatchlistOverviewControllerContractTest`(10)、`InfrastructureIntegrationTest#WatchlistItems`(9)
+- 设计文档 `docs/superpowers/specs/2026-09-20-watchlist-items.md`
+
+### 变更
+
+- `SimulatedSecurityQuoteProvider` / `SimulatedSectorProvider` 里两处手工拼接 `"sim-" + code`
+  改为调用 `SimulatedSecurityIds.securityIdOf(...)`，构词规则不再靠注释维持"两处一致"
+- `stock-system` 新增对 `stock-market` 的编译依赖（只用到 `domain` 包，无环）
+- `WatchlistGroupController` 的 `includeItems=true` 由"显式 400"改为返回真实自选项，
+  并用 `@JsonInclude(NON_NULL)` 保证 `includeItems=false` 时响应与 M3-01 **逐字节一致**
+- `WatchlistItemService` 的 `createdAt` 改为**应用显式写入**（`LocalDateTime.now(clock)`）并按同一个
+  `Clock` 的时区回读——与 M3-01 "干脆不读 `created_at`"的取舍相反，因为 WAT-06 要求回显
+
+### 修复
+
+- 关闭已知问题 #15（`includeItems=true` 曾返回 400，因为返回 `items: []` 会编造"这个分组里没有股票"）
+- 契约测试补上 `Jackson2ObjectMapperBuilder + featuresToDisable(WRITE_DATES_AS_TIMESTAMPS)` 的
+  消息转换器：独立 `MockMvc` 的默认 Jackson 会把 `OffsetDateTime` 序列化成 epoch 数字
+  （与已知问题 #5 同源，但 #5 只记了 `LocalDate` → 数组），会让时间断言静默失真
+- `TASKS.md` 补上 M3-01 漏勾的清单项（上一轮只加了"交付详情"段）
+
+### 文档
+
+- 新增已知问题 #16（幂等键并发非严格互斥）、#17（全站无任何限流）、#18
+  （`WATCHLIST_ITEM_EXISTS` 无端点会抛）到 `PROJECT_STATUS.md` §6；#15 标记为已关闭
+- 更正 `TASKS.md` 里 surefire `@Nested` 报数的说明：控制台会把**外层类的用例并进第一个 `@Nested` 那行**
+  （实测 `$WatchlistItems: 14` = 外层 5 + 自己 9，`$WatchlistGroups: 10`，外层 `0`），
+  统计总数必须以 `target/surefire-reports/TEST-*.xml` 为准
+
+---
+
 ## 2026-09-20 — M3-01 自选分组 CRUD（V5 两张表首次被代码引用）
 
 ### 新增

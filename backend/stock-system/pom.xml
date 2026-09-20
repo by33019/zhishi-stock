@@ -7,6 +7,13 @@
   <artifactId>stock-system</artifactId>
   <dependencies>
     <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-common</artifactId><version>${project.version}</version></dependency>
+    <!--
+      自选项要引用证券（user_watchlist_item.security_id 是 bigint，契约的 securityId 是字符串），
+      因此需要行情域的"证券身份"端口与摘要模型。**只用 domain 包，不碰 application**：
+      行情侧的用例（如市场状态）由组合根注入，用户域不反向依赖别人的用例层。
+      stock-market 不依赖 stock-system，因此不构成循环。
+    -->
+    <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-market</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-security</artifactId></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-redis</artifactId></dependency>
     <!-- 幂等守卫要把"首次提交的请求体 + 首次返回的数据"存成 JSON 再回放（契约 §3.7）。 -->

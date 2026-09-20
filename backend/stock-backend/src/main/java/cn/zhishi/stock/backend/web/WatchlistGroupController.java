@@ -5,10 +5,10 @@ import cn.zhishi.stock.system.auth.AccessTokenPrincipal;
 import cn.zhishi.stock.system.idempotency.IdempotencyGuard;
 import cn.zhishi.stock.system.watchlist.CreatedGroup;
 import cn.zhishi.stock.system.watchlist.DeleteResult;
-import cn.zhishi.stock.system.watchlist.WatchlistErrorCode;
-import cn.zhishi.stock.system.watchlist.WatchlistException;
 import cn.zhishi.stock.system.watchlist.WatchlistGroup;
 import cn.zhishi.stock.system.watchlist.WatchlistGroupService;
+import cn.zhishi.stock.system.watchlist.WatchlistItemService;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Clock;
 import java.time.OffsetDateTime;
@@ -42,12 +42,17 @@ public class WatchlistGroupController {
     private static final String CREATE_SCOPE = "watchlist-group:create";
 
     private final WatchlistGroupService groups;
+    private final WatchlistItemService items;
     private final IdempotencyGuard idempotency;
     private final Clock clock;
 
     public WatchlistGroupController(
-            WatchlistGroupService groups, IdempotencyGuard idempotency, Clock clock) {
+            WatchlistGroupService groups,
+            WatchlistItemService items,
+            IdempotencyGuard idempotency,
+            Clock clock) {
         this.groups = groups;
+        this.items = items;
         this.idempotency = idempotency;
         this.clock = clock;
     }
@@ -59,15 +64,26 @@ public class WatchlistGroupController {
                     boolean includeItems,
             HttpServletRequest request) {
         long userId = principal(authentication).userId();
-        if (includeItems) {
-            // 契约把 items 标为可选，但本轮只实现 includeItems=false。
-            // 返回 items: [] 会告诉前端"这个分组里没有股票"——分组里其实有的话那就是编造数据，
-            // 与 M2-08「没有数据来源的字段降级为尚未实现」是同一条原则：宁可响亮失败。
-            throw new WatchlistException(
-                    WatchlistErrorCode.INVALID_REQUEST,
-                    "includeItems=true 尚未实现：分组内自选项由 WAT-06 提供（M3-02）");
-        }
-        return success(groups.list(userId).stream().map(GroupView::from).toList(), request);
+        List<GroupView> views = groups.list(userId).stream()
+                .map(group -> includeItems
+                        ? GroupView.from(group, itemsOf(userId, group))
+                        : GroupView.from(group))
+                .toList();
+        return success(views, request);
+    }
+
+    /**
+     * {@code includeItems=true} 时的自选项。
+     *
+     * <p>WAT-01 没有 {@code includeQuote} 参数，因此这里不带行情——与 WAT-06 的默认行为一致。
+     * M3-01 曾对 {@code includeItems=true} 显式返回 400（宁可不返回，也不返回一个
+     * 会告诉前端"这个分组里没有股票"的空数组）；WAT-06 定义出自选项与 {@code security}
+     * 投影之后，这个字段终于有真实来源，于是改成真的返回它。
+     */
+    private List<WatchlistItemController.ItemView> itemsOf(long userId, WatchlistGroup group) {
+        return items.entriesOf(userId, group.groupId(), false).stream()
+                .map(WatchlistItemController.ItemView::from)
+                .toList();
     }
 
     @PostMapping
@@ -138,23 +154,35 @@ public class WatchlistGroupController {
      * <p>字段集与契约的"返回参数"逐字一致：WAT-01 不列 {@code createdAt}，
      * 因此这里没有它（新建分组的视图另见 {@link CreatedGroupView}）。
      * {@code groupId} 用字符串：Snowflake 主键超出 JS 安全整数范围。
+     *
+     * <p>{@code items} 只在 WAT-01 传 {@code includeItems=true} 时出现
+     * （{@code @JsonInclude(NON_NULL)} 让 {@code false} 时的响应与 M3-01 逐字节一致）；
+     * WAT-11 的 {@code groups} 段复用本视图但不带 {@code items}，因为那边的自选项在顶层数组里。
      */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
     public record GroupView(
             String groupId,
             String groupName,
             int sortNo,
             boolean isDefault,
             int itemCount,
-            int version) {
+            int version,
+            List<WatchlistItemController.ItemView> items) {
 
         static GroupView from(WatchlistGroup group) {
+            return from(group, null);
+        }
+
+        static GroupView from(
+                WatchlistGroup group, List<WatchlistItemController.ItemView> items) {
             return new GroupView(
                     Long.toString(group.groupId()),
                     group.groupName(),
                     group.sortNo(),
                     group.isDefault(),
                     group.itemCount(),
-                    group.version());
+                    group.version(),
+                    items);
         }
     }
 

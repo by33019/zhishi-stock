@@ -1,7 +1,8 @@
 package cn.zhishi.stock.backend.web;
 
-import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -18,16 +19,19 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import cn.zhishi.stock.market.domain.SecuritySummary;
 import cn.zhishi.stock.system.auth.AccessTokenPrincipal;
 import cn.zhishi.stock.system.idempotency.IdempotencyGuard;
 import cn.zhishi.stock.system.idempotency.IdempotencyRecord;
 import cn.zhishi.stock.system.idempotency.IdempotencyStore;
 import cn.zhishi.stock.system.watchlist.CreatedGroup;
 import cn.zhishi.stock.system.watchlist.DeleteResult;
+import cn.zhishi.stock.system.watchlist.WatchlistEntry;
 import cn.zhishi.stock.system.watchlist.WatchlistErrorCode;
 import cn.zhishi.stock.system.watchlist.WatchlistException;
 import cn.zhishi.stock.system.watchlist.WatchlistGroup;
 import cn.zhishi.stock.system.watchlist.WatchlistGroupService;
+import cn.zhishi.stock.system.watchlist.WatchlistItemService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
 import java.time.Instant;
@@ -56,6 +60,7 @@ class WatchlistGroupControllerContractTest {
   private static final long USER_ID = 9_900_000_000_003L;
   private static final long GROUP_ID = 7_000_000_000_001L;
   private static final long OTHER_GROUP_ID = 7_000_000_000_002L;
+  private static final long ITEM_ID = 8_000_000_000_001L;
   private static final String GROUP_ID_TEXT = "7000000000001";
   private static final String OTHER_GROUP_ID_TEXT = "7000000000002";
 
@@ -63,6 +68,7 @@ class WatchlistGroupControllerContractTest {
       Clock.fixed(Instant.parse("2026-09-20T06:30:00Z"), ZoneId.of("Asia/Shanghai"));
 
   private final WatchlistGroupService groups = mock(WatchlistGroupService.class);
+  private final WatchlistItemService items = mock(WatchlistItemService.class);
   private final Map<String, IdempotencyRecord> records = new HashMap<>();
   private final IdempotencyGuard guard = new IdempotencyGuard(
       new IdempotencyStore() {
@@ -99,16 +105,40 @@ class WatchlistGroupControllerContractTest {
   }
 
   @Test
-  void wat01RefusesIncludeItemsInsteadOfFakingAnEmptyItemList() throws Exception {
+  void wat01OmitsTheItemsFieldUnlessItIsAskedFor() throws Exception {
+    when(groups.list(USER_ID))
+        .thenReturn(List.of(new WatchlistGroup(GROUP_ID, USER_ID, "默认分组", 0, true, 3, 2)));
+
+    mvc()
+        .perform(get("/api/v1/watchlist-groups").principal(authentication()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data[0].items").doesNotExist());
+
+    verify(items, never()).entriesOf(anyLong(), anyLong(), anyBoolean());
+  }
+
+  /**
+   * 已知问题 #15 的关闭点：M3-01 时 {@code includeItems=true} 返回 400，
+   * 因为那时 {@code items: []} 只会告诉前端"这个分组里没有股票"。
+   * WAT-06 定义出自选项与 {@code security} 投影之后，这个字段终于有真实来源。
+   */
+  @Test
+  void wat01ReturnsTheRealItemsWhenIncludeItemsIsTrue() throws Exception {
+    when(groups.list(USER_ID))
+        .thenReturn(List.of(new WatchlistGroup(GROUP_ID, USER_ID, "默认分组", 0, true, 3, 2)));
+    when(items.entriesOf(USER_ID, GROUP_ID, false)).thenReturn(List.of(entry()));
+
     mvc()
         .perform(get("/api/v1/watchlist-groups")
             .param("includeItems", "true")
             .principal(authentication()))
-        .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.success").value(false))
-        .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
-        .andExpect(jsonPath("$.message").value(containsString("M3-02")));
-    verify(groups, never()).list(anyLong());
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data[0].itemCount").value(2))
+        .andExpect(jsonPath("$.data[0].items[0].itemId").value("8000000000001"))
+        .andExpect(jsonPath("$.data[0].items[0].groupId").value(GROUP_ID_TEXT))
+        .andExpect(jsonPath("$.data[0].items[0].security.securityCode").value("600519"))
+        .andExpect(jsonPath("$.data[0].items[0].quote").value(nullValue()))
+        .andExpect(jsonPath("$.data[0].items[0].latestNewsCount").value(nullValue()));
   }
 
   // ---------- WAT-02 ----------
@@ -343,10 +373,21 @@ class WatchlistGroupControllerContractTest {
   }
 
   private MockMvc mvc() {
-    return MockMvcBuilders.standaloneSetup(new WatchlistGroupController(groups, guard, CLOCK))
+    return MockMvcBuilders.standaloneSetup(
+            new WatchlistGroupController(groups, items, guard, CLOCK))
         .setControllerAdvice(new GlobalExceptionHandler(CLOCK))
         .addFilters(new TraceIdFilter())
         .build();
+  }
+
+  private static WatchlistEntry entry() {
+    return new WatchlistEntry(
+        ITEM_ID, GROUP_ID, 600_519L, 0, 0, OffsetDateTime.now(CLOCK),
+        new SecuritySummary(
+            "sim-600519", "SH.600519", "600519", "模拟证券600519", "SH", "STOCK", "MAIN",
+            "LISTED", false, false, 2, null, null),
+        null,
+        null);
   }
 
   private MockHttpServletRequestBuilder createRequest(String key, String groupName) {

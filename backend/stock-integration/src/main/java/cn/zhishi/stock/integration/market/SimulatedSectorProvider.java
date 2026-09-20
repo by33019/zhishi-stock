@@ -201,9 +201,14 @@ public class SimulatedSectorProvider implements SectorProvider {
 
   private static SectorMember member(
       String securityCode, String sectorId, String relationType, boolean primary) {
-    // 主键由代码派生：本模拟源的证券 ID 恒为 sim-<code>，与 SimulatedSecurityQuoteProvider 一致
+    // 证券 ID 由代码派生：构词规则统一在 SimulatedSecurityIds，不再靠注释维持"两处一致"
     return new SectorMember(
-        "sim-" + securityCode, sectorId, relationType, primary, RELATION_EFFECTIVE_FROM, null);
+        SimulatedSecurityIds.securityIdOf(securityCode),
+        sectorId,
+        relationType,
+        primary,
+        RELATION_EFFECTIVE_FROM,
+        null);
   }
 
   private static String sectorId(int ordinal) {

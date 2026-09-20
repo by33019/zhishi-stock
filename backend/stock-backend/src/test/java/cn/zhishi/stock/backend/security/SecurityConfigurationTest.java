@@ -123,7 +123,14 @@ class SecurityConfigurationTest {
               {"POST", "/api/v1/watchlist-groups"},
               {"PATCH", "/api/v1/watchlist-groups/1"},
               {"DELETE", "/api/v1/watchlist-groups/1"},
-              {"PUT", "/api/v1/watchlist-groups/order"}}) {
+              {"PUT", "/api/v1/watchlist-groups/order"},
+              {"GET", "/api/v1/watchlist-groups/1/items"},
+              {"POST", "/api/v1/watchlist-groups/1/items"},
+              {"PATCH", "/api/v1/watchlist-groups/1/items/2"},
+              {"DELETE", "/api/v1/watchlist-groups/1/items/2"},
+              {"PUT", "/api/v1/watchlist-groups/1/items/order"},
+              {"GET", "/api/v1/watchlists/overview"},
+              {"GET", "/api/v1/watchlists/membership"}}) {
             MockHttpServletRequestBuilder request = switch (target[0]) {
               case "GET" -> get(target[1]);
               case "POST" -> post(target[1]);
@@ -218,6 +225,41 @@ class SecurityConfigurationTest {
 
     @PutMapping("/api/v1/watchlist-groups/order")
     String reorderWatchlistGroups() {
+      return "ok";
+    }
+
+    @GetMapping("/api/v1/watchlist-groups/{groupId}/items")
+    String watchlistItems() {
+      return "ok";
+    }
+
+    @PostMapping("/api/v1/watchlist-groups/{groupId}/items")
+    String addWatchlistItem() {
+      return "ok";
+    }
+
+    @PatchMapping("/api/v1/watchlist-groups/{groupId}/items/{itemId}")
+    String moveWatchlistItem() {
+      return "ok";
+    }
+
+    @DeleteMapping("/api/v1/watchlist-groups/{groupId}/items/{itemId}")
+    String removeWatchlistItem() {
+      return "ok";
+    }
+
+    @PutMapping("/api/v1/watchlist-groups/{groupId}/items/order")
+    String reorderWatchlistItems() {
+      return "ok";
+    }
+
+    @GetMapping("/api/v1/watchlists/overview")
+    String watchlistOverview() {
+      return "ok";
+    }
+
+    @GetMapping("/api/v1/watchlists/membership")
+    String watchlistMembership() {
       return "ok";
     }
   }
