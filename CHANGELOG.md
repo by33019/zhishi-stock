@@ -23,6 +23,33 @@
 
 ---
 
+## 2026-09-20 — M2-11 总览板块预览真实化（关闭已知问题 #14）
+
+### 新增
+
+- `QuoteBatch` 从 `market.application` 下沉到 `market.domain` 并公开（自 `application` 包移入）：第 4 个消费方是摄入侧的 `SimulatedQuoteProvider`，它够不到一个包私有的上层类，而"缺快照的成分如何处理"这条口径不该抄第 4 遍
+- `SimulatedQuoteProvider` 新增 `SectorProvider` 依赖；便捷构造新增 `SimulatedSources`，让整批快照源与板块源**共用同一份** `SecurityMasterProvider`（两者各持一份主数据而将来某一方换了日历，成分与快照会静默失配）
+- `SECTOR_PREVIEW_SIZE = 3`
+- 测试：`SimulatedQuoteProviderTest` 新增 `sectorPreviewIdsAreResolvableByTheSectorDetailApi`（预览每行都能被 SEC-03 解析）、`sectorPreviewMatchesTheSectorRankingTopThree`（与 SEC-02 默认口径首页前 3 行逐字段一致）
+- 前端测试：`MarketOverview.test.ts` 新增"热点板块卡片用预览行的 `sectorId` 作为跳转主键"、"板块没有可统计行情时不把 `null` 渲染成空白"
+- 设计文档 `docs/superpowers/specs/2026-09-20-overview-sector-preview-truth.md`
+
+### 变更
+
+- **总览快照的 `sectors[]` 改为投影自真实板块源**（此前是三个写死的常量）：`SectorProvider.findAll` → `QuoteBatch.ofMembers` → `SectorQuoteCalculator.calculate` → `RankingType.GAINERS.sectorOrder()` 取前 3 名，与 SEC-02 板块排行（默认口径 `GAINERS`）走同一条取数路径
+- `SimulatedQuoteProvider.fetch()` 只取一次整批快照，榜单预览与板块预览共用同一批
+- `BackendConfiguration.quoteProvider` 注入 `SectorProvider`
+- 前端 `OverviewSectorQuote.leadingStock` 改为 `string | null`（后端契约可空），`MarketOverview.vue` 渲染 `?? '--'`（与 `SectorDetailPage.vue` 对同一字段的处理对齐）
+- 前端与 e2e 夹具的板块改用真实的 `sim-bk0033` / `BK0033`
+- `docs/superpowers/specs/2026-09-20-market-status-truth.md` 的 M2-11 归属行标记为已完成
+
+### 修复
+
+- **首页三张板块卡片点进去全部 404**：预览返回的 `sectorId` 是 `bk-ai` / `bk-chip` / `bk-broker`，而板块源生成的是 `sim-bk0001`…`sim-bk0039`，`GET /sectors/{sectorId}` 直接抛 `SECTOR_NOT_FOUND`。与 M2-06 修掉的 `stock-600519` 同类缺陷
+- 总览「热点板块」与「板块分析」页对同一个市场给出不同的热点：预览的 `changeRate` / `companyCount` / `leadingStock` 都是写死的，与 `SectorQuoteCalculator` 的结果对不上，而**两处各自都是"合法"的值，没有任何测试会红**
+
+---
+
 ## 2026-09-20 — M2-10 市场状态真实化（关闭已知问题 #7 / #12）
 
 ### 新增

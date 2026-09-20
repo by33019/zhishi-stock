@@ -85,7 +85,7 @@ LocalDate latestTradeDate() {
 
 | 事项 | 说明 | 归属 |
 | --- | --- | --- |
-| 总览快照里写死的板块预览 | `SimulatedQuoteProvider.sectors()` 返回 `bk-ai` / `bk-chip` / `bk-broker`，而真实板块源生成的是 `sim-bk0001`…`sim-bk0039`。总览页把它们链接到 `/sectors/{sectorId}`，**三张卡片点进去全部 404**。与 M2-06 修掉的 `stock-600519` 同类 | **M2-11**（已确认，不在本轮） |
+| 总览快照里写死的板块预览 | `SimulatedQuoteProvider.sectors()` 返回 `bk-ai` / `bk-chip` / `bk-broker`，而真实板块源生成的是 `sim-bk0001`…`sim-bk0039`。总览页把它们链接到 `/sectors/{sectorId}`，**三张卡片点进去全部 404**。与 M2-06 修掉的 `stock-600519` 同类 | **M2-11**（已完成，见 `2026-09-20-overview-sector-preview-truth.md`） |
 | 总览快照里写死的指数 | `SimulatedQuoteProvider.indices()` 是常量数组。**与本轮的板块问题性质不同**：`idx-*` 不与任何其它链路冲突，没有坏链接，作为模拟源的数据是自洽的 | 不做（见 §6.5） |
 | 顶栏"消息通知"铃铛 | 无数据源 | M3 通知域 |
 | STK-05 批量行情 | 搜索建议涨跌幅与自选页首屏依赖它 | M3-03 |

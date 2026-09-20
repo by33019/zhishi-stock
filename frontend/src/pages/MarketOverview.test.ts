@@ -17,7 +17,7 @@ const overview: MarketOverviewData = {
   indices: [{ indexId: '1', indexCode: '000001', indexName: '上证指数', latestPoint: '3200', changeAmount: '10', changeRate: '0.005', region: 'DOMESTIC', sparkline: [3190, 3200] }],
   breadth: { riseCount: 2, fallCount: 1, flatCount: 0, suspendedCount: 0, limitUpCount: 1, limitDownCount: 0 },
   turnover: { amount: '100000000', previousAmount: '90000000', points: [1, 2] },
-  sectors: [{ sectorId: '1', sectorCode: 'BK-AI', sectorName: '人工智能', changeRate: '0.02', tradeAmount: '100000000', leadingStock: '示例股份', companyCount: 20 }],
+  sectors: [{ sectorId: 'sim-bk0033', sectorCode: 'BK0033', sectorName: '一带一路', changeRate: '0.02', tradeAmount: '100000000', leadingStock: '示例股份', companyCount: 20 }],
   rankings: [{ securityId: '1', securityCode: '600000', securityName: '示例股份', exchangeCode: 'SH', latestPrice: '10', changeAmount: '0.1', changeRate: '0.01', tradeVolume: '1000', tradeAmount: '100000000', turnoverRate: '0.02', sparkline: [9.9, 10] }],
   news: [{ newsId: '1', newsType: 'NEWS', title: '市场快讯', summary: '摘要', sourceName: '模拟资讯', publishedAt: '2026-09-13T14:20:00+08:00', relatedSymbols: [] }],
   componentStatus: { indices: 'REALTIME', breadth: 'REALTIME', turnover: 'REALTIME', sectors: 'REALTIME', rankings: 'REALTIME', news: 'REALTIME' },
@@ -29,7 +29,8 @@ function mountPage() {
   return mount(MarketOverview, {
     global: {
       stubs: {
-        RouterLink: { template: '<a><slot /></a>' },
+        // 渲染 href 才能在测试里断言"卡片跳去哪"，否则跳转目标不可见
+        RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' },
         BaseChart: { template: '<div data-testid="chart-stub" />' },
       },
     },
@@ -170,6 +171,27 @@ describe('市场总览页', () => {
 
     expect(wrapper.get('[data-testid="market-data-status"]').text()).toContain('行情存在延迟')
     expect(wrapper.get('[data-testid="market-data-status"]').text()).toContain('最近同步')
+  })
+
+  it('热点板块卡片用预览行的 sectorId 作为跳转主键', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+
+    const links = wrapper.findAll('.sector-list a')
+    expect(links).toHaveLength(1)
+    // 跳转主键必须是 sectorId：后端曾在这里返回板块源里不存在的 bk-ai，导致三张卡片全部 404
+    expect(links[0].attributes('href')).toBe('/sectors/sim-bk0033')
+  })
+
+  it('板块没有可统计行情时不把 null 渲染成空白', async () => {
+    marketApi.getMarketOverview.mockResolvedValue({
+      ...structuredClone(overview),
+      sectors: [{ ...overview.sectors[0], leadingStock: null }],
+    })
+    const wrapper = mountPage()
+    await flushPromises()
+
+    expect(wrapper.get('.sector-list').text()).toContain('领涨 --')
   })
 
   it('组件部分失败时保留可用内容并标记失败组件', async () => {

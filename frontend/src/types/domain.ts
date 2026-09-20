@@ -92,7 +92,12 @@ export interface OverviewSectorQuote {
   sectorName: string
   changeRate: string
   tradeAmount: string
-  leadingStock: string
+  /**
+   * 领涨股名称；板块内没有任何可统计行情的成分股时为 `null`（后端不编造）。
+   * 当前预览口径（GAINERS）下它必非空——排序键可用即意味着至少有一只成分股有有效行情——
+   * 但类型照实写可空，免得换口径时前端把 `null` 渲染成空白。
+   */
+  leadingStock: string | null
   companyCount: number
 }
 

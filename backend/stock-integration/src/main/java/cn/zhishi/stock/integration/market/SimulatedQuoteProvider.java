@@ -9,13 +9,18 @@ import cn.zhishi.stock.market.domain.MarketOverview.MarketIndex;
 import cn.zhishi.stock.market.domain.MarketOverview.NewsItem;
 import cn.zhishi.stock.market.domain.MarketOverview.QuoteRow;
 import cn.zhishi.stock.market.domain.MarketOverview.Region;
-import cn.zhishi.stock.market.domain.MarketOverview.SectorQuote;
 import cn.zhishi.stock.market.domain.MarketOverview.TurnoverData;
 import cn.zhishi.stock.market.domain.MarketSessionStatus;
+import cn.zhishi.stock.market.domain.QuoteBatch;
 import cn.zhishi.stock.market.domain.QuoteProvider;
 import cn.zhishi.stock.market.domain.QuoteSnapshot;
 import cn.zhishi.stock.market.domain.QuoteSnapshotBatchProvider;
 import cn.zhishi.stock.market.domain.RankingType;
+import cn.zhishi.stock.market.domain.Sector;
+import cn.zhishi.stock.market.domain.SectorMember;
+import cn.zhishi.stock.market.domain.SectorProvider;
+import cn.zhishi.stock.market.domain.SectorQuote;
+import cn.zhishi.stock.market.domain.SectorQuoteCalculator;
 import cn.zhishi.stock.market.domain.SecurityMasterProvider;
 import cn.zhishi.stock.market.domain.SecurityQuoteProvider;
 import cn.zhishi.stock.market.domain.TradingCalendarDay;
@@ -42,12 +47,16 @@ public class SimulatedQuoteProvider implements QuoteProvider {
     /** 行情热榜预览的行数。 */
     private static final int RANKING_PREVIEW_SIZE = 3;
 
+    /** 热点板块预览的行数。 */
+    private static final int SECTOR_PREVIEW_SIZE = 3;
+
     private final Clock clock;
     private final Scenario scenario;
     private final LimitRuleProvider limitRuleProvider;
     private final SecurityQuoteProvider securityQuoteProvider;
     private final QuoteSnapshotBatchProvider quoteSnapshotBatchProvider;
     private final TradingCalendarProvider tradingCalendarProvider;
+    private final SectorProvider sectorProvider;
 
     /** 独立使用（定时任务、单测）时的便捷构造：自建一份确定性的整批快照源。 */
     public SimulatedQuoteProvider(Clock clock, Scenario scenario) {
@@ -56,12 +65,11 @@ public class SimulatedQuoteProvider implements QuoteProvider {
     }
 
     /**
-     * 便捷构造：整批快照源由本构造**按同一个交易日历实例**自建。
+     * 便捷构造：整批快照源与板块源都由本构造**按同一个交易日历实例**自建。
      *
-     * <p>之所以把日历一起收进来，是因为总览的 {@code tradeDate} 与榜单预览的
-     * {@code tradeDate} 必须来自同一份日历。若两者各自持有一份（例如一份带节假日、
-     * 一份不带），非交易日就会算出不同的交易日，而**不会有任何测试报错**——
-     * 这与本切片修复的缺陷是同一个成因。
+     * <p>之所以把日历一起收进来，是因为总览的 {@code tradeDate}、榜单预览与板块预览
+     * 必须来自同一份日历。若各自持有一份（例如一份带节假日、一份不带），非交易日就会算出
+     * 不同的交易日，而**不会有任何测试报错**——这与本切片修复的缺陷是同一个成因。
      */
     public SimulatedQuoteProvider(
             Clock clock, Scenario scenario, TradingCalendarProvider tradingCalendarProvider) {
@@ -74,31 +82,62 @@ public class SimulatedQuoteProvider implements QuoteProvider {
             LimitRuleProvider limitRuleProvider,
             TradingCalendarProvider tradingCalendarProvider) {
         this(clock, scenario, limitRuleProvider, tradingCalendarProvider,
-                defaultBatchProvider(clock, limitRuleProvider, tradingCalendarProvider));
+                defaultSources(clock, limitRuleProvider, tradingCalendarProvider));
     }
 
-    /** 生产装配用的完整构造：整批快照源与日历都由配置层注入同一实例。 */
+    /**
+     * 生产装配用的完整构造：整批快照源、日历与板块源都由配置层注入同一批实例。
+     *
+     * <p>{@code sectorProvider} 必须与 SEC-02 / SEC-03 用的是**同一个**板块源，
+     * 否则总览的板块预览会给出别处解析不了的 {@code sectorId}（首页卡片 404）。
+     */
     public SimulatedQuoteProvider(
             Clock clock,
             Scenario scenario,
             LimitRuleProvider limitRuleProvider,
             TradingCalendarProvider tradingCalendarProvider,
-            QuoteSnapshotBatchProvider quoteSnapshotBatchProvider) {
+            QuoteSnapshotBatchProvider quoteSnapshotBatchProvider,
+            SectorProvider sectorProvider) {
         this.clock = clock;
         this.scenario = scenario;
         this.limitRuleProvider = limitRuleProvider;
         this.securityQuoteProvider = new SimulatedSecurityQuoteProvider(limitRuleProvider);
         this.quoteSnapshotBatchProvider = quoteSnapshotBatchProvider;
         this.tradingCalendarProvider = tradingCalendarProvider;
+        this.sectorProvider = sectorProvider;
     }
 
-    private static QuoteSnapshotBatchProvider defaultBatchProvider(
+    /** 便捷构造用的数据源集合，使两个自建源能共用同一份证券主数据。 */
+    private record SimulatedSources(
+            QuoteSnapshotBatchProvider batch, SectorProvider sectors) {
+    }
+
+    /**
+     * 自建一套确定性的整批快照源与板块源。
+     *
+     * <p>两者**共用同一个** {@link SecurityMasterProvider} 实例。板块成分是投影自证券主数据的，
+     * 两份主数据实例虽然逐位相同，但共用一份可以让"板块成分指向的证券"与
+     * "整批快照里的证券"在构造上就是同一个全集——若各自一份而将来某一方换了日历，
+     * 成分与快照的连接会静默失配，板块预览会变成空列表而不报错。
+     */
+    private static SimulatedSources defaultSources(
             Clock clock, LimitRuleProvider limitRuleProvider, TradingCalendarProvider calendar) {
         SecurityQuoteProvider quotes = new SimulatedSecurityQuoteProvider(limitRuleProvider);
         SecurityMasterProvider master =
                 new SimulatedSecurityMasterProvider(quotes, calendar, clock);
-        return new SimulatedQuoteSnapshotProvider(
-                quotes, master, limitRuleProvider, calendar, clock);
+        return new SimulatedSources(
+                new SimulatedQuoteSnapshotProvider(quotes, master, limitRuleProvider, calendar, clock),
+                new SimulatedSectorProvider(master));
+    }
+
+    private SimulatedQuoteProvider(
+            Clock clock,
+            Scenario scenario,
+            LimitRuleProvider limitRuleProvider,
+            TradingCalendarProvider tradingCalendarProvider,
+            SimulatedSources sources) {
+        this(clock, scenario, limitRuleProvider, tradingCalendarProvider,
+                sources.batch(), sources.sectors());
     }
 
     @Override
@@ -134,6 +173,10 @@ public class SimulatedQuoteProvider implements QuoteProvider {
         componentStatus.put("rankings", DataStatus.REALTIME);
         componentStatus.put("news", DataStatus.REALTIME);
 
+        // 整批快照只取一次：榜单预览与板块预览必须是**同一批**，
+        // 否则两个预览段会各自持有一个"合法"的版本号。
+        QuoteBatch batch = QuoteBatch.of(quoteSnapshotBatchProvider.fetchBatch(marketCode));
+
         return new MarketOverview(
                 marketCode,
                 sessionStatus,
@@ -146,8 +189,8 @@ public class SimulatedQuoteProvider implements QuoteProvider {
                         "982645000000",
                         "916218000000",
                         List.of(538.2, 1028.6, 1886.4, 2945.1, 4380.8, 6126.2, 7982.3, 9826.45)),
-                scenario == Scenario.PARTIAL ? List.of() : sectors(),
-                rankings(quoteSnapshotBatchProvider.fetchBatch(marketCode)),
+                scenario == Scenario.PARTIAL ? List.of() : sectors(batch),
+                rankings(batch.snapshots()),
                 news(now),
                 componentStatus,
                 now,
@@ -272,11 +315,63 @@ public class SimulatedQuoteProvider implements QuoteProvider {
                         Region.OVERSEAS, List.of(26110.2, 26188.7, 26240.1, 26302.4, 26388.16)));
     }
 
-    private static List<SectorQuote> sectors() {
-        return List.of(
-                new SectorQuote("bk-ai", "BK-AI", "人工智能", "0.0342", "126800000000", "中科曙光", 68),
-                new SectorQuote("bk-chip", "BK-CHIP", "半导体", "0.0286", "105400000000", "北方华创", 81),
-                new SectorQuote("bk-broker", "BK-BROKER", "证券", "0.0231", "87600000000", "东方财富", 50));
+    /**
+     * 热点板块预览：涨幅榜前 3 名。
+     *
+     * <p>**与 SEC-02 板块排行走同一条取数路径**：同一个 {@link SectorProvider}、同一个
+     * {@link QuoteBatch}、同一个 {@link SectorQuoteCalculator}、同一个 {@link RankingType#GAINERS}
+     * 排序口径，差别只在取前 3 行而不是分页。
+     *
+     * <p>此前这里是三个写死的常量，{@code sectorId} 用的是板块源里不存在的
+     * {@code bk-ai} / {@code bk-chip} / {@code bk-broker}，而总览页把它们当作主键跳转
+     * {@code /sectors/{sectorId}}，于是**首页三张卡片点进去全部 404**；
+     * 三个数字也与「板块分析」页对不上。投影之后两处必然一致，不需要靠约定维持。
+     *
+     * <p>{@code dataTime} / {@code dataStatus} 沿用整批快照的口径（而非总览自身的
+     * {@code dataTime}），因为这样本路径与 SEC-03 的 {@code statistics(sector)} 逐字相同。
+     * 这两个值不会外泄——预览段的契约里没有它们。
+     */
+    private List<MarketOverview.SectorQuote> sectors(QuoteBatch batch) {
+        Map<String, List<SectorMember>> memberships = sectorProvider.memberships(MARKET_CODE, null);
+        return sectorProvider.findAll(MARKET_CODE).stream()
+                // 停用板块不进当前排行（契约 §10 SEC-03 说明），与 SEC-02 一致
+                .filter(Sector::active)
+                .map(sector -> SectorQuoteCalculator.calculate(
+                        sector,
+                        batch.ofMembers(memberships.getOrDefault(sector.sectorId(), List.of())),
+                        batch.dataTime(),
+                        batch.dataStatus()))
+                // 无有效排序键的板块不进预览：先过滤再排序，比较器因此不必处理 null
+                .filter(RankingType.GAINERS::hasSortKey)
+                .sorted(RankingType.GAINERS.sectorOrder())
+                .limit(SECTOR_PREVIEW_SIZE)
+                .map(SimulatedQuoteProvider::toSectorQuote)
+                .toList();
+    }
+
+    /**
+     * 13 字段的板块统计 → 总览预览段的 7 字段。
+     *
+     * <p>两个记录同名但字段集不同，且**刻意不合并**：{@link SectorQuote} 服务
+     * SEC-02 / SEC-03 / SEC-04 / SEC-06，而预览段在契约里就没有 {@code sectorType} /
+     * {@code averagePrice} / {@code tradeVolume} / {@code laggingStock}。
+     * 本文件因此不导入 {@code MarketOverview.SectorQuote}、改写成限定名——
+     * 两个同名记录同时出现在一个文件里，显式限定比隐式导入更不容易读错。
+     *
+     * <p>{@code leadingStock} 在预览段只有名称、没有可跳转的 {@code securityId}
+     * （前端也不提供跳转），因此取名称；领涨股缺失时给 {@code null}，不编造。
+     */
+    private static MarketOverview.SectorQuote toSectorQuote(SectorQuote quote) {
+        return new MarketOverview.SectorQuote(
+                quote.sectorId(),
+                quote.sectorCode(),
+                quote.sectorName(),
+                quote.changeRate(),
+                quote.tradeAmount(),
+                quote.leadingStock() == null
+                        ? null
+                        : quote.leadingStock().security().securityName(),
+                quote.companyCount());
     }
 
     private static List<NewsItem> news(OffsetDateTime now) {

@@ -73,6 +73,7 @@
 - [x] **M2-08** P0 前端接入 rankings / sectors / sectors:id / stocks:id — 已完成，见下方详情
 - [x] **M2-09** P1 全局搜索接真实接口 — 已完成，见下方详情
 - [x] **M2-10** P0 市场状态真实化（关闭已知问题 #7 / #12） — 已完成，见下方详情
+- [x] **M2-11** P0 总览板块预览真实化（首页三张卡片 404） — 已完成，见下方详情
 
 ## M3：用户态闭环与 AI 研究编排
 
@@ -720,7 +721,7 @@ PRD QTE-01 的输出列写「含代码、名称、交易所、状态和涨跌幅
 
 | 项 | 归属 |
 | --- | --- |
-| 总览快照写死的板块预览（三张卡片 404） | **M2-11**（已确认） |
+| 总览快照写死的板块预览（三张卡片 404） | **M2-11**（已完成，见下方 M2-11 交付详情） |
 | 总览快照写死的指数 | 不做（`idx-*` 无坏链接，见取舍 7） |
 | 顶栏"消息通知"铃铛 | M3 通知域 |
 | STK-05 批量行情 | M3-03 |
@@ -732,6 +733,88 @@ PRD QTE-01 的输出列写「含代码、名称、交易所、状态和涨跌幅
 | --- | --- |
 | 后端 | **354 项通过**（本次新增 13 项：`TradingSessionsTest` 8 + 总览非交易日 5） |
 | 前端 | **19 文件 / 99 项通过**（基线 18 / 75；新增 `useMarketStatus` 9、`AppShell` +4、`MarketOverview` +7、`format` +4），`TZ=UTC` 下同样全绿 |
+| 类型 / 构建 | `npm run typecheck` 0 错误；`vite build` 成功 |
+| 环境限制 | `InfrastructureIntegrationTest` 报 `Could not find a valid Docker environment`（本机 Docker 未启动），非回归，CI 覆盖 |
+
+---
+
+## M2-11 交付详情
+
+总览快照（MKT-01）的板块预览段此前是三个写死的常量，`sectorId` 用的是板块源里不存在的
+`bk-ai` / `bk-chip` / `bk-broker`，而总览页把它们当作主键跳转 `/sectors/{sectorId}`
+→ **首页三张板块卡片点进去全部 404**；三个数字也与「板块分析」页对不上。
+本轮把它改为投影自真实板块源，与 SEC-02 板块排行走同一条取数路径。
+
+### 交付内容
+
+| 项 | 内容 |
+| --- | --- |
+| 新增 spec | `docs/superpowers/specs/2026-09-20-overview-sector-preview-truth.md` |
+| 板块预览改为投影 | `SimulatedQuoteProvider.sectors(QuoteBatch)` 按 `SectorProvider` + `SectorQuoteCalculator` 计算，取 `GAINERS` 前 3 名 |
+| `QuoteBatch` 下沉到 domain | 从 `market.application` 包私有类改为 `market.domain` 公开类，第 4 个消费方（摄入侧适配器）才能复用同一份"按成分关系取数"语义 |
+| 装配补全 | `BackendConfiguration.quoteProvider` 注入 `SectorProvider`；便捷构造自建时整批快照源与板块源**共用同一份证券主数据** |
+| 前端契约对齐 | `OverviewSectorQuote.leadingStock` 改为 `string \| null`（后端不编造），页面渲染 `?? '--'` |
+| 后端测试 | `SimulatedQuoteProviderTest` 9 → 11 项 |
+| 前端测试 | `MarketOverview.test.ts` 11 → 13 项 |
+
+### 修复的缺陷：同一份快照里两处对同一个板块给出不同事实
+
+| 位置 | 修复前 | 修复后 |
+| --- | --- | --- |
+| 总览 `sectors[].sectorId` | `bk-ai`（板块源里不存在）→ 点进去 404 | `sim-bk0033` 等真实 ID |
+| 总览 `sectors[].sectorName` | 人工智能 / 半导体 / 证券 | 一带一路 / 通信设备 / 消费电子（真实前三名） |
+| 总览 `sectors[].changeRate` | 0.0342 / 0.0286 / 0.0231（写死） | 0.0228 / 0.0220 / 0.0215（等权平均，与 SEC-02 一致） |
+| 总览 `sectors[].companyCount` | 68 / 81 / 50（写死） | 149 / 247 / 245（成分事实） |
+
+### 关键设计取舍
+
+**1. `QuoteBatch` 下沉到 `domain`，而不是在适配器里再抄一遍**
+要让预览与 SEC-03 逐字段相同，最可靠的做法是走同一条路径。但 `QuoteBatch` 原本是
+`market.application` 里的包私有类，`stock-integration` 够不到。两条路：在适配器里重写
+"按成分关系取数 + 缺快照则跳过"，或把它下沉一层。选后者——`QuoteBatch` 只依赖领域类型，
+是纯视图，下沉不构成依赖倒置；而"缺快照的成分如何处理"从此只有一份实现。
+
+**2. 排序口径复用 `RankingType.GAINERS.sectorOrder()`，不另写一个比较器**
+`SectorParameters.DEFAULT_RANKING_TYPE` 就是 `GAINERS`，因此预览与 SEC-02 默认口径天然一致。
+另写一个"按涨跌幅降序"的比较器，就会出现"榜单兜底键按 sectorCode 升序、预览按别的顺序"
+这种只在同涨幅时才暴露的分叉。
+
+**3. `dataTime` / `dataStatus` 沿用整批快照的口径**
+`QuoteSnapshot.dataTime` 是**该交易日收盘时刻**，而总览自身的 `dataTime` 盘中为 `now`，
+两者不同源。这里刻意用批次口径，使本路径与 `SectorQueryService.statistics(sector)` 逐字相同；
+这两个值不会外泄——预览段的契约里没有它们。
+
+**4. 便捷构造让整批快照源与板块源共用同一份证券主数据**
+`SimulatedSectorProvider` 的成分是投影自证券主数据的。若两者各持一份主数据实例而将来某一方
+换了日历，"板块成分指向的证券"与"整批快照里的证券"会静默失配，板块预览会变成空列表而不报错。
+共用一份从构造上消除这个面（M2-10 的日历分叉是同一类问题）。
+
+**5. `stock-job` 继续用便捷构造，不新增四个 Bean**
+M2-10 给 `stock-job` 补 `TradingCalendarProvider` Bean 是因为节假日是**可配置输入**，
+两边配置不同就会对"今天是哪一天"给出不同答案。板块源没有任何可配置输入，
+完全由传入的日历决定，因此便捷构造已足够；为对称而新增四个纯样板 Bean 是投机性改动。
+
+**6. 前端 `leadingStock` 改为可空**
+后端契约里它是可空的。当前 `GAINERS` 口径下它必非空（排序键可用 ⟹ 至少一只成分股有有效行情
+⟹ 领涨股存在），但类型照实写可空，免得换口径时把 `null` 渲染成空白。
+`SectorDetailPage.vue` 对同一字段早已用 `?? '--'`，此处对齐。
+
+### 不在本轮范围
+
+| 项 | 归属 |
+| --- | --- |
+| 总览快照写死的指数（`idx-sh` 等） | 不做（无坏链接，模拟源自洽） |
+| 总览 `turnover` 写死的量额与点位 | 不做（无可对齐的第二来源，且非标识符） |
+| 总览 `news()` 单条模拟资讯 | M3-05 |
+| 顶栏"消息通知"铃铛 | M3 通知域 |
+| STK-05 批量行情 | M3-03 |
+
+### 验证结果
+
+| 项 | 结果 |
+| --- | --- |
+| 后端 | **353 项通过**（全量 354 项，其中 `InfrastructureIntegrationTest` 因本机未启动 Docker 报错）；本次新增 2 项 |
+| 前端 | **19 文件 / 101 项通过**（基线 19 / 99；新增跳转主键 1、`leadingStock` 为 null 1），`TZ=UTC` 下同样全绿 |
 | 类型 / 构建 | `npm run typecheck` 0 错误；`vite build` 成功 |
 | 环境限制 | `InfrastructureIntegrationTest` 报 `Could not find a valid Docker environment`（本机 Docker 未启动），非回归，CI 覆盖 |
 
@@ -752,3 +835,4 @@ PRD QTE-01 的输出列写「含代码、名称、交易所、状态和涨跌幅
 - [x] M2-08（2026-09-20）
 - [x] M2-09（2026-09-20）
 - [x] M2-10（2026-09-20）
+- [x] M2-11（2026-09-20）

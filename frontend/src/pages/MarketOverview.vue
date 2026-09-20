@@ -257,7 +257,7 @@ const turnoverOption = computed<EChartsOption>(() => ({
         <div v-else-if="market.sectors.length" class="sector-list">
           <RouterLink v-for="(sector, index) in market.sectors" :key="sector.sectorId" :to="`/sectors/${sector.sectorId}`">
             <span class="sector-rank">0{{ index + 1 }}</span>
-            <span class="sector-name"><strong>{{ sector.sectorName }}</strong><small>领涨 {{ sector.leadingStock }}</small></span>
+            <span class="sector-name"><strong>{{ sector.sectorName }}</strong><small>领涨 {{ sector.leadingStock ?? '--' }}</small></span>
             <span class="sector-amount mono">{{ formatMoney(sector.tradeAmount) }}</span>
             <b :class="trendClass(sector.changeRate)" class="mono">{{ formatChangeRate(sector.changeRate) }}</b>
           </RouterLink>

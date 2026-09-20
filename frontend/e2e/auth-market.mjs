@@ -124,7 +124,7 @@ function marketOverview() {
     indices: [{ indexId: '1', indexCode: '000001', indexName: '上证指数', latestPoint: '3200', changeAmount: '10', changeRate: '0.005', region: 'DOMESTIC', sparkline: [3190, 3200] }],
     breadth: { riseCount: 2, fallCount: 1, flatCount: 0, limitUpCount: 1, limitDownCount: 0 },
     turnover: { amount: '100000000', previousAmount: '90000000', points: [1, 2] },
-    sectors: [{ sectorId: '1', sectorCode: 'BK-AI', sectorName: '人工智能', changeRate: '0.02', tradeAmount: '100000000', leadingStock: '示例股份', companyCount: 20 }],
+    sectors: [{ sectorId: 'sim-bk0033', sectorCode: 'BK0033', sectorName: '一带一路', changeRate: '0.02', tradeAmount: '100000000', leadingStock: '示例股份', companyCount: 20 }],
     rankings: [{ securityId: '1', securityCode: '600000', securityName: '示例股份', exchangeCode: 'SH', latestPrice: '10', changeAmount: '0.1', changeRate: '0.01', tradeVolume: '1000', tradeAmount: '100000000', turnoverRate: '0.02', sparkline: [9.9, 10] }],
     news: [{ newsId: '1', newsType: 'NEWS', title: '市场快讯', summary: '摘要', sourceName: '模拟资讯', publishedAt: '2026-09-13T14:20:00+08:00', relatedSymbols: [] }],
     componentStatus: { indices: 'REALTIME', breadth: 'REALTIME', turnover: 'REALTIME', sectors: 'REALTIME', rankings: 'REALTIME', news: 'REALTIME' },

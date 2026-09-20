@@ -1,6 +1,7 @@
 package cn.zhishi.stock.market.application;
 
 import cn.zhishi.stock.common.api.PageData;
+import cn.zhishi.stock.market.domain.QuoteBatch;
 import cn.zhishi.stock.market.domain.QuoteSnapshotBatchProvider;
 import cn.zhishi.stock.market.domain.RankingType;
 import cn.zhishi.stock.market.domain.Sector;

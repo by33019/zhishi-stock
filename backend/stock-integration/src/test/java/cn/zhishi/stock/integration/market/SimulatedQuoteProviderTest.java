@@ -1,8 +1,12 @@
 package cn.zhishi.stock.integration.market;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 
 import cn.zhishi.stock.market.application.RankingCriteria;
+import cn.zhishi.stock.market.application.SectorQueryService;
+import cn.zhishi.stock.market.application.SectorRankingCriteria;
+import cn.zhishi.stock.market.application.SectorRankingQueryService;
 import cn.zhishi.stock.market.application.StockRankingQueryService;
 import cn.zhishi.stock.market.domain.BreadthCalculator;
 import cn.zhishi.stock.market.domain.LimitRuleProvider;
@@ -11,6 +15,9 @@ import cn.zhishi.stock.market.domain.MarketOverview.QuoteRow;
 import cn.zhishi.stock.market.domain.MarketSessionStatus;
 import cn.zhishi.stock.market.domain.QuoteSnapshot;
 import cn.zhishi.stock.market.domain.QuoteSnapshotBatchProvider;
+import cn.zhishi.stock.market.domain.SectorDetail;
+import cn.zhishi.stock.market.domain.SectorProvider;
+import cn.zhishi.stock.market.domain.SectorQuote;
 import cn.zhishi.stock.market.domain.SecurityMasterProvider;
 import cn.zhishi.stock.market.domain.SecurityQuoteProvider;
 import cn.zhishi.stock.market.domain.TradingCalendarProvider;
@@ -56,7 +63,20 @@ class SimulatedQuoteProviderTest {
     assertThat(snapshot.dataStatus()).isEqualTo(MarketOverview.DataStatus.REALTIME);
     assertThat(snapshot.indices()).hasSize(4);
     assertThat(snapshot.breadth().riseCount()).isPositive();
-    assertThat(snapshot.sectors().get(0).sectorCode()).isEqualTo("BK-AI");
+    // 板块预览的标识符必须取自真实板块源：写死的 bk-ai / BK-AI 会被总览页当作主键跳转而 404。
+    // 取值同时是确定性的——模拟源固定则前三名固定，因此这里钉住全部字段。
+    assertThat(snapshot.sectors())
+        .extracting(
+            MarketOverview.SectorQuote::sectorId,
+            MarketOverview.SectorQuote::sectorCode,
+            MarketOverview.SectorQuote::sectorName,
+            MarketOverview.SectorQuote::changeRate,
+            MarketOverview.SectorQuote::leadingStock,
+            MarketOverview.SectorQuote::companyCount)
+        .containsExactly(
+            tuple("sim-bk0033", "BK0033", "一带一路", "0.0228", "模拟证券830223", 149),
+            tuple("sim-bk0012", "BK0012", "通信设备", "0.0220", "模拟证券830127", 247),
+            tuple("sim-bk0010", "BK0010", "消费电子", "0.0215", "模拟证券830223", 245));
     assertThat(snapshot.rankings()).hasSize(3);
     assertThat(snapshot.news().get(0).newsType()).isEqualTo("NEWS");
     assertThat(snapshot.snapshotVersion()).isEqualTo("sim-CN-20260911T100000-normal");
@@ -90,7 +110,8 @@ class SimulatedQuoteProviderTest {
         SimulatedQuoteProvider.Scenario.NORMAL,
         new SimulatedLimitRuleProvider(),
         calendar,
-        batchProvider(CLOCK, calendar));
+        batchProvider(CLOCK, calendar),
+        sectorProvider());
 
     List<QuoteRow> preview = provider.fetch("CN").rankings();
     List<QuoteSnapshot> topThree =
@@ -134,6 +155,72 @@ class SimulatedQuoteProviderTest {
   }
 
   /**
+   * 总览板块预览的每一行都必须能被 SEC-03 解析。
+   *
+   * <p>修复前预览返回的是写死的 {@code bk-ai} / {@code bk-chip} / {@code bk-broker}，
+   * 而真实板块源生成的是 {@code sim-bk0001}…{@code sim-bk0039}——总览页把它们当作
+   * 主键跳转 {@code /sectors/{sectorId}}，**三张卡片点进去全部 404**。
+   *
+   * <p>这条断言刻意走真实用例服务而不是比对字符串：判据是"能不能被解析"，
+   * 而不是"长得像不像一个 ID"。
+   */
+  @Test
+  void sectorPreviewIdsAreResolvableByTheSectorDetailApi() {
+    TradingCalendarProvider calendar = calendar(CLOCK);
+    QuoteSnapshotBatchProvider batch = batchProvider(CLOCK, calendar);
+    SectorProvider sectors = sectorProvider();
+    SectorQueryService detailService = new SectorQueryService(sectors, batch);
+
+    List<MarketOverview.SectorQuote> preview = quoteProvider(calendar, batch, sectors).fetch("CN").sectors();
+
+    assertThat(preview).hasSize(3);
+    for (MarketOverview.SectorQuote row : preview) {
+      // 查不到会抛 SectorNotFoundException，即首页卡片的 404
+      SectorDetail detail = detailService.detail(row.sectorId());
+      assertThat(detail.sector().sectorCode()).isEqualTo(row.sectorCode());
+      assertThat(detail.sector().sectorName()).isEqualTo(row.sectorName());
+      assertThat(detail.quote().companyCount()).isEqualTo(row.companyCount());
+      assertThat(detail.quote().changeRate()).isEqualTo(row.changeRate());
+    }
+  }
+
+  /**
+   * 总览板块预览必须与 SEC-02 板块排行（默认口径 GAINERS）首页前 3 行逐字段一致。
+   *
+   * <p>此前两处是两套互不相干的数据：预览写死，排行投影自真实板块源，
+   * 于是「热点板块」卡片与「板块分析」页对同一个市场给出不同的热点，**且不会有任何测试报错**。
+   * 改为同一条取数路径之后，这条一致性由构造方式保证。
+   */
+  @Test
+  void sectorPreviewMatchesTheSectorRankingTopThree() {
+    TradingCalendarProvider calendar = calendar(CLOCK);
+    QuoteSnapshotBatchProvider batch = batchProvider(CLOCK, calendar);
+    SectorProvider sectors = sectorProvider();
+
+    List<MarketOverview.SectorQuote> preview = quoteProvider(calendar, batch, sectors).fetch("CN").sectors();
+    List<SectorQuote> topThree =
+        new SectorRankingQueryService(sectors, batch)
+            .rank(new SectorRankingCriteria(null, "GAINERS", 1, 3))
+            .items();
+
+    assertThat(preview).hasSize(topThree.size());
+    for (int index = 0; index < preview.size(); index++) {
+      MarketOverview.SectorQuote row = preview.get(index);
+      SectorQuote expected = topThree.get(index);
+      assertThat(row.sectorId()).isEqualTo(expected.sectorId());
+      assertThat(row.sectorCode()).isEqualTo(expected.sectorCode());
+      assertThat(row.sectorName()).isEqualTo(expected.sectorName());
+      assertThat(row.changeRate()).isEqualTo(expected.changeRate());
+      assertThat(row.tradeAmount()).isEqualTo(expected.tradeAmount());
+      assertThat(row.companyCount()).isEqualTo(expected.companyCount());
+      assertThat(row.leadingStock())
+          .isEqualTo(expected.leadingStock() == null
+              ? null
+              : expected.leadingStock().security().securityName());
+    }
+  }
+
+  /**
    * 契约 §3.6 后：非交易日返回最近有效收盘快照，并把 {@code sessionStatus} 标为 CLOSED，
    * **不视为数据延迟**。
    *
@@ -172,7 +259,8 @@ class SimulatedQuoteProviderTest {
         SimulatedQuoteProvider.Scenario.NORMAL,
         new SimulatedLimitRuleProvider(),
         calendar,
-        batchProvider(SATURDAY, calendar));
+        batchProvider(SATURDAY, calendar),
+        sectorProvider());
 
     var snapshot = provider.fetch("CN");
     OffsetDateTime batchDataTime =
@@ -253,6 +341,20 @@ class SimulatedQuoteProviderTest {
     SecurityQuoteProvider quotes = new SimulatedSecurityQuoteProvider(rules);
     SecurityMasterProvider master = new SimulatedSecurityMasterProvider(quotes, calendar, clock);
     return new SimulatedQuoteSnapshotProvider(quotes, master, rules, calendar, clock);
+  }
+
+  /** 按生产装配的形状构造总览源：整批快照源与板块源都由调用方注入。 */
+  private static SimulatedQuoteProvider quoteProvider(
+      TradingCalendarProvider calendar,
+      QuoteSnapshotBatchProvider batch,
+      SectorProvider sectors) {
+    return new SimulatedQuoteProvider(
+        CLOCK,
+        SimulatedQuoteProvider.Scenario.NORMAL,
+        new SimulatedLimitRuleProvider(),
+        calendar,
+        batch,
+        sectors);
   }
 
   /**
