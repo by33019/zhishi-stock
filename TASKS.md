@@ -70,7 +70,7 @@
 - [x] **M2-05** P0 个股快照与日/周/月 K 线（STK-04 / STK-07） — 已完成，见下方详情
 - [x] **M2-06** P0 榜单（涨跌幅/成交额/换手）+ 分页筛选 — 已完成，见下方详情
 - [x] **M2-07** P1 板块排行、详情与成分股 — 已完成，见下方详情
-- [ ] **M2-08** P0 前端接入 rankings / sectors / sectors:id / stocks:id — 依赖：M2-05、M2-06、M2-07
+- [x] **M2-08** P0 前端接入 rankings / sectors / sectors:id / stocks:id — 已完成，见下方详情
 - [ ] **M2-09** P1 全局搜索接真实接口 — 依赖：M2-04
 
 ## M3：用户态闭环与 AI 研究编排
@@ -507,6 +507,83 @@ QTE-01 的 `sectorId` 筛选还要再来一遍。代价是返回值体积大，�
 
 ---
 
+## M2-08 交付详情
+
+| 项 | 内容 |
+| --- | --- |
+| 范围 | 4 个页面从 `mockApi` 切到真实接口：`/rankings`、`/sectors`、`/sectors/:id`、`/stocks/:id` |
+| 调用 | `/rankings` → `GET /stock-rankings`；`/sectors` → `GET /sector-rankings?size=100`；`/sectors/:id` → `GET /sectors/{id}` + `/sectors/{id}/constituents?size=100`；`/stocks/:id` → `GET /securities/{id}/quote` + `/securities/{id}/klines?period=` |
+| 新增 | `services/rankingApi.ts`、`services/sectorApi.ts`、`services/securityApi.ts`；`composables/useRemoteData.ts`（一次请求的三态 + 过期响应守卫）；`apiClient.toQueryString`（丢弃空值但保留 `false` / `0`） |
+| 修改 | 四个页面；`format.ts` 的 `formatDateTime` 接受 `null` 并识别非法时间；`domain.ts` 删除 `StockDetail` / `MockKlinePoint`、`MockSectorQuote` 改名 `OverviewSectorQuote`；`mockApi.ts` 删除 `getStockDetail` 与 `stockDetail` 常量 |
+| 榜单页 | 三档口径（涨幅/跌幅/成交额）驱动 `rankingType`、交易所单选驱动 `exchangeCodes`、真实分页（`page` / `totalPages` / `hasNext`）；**移除契约不存在的"换手率榜"**与**客户端关键字过滤**；导出按钮置 `disabled`（M3-12） |
+| 板块列表页 | 卡片字段全部来自 `SectorQuote`；原型里写死的"金融领涨，科技成交活跃"改为**数据驱动的客观摘要**（涨幅第一 + 成交额第一 + 上涨板块计数），并移除死的"生成板块综述"按钮 |
+| 板块详情页 | 头部取 `sector` / `parent` / `quote`；**移除假分时曲线**（SEC-05 未实现）；强度拆解只用真实成分股重算涨跌家数（停牌单列）并写明分母；成分股表格用服务端的 `contributionRank` 而非页内序号 |
+| 个股详情页 | 头部与指标条全部来自 `QuoteSnapshot`；K 线周期切换（日/周/月）真实重新请求；**移除市盈率**；公司资料 / 所属板块 / 关联资讯 / AI 速览改为"尚未实现"说明 |
+| 测试 | 前端 **17 文件 / 62 项通过**（原 13 文件 / 37 项），含 `RankingsPage` 5、`SectorsPage` 4、`SectorDetailPage` 5、`StockDetailPage` 7、`useRemoteData` 4、`format` 新增 1；`vue-tsc --noEmit` 0 错误；`vite build` 成功；**`TZ=UTC` 下重跑同样全绿** |
+| 设计文档 | `docs/superpowers/specs/2026-09-20-frontend-integration.md`（9 节 + 8 条取舍） |
+
+### 关键设计取舍
+
+**1. 没有数据来源的字段一律降级，不保留编造值**
+这是本轮最重要的决策。原型的 `peRatio: '6.21'`、`marketCap: '362400000000'`、
+`"量价可信度：高"`、`"+2.15% 相对大盘"` 全是编造的，但**看起来像真实数据**。
+在一个投资辅助工具里，编造的估值指标比空白危险得多——用户会据此做判断。
+因此契约有字段就接真实值，没有就显示"尚未实现"并移除图表/指标。
+代价是个股页明显变空（PE、市值、业务描述、板块、资讯、AI 速览都空），
+接受这个代价：M3 会把它们逐个填回来，而填回来时它们会是真数据。
+
+**2. 抽 `useRemoteData` 统一三态**
+四个页面都需要"加载中 → 成功 / 失败（带 `traceId`，可重试）"。抽一个 ~35 行的 composable，
+避免四份各自演化的 `try/catch/finally`。**刻意不做**缓存、并发去重、轮询、重试退避——都没有需求支撑，
+且 `apiClient` 已经处理了 401 刷新。
+里面有一个容易被漏掉的守卫：**请求序号**。快速切换口径时会并发多个请求，而返回顺序不保证与发出顺序一致；
+没有它，先发的慢请求后到达会把新口径的数据覆盖成旧口径的——页面显示"跌幅榜"却列着涨幅榜的内容，
+且不会有任何异常。已用一条专门的测试（`丢弃过期响应`）钉住。
+
+**3. 筛选条件变化触发重新请求，而不是客户端过滤**
+口径、交易所、页码、K 线周期都是**服务端参数**。榜单页因此移除了原型的关键字筛选框：
+QTE-01 没有 `keyword` 参数，在当前页做客户端过滤会让排名号与真实名次不符
+（第 7 名被过滤掉后，第 8 名仍显示"08"），而排名正是榜单最不能被破坏的东西。
+
+**4. `/sectors` 用 `sector-rankings` 而不是 `sectors` + 逐个 `quote`**
+板块卡片要的涨跌幅 / 成交额 / 领涨股只在 `SectorQuote` 里。逐个取的话 39 个板块就是 39 次请求，
+且**每次取到的快照批次可能不同**——页面上的板块涨跌幅会来自不同时刻。
+排行接口一次返回同一快照下的全部板块行情。代价是页面上看不到停用板块（排行不含 `INACTIVE`）。
+
+**5. 板块详情的涨跌家数写明分母**
+`size` 上限是 100，而板块最多约 257 只成分股。不翻三次页只为算一个家数，
+但**必须写明"基于已取回的 N 只成分股"**，否则"38 家上涨"会被读成整个板块。
+
+**6. 个股页的行情与 K 线各显示自己的数据截止时间**
+契约 STK-05 明确"不保证不同证券源时间完全相同"：K 线的最后一个交易日与快照的盘中时刻
+本就是两个不同的时间点。合成一个"数据截止"会让用户以为它们同源同时。
+
+**7. 停牌成分股的涨跌幅 `null` 不补成 0**
+补 0 会让停牌股看起来是"平盘"，这是最容易误导的一类错。详情页把它单列为"停牌 N 只"。
+
+**8. `MockSectorQuote` 改名 `OverviewSectorQuote`（纠错）**
+它**不是 mock**——`MarketOverview.vue` 早已接真实接口，这个类型就是后端
+`MarketOverview.SectorPreview` 的前端契约（`leadingStock` 只有名称、无 `securityId`）。
+`Mock` 前缀会让人以为它是可以随手改的占位数据。同时删掉 `StockDetail` 与 `MockKlinePoint`：
+它们的唯一使用者是刚被删掉的 `stockDetail` 常量，而 `StockDetail` 上挂着的
+`peRatio` / `marketCap` / `businessDescription` / `aiPrompts` 正是本轮判定为"无数据来源"的那批字段，
+留着等于给下一个人留一份"看起来能用"的假契约。
+
+### 不在本轮范围
+
+| 项 | 归属 |
+| --- | --- |
+| `/news` 接真实接口 | M3-05（依赖资讯 Provider M3-04） |
+| `/watchlist` 接真实接口 | M3-03（依赖自选 CRUD M3-01 / M3-02） |
+| `/ai`、`/history` 接真实接口 | M3-10（依赖 AI 编排与持久化 M3-07 / M3-08） |
+| `/admin` | M3-11 |
+| 全局搜索接真实接口 | M2-09 |
+| 个股资料（STK-08）、所属板块（STK-09）、关联资讯（STK-10） | 后端未实现，本轮显示"尚未实现" |
+| 板块走势（SEC-05）、板块 AI 解读 | 后端未实现 / 依赖 M3-06、M3-07 |
+| 榜单 Excel 导出 | M3-12 |
+
+---
+
 ## 已完成
 
 - [x] 阶段 0 只读审计（2026-09-19）
@@ -519,3 +596,4 @@ QTE-01 的 `sectorId` 筛选还要再来一遍。代价是返回值体积大，�
 - [x] M2-05（2026-09-19）
 - [x] M2-06（2026-09-19）
 - [x] M2-07（2026-09-20）
+- [x] M2-08（2026-09-20）

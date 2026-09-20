@@ -58,14 +58,16 @@ export interface BreadthData {
 }
 
 /**
- * 板块卡片原型数据（字段是简化版，`leadingStock` 只有名称、没有可跳转的 `securityId`）。
+ * 市场总览里的板块预览行（对应后端 `MarketOverview.SectorPreview`）。
  *
- * 名字带 `Mock` 前缀是为了与契约类型 {@link SectorQuote}（对应 RESTful-API.md §10 SEC-02）
- * 区分：两者字段不同，同名会触发 TypeScript 的声明合并，
- * 让 mock 数据因"缺少契约字段"而报错。M2-08 接入真实接口后，本类型随
- * `/sectors` 页面一并由契约类型取代（同 {@link MockKlinePoint}）。
+ * **它不是 mock 数据**：`MarketOverview.vue` 已经接真实接口，本类型就是那一段的契约。
+ * 字段比 §10 SEC-02 的 {@link SectorQuote} 少，且 `leadingStock` 只有名称、没有可跳转的
+ * `securityId`——总览的预览卡片不需要跳转，详情与完整行情走 `/sector-rankings`。
+ *
+ * 两个类型刻意不同名：同名会触发 TypeScript 的声明合并，
+ * 让其中一方因"缺少另一方字段"而报错。
  */
-export interface MockSectorQuote {
+export interface OverviewSectorQuote {
   sectorId: string
   sectorCode: string
   sectorName: string
@@ -112,7 +114,7 @@ export interface MarketOverview {
     previousAmount: string
     points: number[]
   }
-  sectors: MockSectorQuote[]
+  sectors: OverviewSectorQuote[]
   rankings: QuoteRow[]
   news: NewsItem[]
   componentStatus: Record<string, DataStatus>
@@ -144,40 +146,6 @@ export interface TurnoverTrend {
   unit: TurnoverTrendUnit
   dataCutoffAt: string
   points: TurnoverTrendPoint[]
-}
-
-/**
- * 个股详情原型用的 K 线点（简化字段名，价格是 number）。
- *
- * 名字带 `Mock` 前缀是为了与契约类型 {@link KlinePoint}（对应 RESTful-API.md §8.2）
- * 区分：两者字段不同，同名会触发 TypeScript 的声明合并，
- * 让 mock 数据因"缺少契约字段"而报错。M2-08 接入真实接口后，本类型随
- * `StockDetail` 一并由契约类型取代。
- */
-export interface MockKlinePoint {
-  time: string
-  open: number
-  close: number
-  low: number
-  high: number
-  volume: number
-}
-
-export interface StockDetail extends QuoteRow {
-  fullSymbol: string
-  previousClosePrice: string
-  openPrice: string
-  highPrice: string
-  lowPrice: string
-  peRatio: string
-  marketCap: string
-  businessDescription: string
-  sectors: string[]
-  dataTime: string
-  dataStatus: DataStatus
-  kline: MockKlinePoint[]
-  news: NewsItem[]
-  aiPrompts: string[]
 }
 
 export interface AiEvidence {

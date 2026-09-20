@@ -1,13 +1,13 @@
 # PROJECT_STATUS.md — 知势平台项目状态
 
-> 最后更新：2026-09-20（M2-07 完成：板块排行、详情与成分股 SEC-01/02/03/04/06）
+> 最后更新：2026-09-20（M2-08 完成：前端 rankings / sectors / sectors:id / stocks:id 接真实接口）
 > 任务清单见 `TASKS.md`，路线图见 `docs/superpowers/plans/2026-09-19-mvp-delivery-roadmap.md`。
 
 ---
 
 ## 1. 一句话状态
 
-**"知势" AI 智能股票分析平台**：设计文档完备、数据库迁移完备、前端高保真原型可跑、后端首个纵向切片（认证 + 市场总览）已跑通并合入 `main`，**且全栈 Compose 端到端验收已通过**（真实 API + 登录 + Cookie 恢复 + 退出 + 路由保护全链路）。工程地基已完备：mvn 修复、数据库两条迁移路径验证、CI 四作业、容器构建稳定性修复、项目文档补全、本地 dev 联调打通。**M1 除「GitHub 分支保护」需用户操作外全部完成**；**M2 已交付 MKT-02 市场状态、MKT-03 市场广度、MKT-04 成交趋势、STK-01/02 证券主数据与搜索建议、STK-04/07 个股快照与 K 线、QTE-01 榜单、SEC-01~04/06 板块**。市场域已从"首页一张硬编码快照"扩展为可查询的状态 / 广度 / 趋势 / 证券 / 榜单 / 板块六组接口，广度与趋势均由确定性模拟数据按规则真实计算；证券主数据（5149 只）已可搜索与分页筛选；个股详情已可查完整快照与日/周/月 K 线；全市场榜单已可按涨跌幅 / 成交额排序并多条件筛选分页；**板块已可排行、下钻到详情与成分股，且 `sectorId` 在 STK-02 与 QTE-01 上成为真实可用的筛选键**（此前是硬编码空页）。
+**"知势" AI 智能股票分析平台**：设计文档完备、数据库迁移完备、前端高保真原型可跑、后端首个纵向切片（认证 + 市场总览）已跑通并合入 `main`，**且全栈 Compose 端到端验收已通过**（真实 API + 登录 + Cookie 恢复 + 退出 + 路由保护全链路）。工程地基已完备：mvn 修复、数据库两条迁移路径验证、CI 四作业、容器构建稳定性修复、项目文档补全、本地 dev 联调打通。**M1 除「GitHub 分支保护」需用户操作外全部完成**；**M2 已交付 MKT-02 市场状态、MKT-03 市场广度、MKT-04 成交趋势、STK-01/02 证券主数据与搜索建议、STK-04/07 个股快照与 K 线、QTE-01 榜单、SEC-01~04/06 板块，并把榜单 / 板块 / 板块详情 / 个股详情四个页面接入真实接口**。市场域已从"首页一张硬编码快照"扩展为可查询的状态 / 广度 / 趋势 / 证券 / 榜单 / 板块六组接口，广度与趋势均由确定性模拟数据按规则真实计算；证券主数据（5149 只）已可搜索与分页筛选；个股详情已可查完整快照与日/周/月 K 线；全市场榜单已可按涨跌幅 / 成交额排序并多条件筛选分页；**板块已可排行、下钻到详情与成分股，且 `sectorId` 在 STK-02 与 QTE-01 上成为真实可用的筛选键**（此前是硬编码空页）；**前端 4 个页面已从原型数据切到真实接口**——页面展示的每个数字都能在接口响应里找到来源，没有来源的字段（市盈率、市值、业务描述、板块走势、AI 速览等）一律显示"尚未实现"而不是保留编造值。
 
 ## 2. 仓库与分支
 
@@ -31,7 +31,7 @@
 | 后端 Flyway 迁移（空库路径） | ✅ 已在真实 MySQL 8.4 验证 | 集成测试断言 `flyway_schema_history` 有 8 条成功迁移 |
 | 后端 Flyway 迁移（旧库升级路径） | ✅ **首次验证通过** | baseline v1 → V2–V8 → `now at version v8`，退出码 0 |
 | 迁移后完整性校验 | ✅ 通过 | `post_migration_validation.sql` 无异常明细，`foreign_key_count = 0` |
-| 前端类型检查 + 测试 + 构建 | ✅ 通过 | 13 文件 / 37 测试（默认时区与 `TZ=UTC` 下均全绿）；`vite build` 成功（dist 923 KB） |
+| 前端类型检查 + 测试 + 构建 | ✅ 通过 | **17 文件 / 62 测试**（默认时区与 `TZ=UTC` 下均全绿）；`vue-tsc --noEmit` 0 错误；`vite build` 成功（dist 923 KB） |
 | 本地 dev 联调（Vite 代理） | ✅ 已打通 | dev server 下 `GET /api/v1/markets/overview` 返回真实 JSON |
 | CI | 🟢 **已在 GitHub 实际运行** | `.github/workflows/ci.yml`（**4 作业**，含旧库升级路径）；前端作业曾因时区依赖持续失败，已修复（`3fd970c`） |
 | 全栈 Compose 端到端 | ✅ **已通过** | 6 容器全部启动、无 ERROR；`npm run e2e:real` 通过 |
@@ -44,7 +44,7 @@
 | 里程碑 | 目标 | 状态 |
 | --- | --- | --- |
 | M1 | 合流与工程地基 | 🟢 15/16 完成（仅 M1-07 的「GitHub 分支保护」需用户操作） |
-| M2 | 市场域纵向补全（游客主流程全真实） | 🟡 7/9 完成（M2-01 交易日历与市场状态 ✅、M2-02 市场广度 ✅、M2-03 成交趋势 ✅、M2-04 证券主数据与搜索建议 ✅、M2-05 个股快照与日/周/月 K 线 ✅、M2-06 榜单 ✅、M2-07 板块排行/详情/成分股 ✅） |
+| M2 | 市场域纵向补全（游客主流程全真实） | 🟡 8/9 完成（M2-01 交易日历与市场状态 ✅、M2-02 市场广度 ✅、M2-03 成交趋势 ✅、M2-04 证券主数据与搜索建议 ✅、M2-05 个股快照与日/周/月 K 线 ✅、M2-06 榜单 ✅、M2-07 板块排行/详情/成分股 ✅、M2-08 前端四页接入真实接口 ✅） |
 | M3 | 用户态闭环与 AI 研究编排 | ⬜ 未开始（12 个任务） |
 
 ## 5. 已完成能力盘点
@@ -53,9 +53,9 @@
 | --- | --- | --- |
 | 设计文档 | ✅ 100% | PRD 86KB、Architecture 53KB、RESTful-API 79KB + superpowers specs/plans |
 | 数据库迁移 | ✅ 结构 100% / 两条路径均验证 | Flyway V1–V8；旧库样本 149KB（原 24MB） |
-| 前端原型 | ✅ 页面 100% / 真实接入 2/11 | 11 路由全部有页面；`/market` 与 `/login` 接真实 API |
+| 前端原型 | ✅ 页面 100% / 真实接入 6/11 | 11 路由全部有页面；`/market`、`/login`、`/rankings`、`/sectors`、`/sectors/:id`、`/stocks/:id` 接真实 API；`/news` 与 `/watchlist` 仍走 `mockApi`（M3-05 / M3-03），`/ai`、`/history`、`/admin` 尚无数据源 |
 | 后端 | 🟡 3/8 域 | 认证闭环 ✅、市场总览（MKT-01~04）🟡、证券主数据与个股行情（STK-01/02/04/07）🟡、榜单（QTE-01）🟡、板块（SEC-01/02/03/04/06）🟡；其余未开工 |
-| 测试 | ✅ 375 个 | 后端 338 + 前端 37；无覆盖率门槛 |
+| 测试 | ✅ 400 个 | 后端 338 + 前端 62；无覆盖率门槛 |
 | 工程化 | 🟢 85% | CI 工作流 ✅、TASKS/STATUS/CHANGELOG ✅、根与模块 README ✅、容器构建稳定 ✅；分支保护待用户配置 |
 
 ## 6. 已知问题（按严重度）
@@ -63,12 +63,12 @@
 | # | 问题 | 严重度 | 处置 |
 | --- | --- | --- | --- |
 | 1 | 分支保护未设置（CI 四个作业已实际跑通） | 🟡 | M1-07 收尾（需用户在 GitHub 配置必需检查） |
-| 2 | 9 个前端页面仍走 mockApi | 🟠 | M2-08 / M3-03 / M3-05 / M3-10 |
+| 2 | 5 个前端页面尚无真实数据源 | 🟠 | M2-08 已接入 rankings / sectors / sectors:id / stocks:id 四页（真实接入 2/11 → 6/11）；剩余 `/news`、`/watchlist` 仍走 `mockApi`（M3-05 / M3-03），`/ai`、`/history`、`/admin` 是静态原型、连 mock 都没有（M3-10 / M3-11） |
 | 3 | 认证默认值偏松（`JWT_SECRET` 默认空、dev `COOKIE_SECURE=false`、演示账号固定密码） | 🟡 | 生产 profile 需单独加固，待排期 |
 | 4 | `preflight_existing_schema.sql` 第 8 段永远不会触发（`block_label` 实际是 `varchar(10)`，检查条件为 `> 20`） | 🔵 | 设计上的防御性检查，无实际影响，仅记录 |
 | 5 | 独立 `MockMvc` 的日期序列化与线上不一致（`LocalDate` → `[2026,9,11]`） | 🔵 | **已修复**：契约测试显式构造 `ObjectMapper` 关闭 `WRITE_DATES_AS_TIMESTAMPS`。后续新增契约测试需沿用同一 helper，否则日期断言会失真 |
 | 6 | PRD 把「分时图」列为 P0（STK-02），但 `TASKS.md` 的 M2 未列此任务，当前是功能缺口 | 🟠 | 需单独排期；M2-05 只交付了快照与日/周/月 K 线 |
-| 7 | 市场总览在**非交易日**仍以"今天"为 `tradeDate`、`marketStatus` 报 `TRADING`（M2-01 遗留）。MKT-01 契约要求非交易日回退到最近有效收盘快照并标 `CLOSED` | 🟡 | M2-06 修复了总览榜单预览的 404 与数据不一致，但未动 `tradeDate` / `marketStatus` 的日历回退逻辑；建议与 M2-08 前端接入时一并处理（届时页面需要正确显示"非交易日"） |
+| 7 | 市场总览在**非交易日**仍以"今天"为 `tradeDate`、`marketStatus` 报 `TRADING`（M2-01 遗留）。MKT-01 契约要求非交易日回退到最近有效收盘快照并标 `CLOSED` | 🟠 | **仍未修**。M2-08 是纯前端任务，未动后端日历回退逻辑——原本设想"前端接入时一并处理"，但前端四页只读 `dataTime` / `dataStatus`，`marketStatus` 的回退必须改 `MarketOverviewQueryService`（后端行为变更）。基础设施已就绪：`MarketOverviewArchive.findAt` 已支持"取不晚于该时刻的最近快照"（M2-02），因此这是一处**独立的后端切片**，需单独排期并补契约测试 |
 | 8 | 契约 §10 的 SEC-05 板块走势（`/sectors/{id}/trend`）与 SEC-07 板块资讯（`/sectors/{id}/news`）未交付 | 🟡 | `TASKS.md` 的 M2-07 范围是「排行、详情与成分股」，走势需按成分股聚合时间序列、资讯依赖资讯域（M3-04），两者均需单独排期 |
 | 9 | 板块与成分关系不落库（`stock_sector` / `stock_security_sector` 空置） | 🔵 | 与 M2-01~M2-06 一致：模拟 Provider 内存生成，真实数据源接入时统一入库，用例层不变 |
 
@@ -149,6 +149,8 @@ docker exec -i zhishi-legacy-mysql-1 mysql -ustock -pstock_dev_password stock_sy
 认证：login → JWT access(内存) + refresh(httpOnly cookie, Redis 轮换)
       401 → apiClient 单飞刷新 → 失败清会话 → 登录引导
 统一壳：ApiResponse{success,code,message,data,traceId,timestamp}
+前端接入（M2-08）：/market、/login、/rankings、/sectors、/sectors/:id、/stocks/:id → 真实接口
+                    四页共用 composables/useRemoteData（三态 + 过期响应守卫）与 services/{ranking,sector,security}Api
 ```
 
 **不可动摇的架构约束**：前端不直连任何数据源；AI 由 Spring Boot 编排第三方 LLM（不提前拆 FastAPI）；MySQL 无外键，业务写入靠应用层事务 + 乐观锁 + Outbox。
@@ -162,12 +164,14 @@ docker exec -i zhishi-legacy-mysql-1 mysql -ustock -pstock_dev_password stock_sy
 
 ## 10. 下一步
 
-**M1 已完成**（仅剩 M1-07 的分支保护配置，需用户操作）。**M2-01 ~ M2-07 已完成**（M2 进度 7/9）。
+**M1 已完成**（仅剩 M1-07 的分支保护配置，需用户操作）。**M2-01 ~ M2-08 已完成**（M2 进度 8/9）。
 
-**下一步：M2-08 前端接入**（rankings / sectors / sectors:id / stocks:id，依赖 M2-05 ✅、M2-06 ✅、M2-07 ✅）
-—— 后端接口已全部就位，`domain.ts` 里的契约类型也已补齐，M2-08 只剩"把页面从 `mockApi` 切到真实接口"
-与"按 `dataTime` 渲染数据截止时间"两件事。
+**下一步：M2-09 全局搜索接真实接口**（依赖 M2-04 ✅）—— 后端 `STK-01 /securities/search` 与
+`STK-02 /securities` 已就位，`domain.ts` 的 `SecuritySearchResult` / `SecurityListQuery` 类型也已补齐，
+只剩把全局搜索框与证券列表页接上真实接口。完成后 M2 即收尾。
 
-M2-08 之后剩 M2-09 全局搜索接真实接口（依赖 M2-04 ✅），M2 即收尾。
+之后进入 **M3 用户态闭环**：M3-01/02 自选 CRUD → M3-03 watchlist 接入 → M3-04/05 资讯域 →
+M3-06~08 AI 编排与持久化 → M3-10 AI 工作台。**M3 也是把 M2-08 本轮降级掉的字段
+（市盈率、市值、业务描述、所属板块、关联资讯、板块走势）逐个填回来的阶段**。
 
 > 仍待用户操作：GitHub 分支保护配置（见第 9 节）；`.worktrees/` 残留 2 个被进程占用的 `element-plus` 文件（128K），关闭编辑器后可手动删除。

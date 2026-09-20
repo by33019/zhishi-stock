@@ -1,59 +1,225 @@
 <script setup lang="ts">
-import { Download, Filter, Search, Sparkles, Star } from '@lucide/vue'
-import { computed, ref } from 'vue'
+import { Download, Sparkles } from '@lucide/vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 import PageHeader from '@/components/PageHeader.vue'
-import { rankingRows } from '@/services/mockApi'
-import { formatChangeRate, formatMoney, formatVolume, trendClass } from '@/utils/format'
+import { useRemoteData } from '@/composables/useRemoteData'
+import { getStockRankings } from '@/services/rankingApi'
+import type { RankingType } from '@/types/domain'
+import { formatChangeRate, formatDateTime, formatMoney, formatVolume, trendClass } from '@/utils/format'
 
-const activeList = ref('涨幅榜')
-const keyword = ref('')
-const lists = ['涨幅榜', '跌幅榜', '成交额榜', '换手率榜']
-const filteredRows = computed(() => rankingRows.filter((row) => `${row.securityName}${row.securityCode}`.includes(keyword.value)))
+/**
+ * 榜单口径只有契约 QTE-01 白名单里的三种。
+ *
+ * 原型里还有一档"换手率榜"——契约没有这个口径，客户端按 `turnoverRate` 排序就是自造榜单，
+ * 且只能对**当前页**排序（服务端已按 size 分页），与服务端榜单在数据范围上不一致。
+ */
+const RANKING_TYPES: { value: RankingType; label: string }[] = [
+  { value: 'GAINERS', label: '涨幅榜' },
+  { value: 'LOSERS', label: '跌幅榜' },
+  { value: 'TURNOVER', label: '成交额榜' },
+]
+
+/** 交易所筛选。契约支持逗号分隔多值，MVP 先做单选。 */
+const EXCHANGES: { value: string; label: string }[] = [
+  { value: '', label: '沪深京' },
+  { value: 'SH', label: '沪市' },
+  { value: 'SZ', label: '深市' },
+  { value: 'BJ', label: '北交所' },
+]
+
+const PAGE_SIZE = 20
+
+const rankingType = ref<RankingType>('GAINERS')
+const exchange = ref('')
+const page = ref(1)
+
+const {
+  data: snapshot,
+  loading: loadingRanking,
+  error: rankingError,
+  reload: reloadRanking,
+} = useRemoteData(() => getStockRankings({
+  rankingType: rankingType.value,
+  exchangeCodes: exchange.value || undefined,
+  page: page.value,
+  size: PAGE_SIZE,
+}))
+
+/** "成交额最高"卡片：另取一次成交额榜的第一名，而不是从当前页里挑。 */
+const { data: turnoverTop, reload: loadTurnoverTop } =
+  useRemoteData(() => getStockRankings({ rankingType: 'TURNOVER', size: 1 }))
+
+/**
+ * 用一个查询键驱动重新请求，而不是给每个筛选条件各挂一个 `watch`。
+ *
+ * 多个 `watch` 会在"改口径同时把页码归 1"时触发两次请求，其中一次的结果必然被覆盖——
+ * 用户看到的是闪烁，日志里是两份重复查询。
+ */
+const queryKey = computed(() => `${rankingType.value}|${exchange.value}|${page.value}`)
+watch(queryKey, () => reloadRanking())
+
+onMounted(() => {
+  reloadRanking()
+  loadTurnoverTop()
+})
+
+function selectType(next: RankingType) {
+  rankingType.value = next
+  page.value = 1
+}
+
+function selectExchange(next: string) {
+  exchange.value = next
+  page.value = 1
+}
+
+const leader = computed(() => snapshot.value?.items[0])
+const turnoverLeader = computed(() => turnoverTop.value?.items[0])
+const isDelayed = computed(() =>
+  snapshot.value !== undefined && snapshot.value.dataStatus !== 'REALTIME')
+
+/** 行号是**全榜单**的名次，不是当前页内的序号。 */
+function rankOf(index: number): string {
+  const current = snapshot.value
+  if (!current) return '--'
+  return String((current.page - 1) * current.size + index + 1).padStart(2, '0')
+}
 </script>
 
 <template>
-  <div class="business-page page-enter">
-    <PageHeader eyebrow="MARKET RANKING" title="行情榜单" description="用涨跌、成交与换手交叉识别活跃标的，所有数据均标注最新同步时间。" data-time="09-08 14:32">
-      <button class="secondary-button" type="button"><Download :size="15" /> 导出 Excel</button>
+  <section v-if="rankingError" class="market-state-panel" role="alert">
+    <h1>榜单暂时无法加载</h1>
+    <p>{{ rankingError.message }}</p>
+    <small v-if="rankingError.traceId">追踪编号：{{ rankingError.traceId }}</small>
+    <button data-testid="ranking-retry" type="button" @click="reloadRanking">重新加载</button>
+  </section>
+
+  <div v-else-if="snapshot" class="business-page page-enter">
+    <PageHeader
+      eyebrow="MARKET RANKING"
+      title="行情榜单"
+      description="用涨跌与成交额交叉识别活跃标的；榜单由服务端按全市场排序后分页返回。"
+      :data-time="snapshot.dataTime ? formatDateTime(snapshot.dataTime) : ''"
+    >
+      <button class="secondary-button" type="button" disabled title="Excel 导出待接入（M3-12）">
+        <Download :size="15" /> 导出 Excel
+      </button>
     </PageHeader>
 
     <section class="ranking-summary">
-      <div><span>领涨标的</span><strong>浦发银行</strong><b class="trend-up">+5.47%</b></div>
-      <div><span>成交额最高</span><strong>宁德时代</strong><b>135.20亿</b></div>
-      <div><span>市场中位数</span><strong>+0.62%</strong><b class="trend-up">偏强</b></div>
-      <p><Sparkles :size="16" /><span><strong>AI 观察</strong>大金融放量居前，但高位标的分化扩大，追踪成交持续性优先于单日涨幅。</span></p>
+      <div>
+        <span>领涨标的</span>
+        <strong>{{ leader?.security.securityName ?? '暂无数据' }}</strong>
+        <b :class="trendClass(leader?.changeRate ?? null)" class="mono">
+          {{ formatChangeRate(leader?.changeRate ?? null) }}
+        </b>
+      </div>
+      <div>
+        <span>成交额最高</span>
+        <strong>{{ turnoverLeader?.security.securityName ?? '暂无数据' }}</strong>
+        <b class="mono">{{ formatMoney(turnoverLeader?.tradeAmount ?? null) }}</b>
+      </div>
+      <div>
+        <span>数据状态</span>
+        <strong>{{ snapshot.dataStatus === 'REALTIME' ? '实时行情' : '非实时' }}</strong>
+        <b class="mono">{{ formatDateTime(snapshot.dataTime) }}</b>
+      </div>
+      <p>
+        <Sparkles :size="16" />
+        <span>
+          <strong>口径说明</strong>
+          榜单按服务端全市场排序返回，共 {{ snapshot.total }} 个标的；快照版本
+          {{ snapshot.snapshotVersion || '--' }}。
+        </span>
+      </p>
     </section>
 
     <section class="data-workbench">
       <header class="workbench-toolbar">
         <div class="segmented-tabs">
-          <button v-for="item in lists" :key="item" :class="{ active: activeList === item }" type="button" @click="activeList = item">{{ item }}</button>
+          <button
+            v-for="item in RANKING_TYPES"
+            :key="item.value"
+            :class="{ active: rankingType === item.value }"
+            type="button"
+            @click="selectType(item.value)"
+          >
+            {{ item.label }}
+          </button>
         </div>
         <div class="toolbar-actions">
-          <label class="inline-search"><Search :size="14" /><input v-model="keyword" aria-label="筛选榜单股票" placeholder="筛选股票" /></label>
-          <button class="filter-button" type="button"><Filter :size="14" /> 沪深京</button>
+          <div class="segmented-tabs" aria-label="交易所筛选">
+            <button
+              v-for="item in EXCHANGES"
+              :key="item.value || 'ALL'"
+              :class="{ active: exchange === item.value }"
+              type="button"
+              @click="selectExchange(item.value)"
+            >
+              {{ item.label }}
+            </button>
+          </div>
         </div>
       </header>
+
+      <p v-if="isDelayed" class="component-unavailable" data-testid="ranking-data-status">
+        当前展示最近有效快照（数据截止 {{ formatDateTime(snapshot.dataTime) }}）。
+      </p>
+
       <div class="quote-table-wrap">
         <table class="quote-table ranking-table">
-          <thead><tr><th>排名</th><th>股票</th><th>最新价</th><th>涨跌额</th><th>涨跌幅</th><th>成交量</th><th>成交额</th><th>换手率</th><th>操作</th></tr></thead>
+          <thead>
+            <tr>
+              <th>排名</th><th>股票</th><th>最新价</th><th>涨跌额</th><th>涨跌幅</th>
+              <th>成交量</th><th>成交额</th><th>换手率</th>
+            </tr>
+          </thead>
           <tbody>
-            <tr v-for="(stock, index) in filteredRows" :key="stock.securityId">
-              <td class="rank-cell">{{ String(index + 1).padStart(2, '0') }}</td>
-              <td><RouterLink :to="`/stocks/${stock.securityId}`"><strong>{{ stock.securityName }}</strong><small>{{ stock.exchangeCode }}.{{ stock.securityCode }}</small></RouterLink></td>
-              <td class="mono">{{ stock.latestPrice }}</td>
-              <td :class="trendClass(stock.changeAmount)" class="mono">{{ stock.changeAmount }}</td>
-              <td :class="trendClass(stock.changeRate)" class="mono strong">{{ formatChangeRate(stock.changeRate) }}</td>
+            <tr v-for="(stock, index) in snapshot.items" :key="stock.security.securityId">
+              <td class="rank-cell">{{ rankOf(index) }}</td>
+              <td>
+                <RouterLink :to="`/stocks/${stock.security.securityId}`">
+                  <strong>{{ stock.security.securityName }}</strong>
+                  <small>{{ stock.security.fullSymbol }}</small>
+                </RouterLink>
+              </td>
+              <td class="mono">{{ stock.latestPrice ?? '--' }}</td>
+              <td :class="trendClass(stock.changeAmount)" class="mono">
+                {{ stock.changeAmount ?? '--' }}
+              </td>
+              <td :class="trendClass(stock.changeRate)" class="mono strong">
+                {{ formatChangeRate(stock.changeRate) }}
+              </td>
               <td class="mono">{{ formatVolume(stock.tradeVolume) }}</td>
               <td class="mono">{{ formatMoney(stock.tradeAmount) }}</td>
               <td class="mono">{{ formatChangeRate(stock.turnoverRate) }}</td>
-              <td><button class="table-action" type="button" aria-label="加入自选"><Star :size="14" /></button></td>
             </tr>
           </tbody>
         </table>
+        <p v-if="!snapshot.items.length" class="component-unavailable">
+          当前条件下没有符合条件的标的。
+        </p>
       </div>
-      <footer class="table-footer"><span>共 5,248 个交易标的 · 第 1 / 210 页</span><div><button type="button">上一页</button><button class="active" type="button">1</button><button type="button">2</button><button type="button">下一页</button></div></footer>
+
+      <footer class="table-footer">
+        <span>
+          共 {{ snapshot.total }} 个交易标的 · 第 {{ snapshot.page }} / {{ snapshot.totalPages }} 页
+        </span>
+        <div>
+          <button type="button" :disabled="snapshot.page <= 1" @click="page = snapshot.page - 1">
+            上一页
+          </button>
+          <button class="active" type="button">{{ snapshot.page }}</button>
+          <button type="button" :disabled="!snapshot.hasNext" @click="page = snapshot.page + 1">
+            下一页
+          </button>
+        </div>
+      </footer>
     </section>
+  </div>
+
+  <div v-else-if="loadingRanking" class="page-loading" aria-label="正在加载榜单">
+    <span /><span /><span />
   </div>
 </template>

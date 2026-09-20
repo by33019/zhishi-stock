@@ -23,6 +23,40 @@
 
 ---
 
+## 2026-09-20 — M2-08 前端接入 rankings / sectors / sectors:id / stocks:id
+
+### 新增
+
+- `services/rankingApi.ts`（QTE-01）、`services/sectorApi.ts`（SEC-02/03/06）、`services/securityApi.ts`（STK-04/07）
+- `composables/useRemoteData.ts`：一次远程请求的三态（`data` / `loading` / `error` / `reload`）与**过期响应守卫**（请求序号，防止先发的慢请求覆盖后发的快请求）
+- `apiClient.toQueryString`：拼查询串时丢弃 `null` / `undefined` / 空串，但保留 `false` 与 `0`（`excludeSt=false` 与不传语义不同）
+- 测试：`RankingsPage.test.ts`（5）、`SectorsPage.test.ts`（4）、`SectorDetailPage.test.ts`（5）、`StockDetailPage.test.ts`（7，重写）、`useRemoteData.test.ts`（4）
+- 设计文档 `docs/superpowers/specs/2026-09-20-frontend-integration.md`
+
+### 变更
+
+- **`/rankings`** 接 `GET /stock-rankings`：三档口径（涨幅/跌幅/成交额）驱动 `rankingType`、交易所单选驱动 `exchangeCodes`、真实分页（`page` / `totalPages` / `hasNext`）；行号为**全榜单**名次而非页内序号
+- **`/sectors`** 接 `GET /sector-rankings?size=100`：卡片字段全部来自 `SectorQuote`；原型里写死的"金融领涨，科技成交活跃"改为数据驱动的客观摘要（涨幅第一 + 成交额第一 + 上涨板块计数），并移除死的"生成板块综述"按钮
+- **`/sectors/:id`** 接 `GET /sectors/{id}` + `/sectors/{id}/constituents?size=100`：头部取 `sector` / `parent` / `quote`；强度拆解的涨跌家数由真实成分股重算（停牌单列）并写明分母；成分股表格使用服务端的 `contributionRank`
+- **`/stocks/:id`** 接 `GET /securities/{id}/quote` + `/securities/{id}/klines?period=`：K 线周期切换（日/周/月）真实重新请求；行情与 K 线各显示自己的数据截止时间（契约 STK-05 不保证同源同时）
+- `format.ts` 的 `formatDateTime` 接受 `string | null`，`null` / 空串 / 非法时间返回 `--`（此前会渲染出 `Invalid Date`）
+- `domain.ts`：`MockSectorQuote` 改名 `OverviewSectorQuote`（它并非 mock——`MarketOverview.vue` 早已接真实接口，该类型就是后端 `MarketOverview.SectorPreview` 的前端契约）
+
+### 移除
+
+- **`/rankings` 的"换手率榜"**：契约 QTE-01 的 `rankingType` 白名单只有三种，客户端按 `turnoverRate` 排序是自造口径，且只能对当前页排序，与服务端榜单在数据范围上不一致
+- **`/rankings` 的关键字筛选框**：QTE-01 无 `keyword` 参数；在客户端过滤会让排名号与真实名次不符（第 7 名被过滤掉后第 8 名仍显示"08"）
+- **`/stocks/:id` 的市盈率、市值、业务描述、所属板块、关联资讯、AI 速览**：全部无数据来源（STK-08/09/10 与 M3-06/07 未实现），保留即编造
+- **`/sectors/:id` 的分时走势图**：SEC-05 未实现，假曲线会被当成真实走势；改为一行"尚未实现"说明
+- `mockApi.ts` 的 `getStockDetail` 与 `stockDetail` 常量（32 根正弦函数生成的假蜡烛）；`domain.ts` 的 `StockDetail` 与 `MockKlinePoint`（唯一使用者是前者，且 `StockDetail` 上挂着本轮判定为"无数据来源"的那批字段）
+- `/stocks/:id` 的"分时"档（STK-06 后端未实现，留着会得到一个永远画不出东西的按钮）
+
+### 文档
+
+- `TASKS.md` M2-08 交付详情（8 条关键取舍）、`PROJECT_STATUS.md`、本文件；`PROJECT_STATUS.md` 已知问题 #7 明确标注**仍未修**并说明理由（属后端行为变更，需独立切片）
+
+---
+
 ## 2026-09-20 — M2-07 板块排行、详情与成分股（SEC-01 / SEC-02 / SEC-03 / SEC-04 / SEC-06）
 
 ### 新增

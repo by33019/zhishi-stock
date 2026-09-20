@@ -1,4 +1,4 @@
-import type { ApiResponse, MarketOverview, NewsItem, QuoteRow, StockDetail } from '@/types/domain'
+import type { ApiResponse, MarketOverview, NewsItem, QuoteRow } from '@/types/domain'
 
 const now = '2026-09-08T14:32:18+08:00'
 
@@ -74,35 +74,6 @@ const marketOverview: MarketOverview = {
   snapshotVersion: 'mock-cn-20260908-143218',
 }
 
-const stockDetail: StockDetail = {
-  ...rankingRows[0]!,
-  fullSymbol: 'SH.600000',
-  previousClosePrice: '11.71',
-  openPrice: '11.82',
-  highPrice: '12.48',
-  lowPrice: '11.76',
-  peRatio: '6.21',
-  marketCap: '362400000000',
-  businessDescription: '提供公司及个人金融、资金业务、投资银行、资产管理、金融市场与数字银行等综合金融服务。',
-  sectors: ['银行', '沪股通', '高股息'],
-  dataTime: now,
-  dataStatus: 'REALTIME',
-  kline: Array.from({ length: 32 }, (_, index) => {
-    const base = 10.7 + index * 0.045 + Math.sin(index * 0.8) * 0.18
-    const close = base + Math.sin(index * 1.4) * 0.09
-    return {
-      time: `2026-${String(7 + Math.floor(index / 22)).padStart(2, '0')}-${String((index % 22) + 1).padStart(2, '0')}`,
-      open: Number(base.toFixed(2)),
-      close: Number(close.toFixed(2)),
-      low: Number((Math.min(base, close) - 0.12).toFixed(2)),
-      high: Number((Math.max(base, close) + 0.15).toFixed(2)),
-      volume: 18_000_000 + index * 950_000 + Math.round(Math.abs(Math.sin(index)) * 8_000_000),
-    }
-  }),
-  news: news.slice(0, 2),
-  aiPrompts: ['异动解读', '近期信息总结', '风险梳理'],
-}
-
 function respond<T>(data: T, message = '查询成功'): ApiResponse<T> {
   return {
     success: true,
@@ -121,11 +92,6 @@ async function pause() {
 export async function getMarketOverview(): Promise<ApiResponse<MarketOverview>> {
   await pause()
   return respond(marketOverview)
-}
-
-export async function getStockDetail(_securityId: string): Promise<ApiResponse<StockDetail>> {
-  await pause()
-  return respond(stockDetail)
 }
 
 export async function getNews(): Promise<ApiResponse<NewsItem[]>> {

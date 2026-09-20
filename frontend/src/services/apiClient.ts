@@ -53,6 +53,24 @@ export function onAuthenticationFailure(handler: () => void) {
   authenticationFailureHandler = handler
 }
 
+/**
+ * 把查询参数拼成 query string，**丢弃** `null` / `undefined` / 空串。
+ *
+ * 丢弃而不是传空串：后端把空串按"未传"处理（`QueryParameters.isPresent`），
+ * 但传 `exchangeCodes=` 这种空值参数会让服务端日志与网关统计里出现无意义的条目。
+ * `false` 与 `0` 是**有效取值**，必须保留——`excludeSt=false` 与不传是不同的语义。
+ */
+export function toQueryString(
+  params: Record<string, string | number | boolean | null | undefined>,
+): string {
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value === null || value === undefined || value === '') continue
+    search.set(key, String(value))
+  }
+  return search.toString()
+}
+
 export async function refreshAccessToken(): Promise<TokenResponse> {
   return refreshOnce()
 }

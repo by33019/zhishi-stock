@@ -34,4 +34,12 @@ describe('行情时间格式化', () => {
     // 反向边界：北京时间 9/13 00:00 恰好是 UTC 9/12 16:00
     expect(formatDateTime('2026-09-12T16:00:00Z')).toBe('09/13 00:00')
   })
+
+  it('契约里可为空的数据截止时间渲染为占位符而不是 Invalid Date', () => {
+    // dataTime 在契约中可空（板块全停牌、快照缺失）；直接 new Date(null) 会渲染成
+    // "Invalid Date"，那串字会出现在页面上。
+    expect(formatDateTime(null)).toBe('--')
+    expect(formatDateTime('')).toBe('--')
+    expect(formatDateTime('不是时间')).toBe('--')
+  })
 })
