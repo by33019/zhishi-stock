@@ -148,7 +148,9 @@ onBeforeUnmount(() => {
  * 共用一条逻辑，也不会因为将来后端调整 `matchedField` 取值而把高亮打到错误的字段上。
  */
 function split(value: string, highlight: string | null) {
-  const index = highlight ? value.toLowerCase().indexOf(highlight.toLowerCase()) : -1
+  // 先单独收窄 highlight，不能把判空塞进三元表达式：`index >= 0` 反推不出 `highlight` 非空。
+  if (!highlight) return { before: value, hit: '', after: '' }
+  const index = value.toLowerCase().indexOf(highlight.toLowerCase())
   if (index < 0) return { before: value, hit: '', after: '' }
   return {
     before: value.slice(0, index),

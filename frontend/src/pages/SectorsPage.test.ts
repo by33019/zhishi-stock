@@ -119,6 +119,7 @@ describe('板块分析页', () => {
 
     expect(wrapper.get('[role="alert"]').text()).toContain('板块行情暂不可用')
     expect(wrapper.get('[role="alert"]').text()).toContain('trace-503')
-    expect(wrapper.get('[data-testid="sectors-retry"]').exists()).toBe(true)
+    // 用 find 而不是 get：get 找不到会直接抛错，其返回类型刻意不含 exists()
+    expect(wrapper.find('[data-testid="sectors-retry"]').exists()).toBe(true)
   })
 })
