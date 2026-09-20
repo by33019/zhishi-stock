@@ -23,6 +23,68 @@
 
 ---
 
+## 2026-09-20 — M3-05 前端 `/news` 接真实资讯接口（mock 通路清零）
+
+### 新增
+
+- **`frontend/src/services/newsApi.ts`**：`getNews(query)` → NEWS-01（列表）、`getNewsOptions()` → NEWS-04（受控筛选项）。
+- **`frontend/src/pages/NewsPage.test.ts`**：18 项用例——首屏请求数、筛选走服务端、关键字显式提交、
+  翻页保留条件、原文链接的三种授权状态、关联标签跳转、空列表的两种语义、侧栏降级、错误态。
+- **`frontend/src/types/domain.ts`**：新增资讯域契约类型 `NewsType` / `NewsTargetType` /
+  `NewsOriginalAccessStatus` / `NewsRelationMethod` / `NewsRelationSummary` / `NewsSummary` /
+  `NewsPage` / `NewsTimeRange` / `NewsOptions` / `NewsQuery`。
+- **`frontend/e2e/news.real.mjs`**：真实端到端核对脚本（Playwright + Docker 全栈，手动跑）。
+
+### 变更
+
+- **`frontend/src/pages/NewsPage.vue`** 从 `mockApi.getNews()` 改为真实接口：
+  - 筛选与分页**全部走服务端**（`newsTypes` / `keyword` / `page` / `size`），不再用 `computed` 客户端过滤。
+  - **类型标签由 NEWS-04 的 `newsTypes` 动态生成**，前端只保留「枚举值 → 中文名」的显示映射，
+    未知取值回退为原值——服务端新增一种资讯类型时前端会自动多一个标签。
+  - 关键字改为**显式提交**（回车 / 点搜索），与 M3-03 的选股面板同一套约定。
+  - 原文链接按 `originalAccessStatus` 渲染：`UNAVAILABLE` 不给链接，`AVAILABLE` 与 `UNKNOWN` 都给
+    （后者标注「（原文状态未知）」）——理由见下方「修复」。
+  - 关联标的渲染为可跳转标签：`SECURITY` → `/stocks/:id`、`SECTOR` → `/sectors/:id`，
+    `MARKET` 与空 `targetId` 只渲染文本。
+  - `data-time` 展示真实 `lastSuccessfulSyncAt`；`DELAYED` 单独给「最近有效快照」提示条，
+    `UNAVAILABLE` **不挂**该提示（那会编造一次并不存在的快照）。
+  - 侧栏「今日事件密度」「高频主题」两块**降级为「尚未实现」**，删掉原型里的 `286` / `72%` / `42` 等编造数字。
+  - 时间筛选按钮置 `disabled` 并在 `title` 写明归属（NEWS-01 已支持 `startAt` / `endAt`，但原型无设计稿）。
+- **`frontend/src/types/domain.ts`**：`NewsItem` 保留并补注释——它是 MKT-01 首页快讯
+  （`relatedSymbols: string[]`），与资讯域的 `NewsSummary`（`relations[]`）不是同一形状，
+  合并不掉（合并会让「总览页的资讯从哪来」看不出来）。
+
+### 移除
+
+- **`frontend/src/services/mockApi.ts`** 与 **`mockApi.test.ts`** 整体删除——`/news` 是它最后一个消费者。
+  仓库里从此不再有 mock 通路。
+
+### 修复
+
+- **`originalAccessStatus` 一律是 `UNKNOWN`，导致「查看原文」全部消失**（e2e 发现，本轮已修）：
+  模拟源没有真实原文，`NewsIngestionService` 把该列硬编码为 `UNKNOWN`。初稿的规则是「只有 `AVAILABLE`
+  才渲染链接」，于是真实环境下 8 条资讯**一个链接都没有**——原型里的外链功能完全不可见。
+  按契约 §4.3 分开理解：`originalUrl` 是「经协议和安全校验的原文地址」，`originalAccessStatus`
+  描述的是**内容**可访问性。改为 `UNKNOWN` 也给链接并标注状态未知；复验后 8 条全部可点。
+
+### 已知问题
+
+- **新增 #21**：`GET /news/options` 的 `availableTimeRange` 多出契约外的 `empty` 字段
+  （`NewsTimeRange.isEmpty()` 是**无参** `isXxx()`，被 Jackson 当 getter）。修法是加 `@JsonIgnore`（一行），
+  本轮不改（M3-05 是前端里程碑，前端类型不认该字段、功能无影响）。
+- **#20 的前端处置已定**：`latestNewsCount` 为 `null` 时**不渲染**该字段，不渲染成「0 条」；
+  后端语义留到有真实资讯源之后决定。
+
+### 验证
+
+- `npm run typecheck` 通过；`npm run test` **20 文件 / 150 项通过**（新增 18 项、删除 1 项）；`npm run build` 通过。
+- **真实端到端联调**（Docker 全栈 + Playwright 打开真实 `/news` 页，脚本 `frontend/e2e/news.real.mjs`）：
+  首屏**恰好 2 个请求**；类型标签 5 个全部来自 NEWS-04；切换类型**只新增 1 个请求**且带 `newsTypes`
+  （options 累计仍 1 次）；关键字搜索**保留当前筛选条件**（`newsTypes=ANNOUNCEMENT&keyword=银行`）；
+  关联标签里 `CN` 无链接、`002343` → `/stocks/sim-002343`；侧栏渲染「尚未实现」；**原文链接 8 条全部可点**。
+
+---
+
 ## 2026-09-20 — M3-04 资讯域（第 7 个模块）+ 定时采集落库
 
 ### 新增

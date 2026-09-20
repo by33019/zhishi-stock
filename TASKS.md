@@ -81,7 +81,7 @@
 - [x] **M3-02** P0 自选项 CRUD + 排序 + 行情概览 — 已完成，见下方详情
 - [x] **M3-03** P0 前端 watchlist 接真实 API — 已完成，见下方详情
 - [x] **M3-04** P0 资讯 Provider 抽象 + 模拟源 + 去重 + 标的关联 — 已完成，见下方详情
-- [ ] **M3-05** P1 前端 news 接真实 API — 依赖：M3-04
+- [x] **M3-05** P1 前端 news 接真实 API — 已完成，见下方详情
 - [ ] **M3-06** P0 AI Provider 抽象 + 确定性模拟实现 — 依赖：M3-04
 - [ ] **M3-07** P0 AI 任务编排 + SSE 流式契约（V6 表） — 依赖：M3-06
 - [ ] **M3-08** P0 AI 报告/证据/反馈持久化 — 依赖：M3-07
@@ -1154,6 +1154,80 @@ WAT-02 的 `createdAt` 取自应用 `Clock`，表里的列只作审计。
 
 ---
 
+## M3-05 交付详情
+
+**目标**：前端 `/news` 接真实资讯接口（NEWS-01 列表 + NEWS-04 受控筛选项），并删掉仓库里最后一个 mock 通路。
+
+### 交付
+
+| 文件 | 动作 | 说明 |
+| --- | --- | --- |
+| `src/services/newsApi.ts` | 新增 | `getNews(query)` → NEWS-01；`getNewsOptions()` → NEWS-04 |
+| `src/pages/NewsPage.test.ts` | 新增 | 18 项用例 |
+| `src/pages/NewsPage.vue` | 修改 | 从 `mockApi` 改为真实接口；筛选与分页全部走服务端 |
+| `src/types/domain.ts` | 修改 | 新增 10 个资讯域契约类型；`NewsItem` 保留并加注释 |
+| `src/services/mockApi.ts` | **删除** | 最后一个消费者已消失 |
+| `src/services/mockApi.test.ts` | **删除** | 同上 |
+| `e2e/news.real.mjs` | 新增 | 真实端到端核对脚本（手动跑，`E2E_BASE_URL` 默认 `http://127.0.0.1:8088`） |
+
+### 关键取舍
+
+1. **筛选与分页全部走服务端**：原型用 `computed` 做客户端过滤，改为每个条件都是请求参数
+   （`newsTypes` / `keyword` / `page` / `size`）。
+2. **类型标签来自 NEWS-04 而不是前端硬编码枚举**：服务端新增一种资讯类型时前端自动多一个标签，
+   未知取值回退为原值（不渲染空白）。前端只保留「枚举值 → 中文名」的显示映射。
+3. **关键字是显式提交**（回车 / 点搜索），不是输入即搜——与 M3-03 的选股面板同一套约定。
+4. **一个查询键驱动重新请求**，不给每个条件各挂 `watch`（避免「切类型同时把页码归 1」触发两次请求）。
+5. **`DELAYED` 与 `UNAVAILABLE` 是两个提示，不合并**：给 `UNAVAILABLE` 挂「当前展示最近有效快照」
+   是在编造一次不存在的快照（M3-03 踩过同一个坑）。
+6. **空列表的两种语义分开**：`UNAVAILABLE` 说「资讯源暂不可用」，否则说「暂无符合条件的资讯」。
+7. **原文链接**：`UNAVAILABLE` 不给链接；`AVAILABLE` 与 `UNKNOWN` 都给（后者标注状态未知）。
+   模拟源一律产出 `UNKNOWN`，只认 `AVAILABLE` 会让「查看原文」全部消失（见 spec §3.5 / §8.4）。
+8. **关联标签**：`SECURITY` / `SECTOR` 跳转，`MARKET` 与 `targetId` 为空时只渲染文本。
+9. **侧栏两块降级为「尚未实现」**：原型的「今日事件密度 286 条」「高频主题 42/36/29/18」
+   没有任何后端来源，留着就是编造。
+10. **`MarketOverview.news` 不改**：它是 MKT-01 聚合字段（`componentStatus` 的一个分量），
+    改它属于另一个里程碑；本轮只在类型上加注释说明它与资讯域不同源。
+11. **时间筛选按钮置 `disabled`**：契约支持 `startAt` / `endAt`、后端已实现，但原型无设计稿。
+
+### 不在本轮范围
+
+| 不做的事 | 归属 |
+| --- | --- |
+| 资讯详情页 / 抽屉（NEWS-02） | 后续；列表已含 §4.3 全部字段，详情接口暂无前端消费者 |
+| 个股页 / 板块页资讯（STK-10 / SEC-07） | 随个股 / 板块页工作 |
+| 后台资讯来源管理（ADM-NEWS-01~08） | M3-11 |
+| `MarketOverview.news` 改读资讯域 | 新里程碑（牵动 MKT-01 已冻结的 `componentStatus` 口径） |
+| 时间范围筛选 UI | 无设计稿 |
+| 已知问题 #21（`NewsTimeRange` 泄漏 `empty` 字段） | 后端一行 `@JsonIgnore`，见 `PROJECT_STATUS.md` |
+
+### 验证结果
+
+| 项目 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过 |
+| `npm run test` | **20 文件 / 150 项通过** |
+| `npm run build` | 通过 |
+| 真实端到端联调 | 通过（Playwright + Docker 全栈，脚本 `e2e/news.real.mjs`） |
+
+### e2e 实测到的关键事实
+
+1. 首屏**恰好 2 个请求**（`/news/options` + `/news?page=1&size=20`，都 200）。
+2. 类型标签 `["全部","快讯","公告","研报","其他"]` 全部来自 NEWS-04。
+3. 切换类型**只新增 1 个请求**且带 `newsTypes`，options 累计仍是 1 次。
+4. 关键字搜索**保留了当前筛选条件**（`newsTypes=ANNOUNCEMENT&keyword=银行`）。
+5. 关联标签里 `CN`（MARKET）**没有链接**，`002343` → `/stocks/sim-002343`。
+6. 侧栏渲染「尚未实现」，页面上没有原型里的 `286` / `42`。
+7. 原文链接从 **0 个变成 8 个**（修掉「只认 `AVAILABLE`」的规则之后）。
+
+### e2e 查出的问题
+
+- **① 已修**：`originalAccessStatus` 一律 `UNKNOWN` ⇒ 初稿规则让「查看原文」全部消失。
+- **② 只记录**：`GET /news/options` 的 `availableTimeRange` 多了契约外的 `empty` 字段
+  （`NewsTimeRange.isEmpty()` 被 Jackson 当 getter），记入已知问题 #21。
+
+---
+
 ## 已完成
 
 - [x] 阶段 0 只读审计（2026-09-19）
@@ -1174,3 +1248,4 @@ WAT-02 的 `createdAt` 取自应用 `Clock`，表里的列只作审计。
 - [x] M3-02（2026-09-20）
 - [x] M3-03（2026-09-20）
 - [x] M3-04（2026-09-20）
+- [x] M3-05（2026-09-20）

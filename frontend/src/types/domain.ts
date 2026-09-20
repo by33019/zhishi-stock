@@ -115,6 +115,16 @@ export interface QuoteRow {
   sparkline: number[]
 }
 
+/**
+ * MKT-01 首页快讯（`MarketOverview.news`）的形状，**不是**资讯域的 `NewsSummary`。
+ *
+ * 差别是真实的：这里用 `relatedSymbols: string[]`（只有符号），资讯域用
+ * `relations: NewsRelationSummary[]`（带目标类型、名称与关联方式）。总览页的 `news`
+ * 目前仍是单条模拟资讯（见 `TASKS.md` 的 MKT-01 交付详情），改它等于改 MKT-01 已冻结的
+ * `componentStatus` 口径，属于另一个里程碑。
+ *
+ * **不要**为了让两处类型名统一而合并它们——合并会让「总览页的资讯到底来自哪里」看不出来。
+ */
 export interface NewsItem {
   newsId: string
   newsType: 'NEWS' | 'ANNOUNCEMENT' | 'RESEARCH'
@@ -616,4 +626,103 @@ export interface CreatedWatchlistGroup {
 export interface DeletedWatchlistGroup {
   deleted: boolean
   movedItemCount: number
+}
+
+/**
+ * 资讯域契约类型（NEWS-01~04）。
+ *
+ * 与 MKT-01 的 `NewsItem` **不是**同一形状：后者是总览页的首页快讯（`relatedSymbols: string[]`），
+ * 这里是资讯域的 `NewsSummary`（`relations: NewsRelationSummary[]`）。理由见 `NewsItem` 的注释。
+ */
+
+/** 契约 §4.3 的 `newsType`，与后端 `NewsType` 同集合。 */
+export type NewsType = 'NEWS' | 'ANNOUNCEMENT' | 'RESEARCH' | 'OTHER'
+
+/** 契约 §4.3 的 `relations[].targetType`，与后端 `NewsTargetType` 同集合。 */
+export type NewsTargetType = 'SECURITY' | 'SECTOR' | 'MARKET'
+
+/** 契约 §4.3 的 `originalAccessStatus`：原文是否可访问。 */
+export type NewsOriginalAccessStatus = 'AVAILABLE' | 'UNAVAILABLE' | 'UNKNOWN'
+
+/** 关联的产生方式，与后端 `NewsRelationMethod` 同集合。 */
+export type NewsRelationMethod = 'EXPLICIT' | 'RULE' | 'MODEL' | 'MANUAL'
+
+/**
+ * 资讯的确认关联（`relationStatus = CONFIRMED`）。
+ *
+ * `targetId` 是**对外标识**（`sim-600519` / `sim-bk0025` / `CN`），可直接用于路由；
+ * 库里的 bigint 代理键不会出现在响应里。
+ */
+export interface NewsRelationSummary {
+  targetType: NewsTargetType
+  targetId: string
+  targetCode: string
+  targetName: string
+  relationMethod: NewsRelationMethod
+  confidenceScore: number
+}
+
+/** 契约 §4.3 `NewsSummary`。`summary` 是**授权范围内**摘要，可能为 `null`。 */
+export interface NewsSummary {
+  newsId: string
+  newsType: NewsType
+  title: string
+  summary: string | null
+  sourceName: string
+  authorName: string | null
+  publishedAt: string
+  collectedAt: string
+  originalUrl: string
+  originalAccessStatus: NewsOriginalAccessStatus
+  relations: NewsRelationSummary[]
+}
+
+/**
+ * NEWS-01 / STK-10 / SEC-07 的响应：**扁平**封套（`items` 与分页字段同级），
+ * 与 QTE-01 的 `StockRanking` 同形。
+ *
+ * `lastSuccessfulSyncAt` / `dataStatus` 描述的是**整批资讯**的新鲜度，不是这一页的属性。
+ */
+export interface NewsPage {
+  items: NewsSummary[]
+  page: number
+  size: number
+  total: number
+  totalPages: number
+  hasNext: boolean
+  lastSuccessfulSyncAt: string | null
+  dataStatus: DataStatus
+}
+
+/** NEWS-04 的可用时间范围。库里没有资讯时两端都是 `null`——**不要**用「今天」填充。 */
+export interface NewsTimeRange {
+  startAt: string | null
+  endAt: string | null
+}
+
+/**
+ * NEWS-04 受控筛选项。
+ *
+ * `newsTypes` / `sourceTypes` 的取值**来自服务端**，前端据此渲染标签，
+ * 这样服务端新增一种资讯类型时前端会自动多出一个标签，而不是静默丢掉。
+ * `filterRules` 是当前生效的筛选规则说明，用于回答「为什么列表里只有这几条」。
+ */
+export interface NewsOptions {
+  newsTypes: string[]
+  sourceTypes: string[]
+  availableTimeRange: NewsTimeRange
+  filterRules: string
+}
+
+/**
+ * NEWS-01 查询参数。
+ *
+ * `newsTypes` 为空时**不传**该参数（`toQueryString` 会丢弃空串），表示「不限类型」，
+ * 而不是传空串让服务端去猜。
+ */
+export interface NewsQuery {
+  newsTypes?: string
+  keyword?: string
+  page?: number
+  size?: number
 }
