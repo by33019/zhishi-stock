@@ -820,6 +820,102 @@ M2-10 给 `stock-job` 补 `TradingCalendarProvider` Bean 是因为节假日是**
 
 ---
 
+## M3-01 交付详情
+
+> Spec：`docs/superpowers/specs/2026-09-20-watchlist-groups.md`
+> 契约：§12.1 WAT-01~WAT-05、§12.3 业务规则、§3.7 幂等与并发。
+
+### 交付内容
+
+| 编号 | 接口 | 实现要点 |
+| --- | --- | --- |
+| WAT-01 | `GET /watchlist-groups` | 按 `sortNo`、`groupId` 升序；`itemCount` 由相关子查询统计；`includeItems=true` **显式 400** |
+| WAT-02 | `POST /watchlist-groups` | `Idempotency-Key` 真正生效（24h 窗口，相同键+相同体回放，不同体 409） |
+| WAT-03 | `PATCH /watchlist-groups/{groupId}` | `If-Match` 乐观锁；默认分组允许改名且保持 `isDefault` |
+| WAT-04 | `DELETE /watchlist-groups/{groupId}` | 软删；默认分组不可删；非空组必须先指定 `moveItemsToGroupId`；搬移时合并目标组已有的同证券 |
+| WAT-05 | `PUT /watchlist-groups/order` | 校验 `groupIds` 恰好是本人全部有效分组的一个排列；一个事务内改 `sortNo` 并统一 +1 版本 |
+
+新增代码：`stock-system` 的 `watchlist` 包（9 个类）与 `idempotency` 包（5 个类）、
+`stock-backend` 的 `WatchlistGroupController` + `IfMatch` + `InvalidIfMatchException`。
+
+### 关键设计取舍
+
+**1. 分组名的"合法"只有一处定义**
+`WatchlistGroupName` 的紧凑构造器同时做 trim 与校验，因此**任何构造路径**都拿不到非法值。
+两处刻意对齐数据库的 `CHECK (CHAR_LENGTH(TRIM(group_name)) BETWEEN 1 AND 20)`：
+
+- 用 `trim()` 而非 `strip()`——MySQL 的 `TRIM()` 只去空格，`strip()` 会去掉 Unicode 空白，
+  比数据库更宽，会造成"应用层放行、数据库拒绝"的 500。
+- 用 `codePointCount` 而非 `length()`——数据库数**字符**，Java 的 `length()` 数 UTF-16 码元；
+  20 个 emoji 在 Java 里 `length() == 40`，用 `length()` 会拒掉数据库明确放行的名字。
+
+**2. 唯一约束冲突的语义由用例层决定，不在仓储里翻译**
+同一个 `DuplicateKeyException` 在 `create` 里是"分组名重复"，在 `createDefaultGroup` 里是
+"默认分组已经有了（不该报错）"。仓储保持哑存储，用例决定含义，才不会把业务判断写进适配器。
+
+**3. 不做"大小写归一"，把唯一性交给数据库 collation**
+表是 `utf8mb4_general_ci`，唯一索引本身大小写不敏感。应用层再写一遍归一逻辑，
+就会有两个"什么算同名"的定义。已用真实 MySQL 用例把该行为钉住。
+
+**4. `If-Match` 不接受 `*`**
+契约没有为这些资源定义"匹配任意版本"的语义；静默当成"随便改"会让乐观锁形同虚设。
+缺头/空白/`*`/非数字一律 400 `INVALID_REQUEST`。`3` 与 `"3"` 两种写法都接受。
+
+**5. 乐观锁条件写在 `WHERE` 里，不是"先查后比再写"**
+MySQL 在 REPEATABLE READ 下 UPDATE 走当前读，`WHERE version = ?` 才是唯一权威；
+先查后比会读到快照里的旧版本，写出"检查通过、覆盖别人修改"的结果。
+"查不到"（404）与"版本不对"（409）靠**先查一次**区分。
+
+**6. 幂等抽成可复用组件，而不是塞进 WAT-02**
+契约里有 8 个接口要求 `Idempotency-Key`。`IdempotencyGuard` 是显式调用（不做 AOP、
+不做响应缓冲 Filter）：契约里要求幂等的全是"小请求体 + 小 JSON 响应"的写操作，
+显式调用让"这个接口有幂等保护"在控制器里一眼可见，且只需一个内存 store 就能单测。
+顺序是**先执行再落键**：落键失败只退化为"可能重复创建"；反过来会让重试被回放成一个
+**并不存在的成功结果**。
+
+**7. `created_at` 不读回应用层**
+`DEFAULT CURRENT_TIMESTAMP(3)` 的字面值取决于 MySQL 会话时区（compose 是 `Asia/Shanghai`，
+Testcontainers 是容器默认值），读回来再换算**必然有一处是错的**。
+WAT-02 的 `createdAt` 取自应用 `Clock`，表里的列只作审计。
+这一条从设计上排除了整类"差 8 小时"的缺陷。
+
+**8. `includeItems=true` 返回 400，而不是 `items: []`**
+`items: []` 是一个"看起来合法"的答案，它会告诉前端"这个分组里没有股票"——
+分组里其实有的话那就是**编造数据**。与 M2-08「没有数据来源的字段降级为尚未实现」、
+「可点但无反应的按钮比 disabled 更糟」是同一条原则：宁可响亮失败，也不要安静地给错答案。
+
+**9. 空分组删除时忽略传入的目标组**
+契约只规定"删除非空组时必填"。客户端无法可靠知道组是否为空，
+报错会把"删空组"变成需要先查询的两步操作。
+
+### 不在本轮范围
+
+| 项 | 归属 / 原因 |
+| --- | --- |
+| WAT-01 的 `includeItems=true` | M3-02（WAT-06 定义 item 与 `security` 投影）；本轮显式 400 |
+| WAT-06~WAT-12（自选项、概览、membership） | M3-02 |
+| 前端 watchlist 页面接真实接口 | M3-03 |
+| 自选写操作 60/min 限流（§22.1） | 全站限流基础设施尚不存在，**任何接口都没有**；单为自选做一套会是"一处实现、八处复制" |
+| SSE `watchlist` 频道（§20.2） | WAT-01~WAT-05 未要求；M3-03 前端接入时一并评估 |
+| AUTH-03 注册调用 `createDefaultGroup` | AUTH-03 不在 M3 清单；本轮已提供方法并由 seeder 调用 |
+| 幂等键"同一键并发提交"严格互斥 | 当前是读—执行—写，窗口内两个同键请求可能都执行；契约只要求"重复提交返回第一次结果"，真正互斥需要额外 Redis 锁 |
+
+### 验证结果
+
+| 项 | 结果 |
+| --- | --- |
+| 后端 | **426 项通过**（common 1 / system 45 / market 156 / integration 106 / backend 116 / job 2），本次新增 66 项 |
+| 真实 MySQL 8.4 | 本机 Docker 可用，`InfrastructureIntegrationTest$WatchlistGroups` **10 项实测通过**（生成列、唯一索引大小写、CHECK、乐观锁、合并搬移） |
+| 前端 | 未改动；复跑确认 `npm run typecheck` 0 错误、**19 文件 / 101 项通过**、`vite build` 成功 |
+| 红灯 | 用例层 30/31 失败（`UnsupportedOperationException`）+ 合并顺序 mock 校验失败，均为真实红灯 |
+
+> **surefire 报数怪癖**：加 `@Nested` 后控制台会打印
+> `InfrastructureIntegrationTest: Tests run: 0` 与 `...$WatchlistGroups: Tests run: 15`，
+> 看着像外层 5 个用例没跑。以 `target/surefire-reports/TEST-*.xml` 的 `<testcase>` 为准：
+> 5（外层）+ 10（内层）= 15。**总数不要用控制台分行数字相加。**
+
+---
+
 ## 已完成
 
 - [x] 阶段 0 只读审计（2026-09-19）
@@ -836,3 +932,4 @@ M2-10 给 `stock-job` 补 `TradingCalendarProvider` Bean 是因为节假日是**
 - [x] M2-09（2026-09-20）
 - [x] M2-10（2026-09-20）
 - [x] M2-11（2026-09-20）
+- [x] M3-01（2026-09-20）

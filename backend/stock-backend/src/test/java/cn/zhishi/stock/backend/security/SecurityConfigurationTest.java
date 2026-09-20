@@ -3,7 +3,11 @@ package cn.zhishi.stock.backend.security;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 
@@ -18,7 +22,12 @@ import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 
@@ -87,6 +96,48 @@ class SecurityConfigurationTest {
         });
   }
 
+  /**
+   * 自选是用户态资源，游客必须被挡在门外——读和写都要挡。
+   *
+   * <p>当前 {@code anyRequest().authenticated()} 已经覆盖它，但把断言写下来才有意义：
+   * 将来有人为了放开别的公共前缀而加宽匹配范围时，这条会变红。
+   */
+  @Test
+  void keepsWatchlistEndpointsBehindAuthentication() {
+    new WebApplicationContextRunner()
+        .withUserConfiguration(SecurityConfiguration.class, TestEndpoints.class)
+        .withBean(JwtAuthenticationFilter.class, () -> new JwtAuthenticationFilter(
+            mock(JwtAccessTokenService.class), mock(AccessTokenBlacklist.class),
+            mock(UserAccountRepository.class)))
+        .withBean(ObjectMapper.class, () -> new ObjectMapper().findAndRegisterModules())
+        .withBean(Clock.class, Clock::systemUTC)
+        .withBean(TraceIdFilter.class, TraceIdFilter::new)
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          var mvc = MockMvcBuilders.webAppContextSetup(context)
+              .apply(springSecurity())
+              .addFilters(context.getBean(TraceIdFilter.class))
+              .build();
+          for (String[] target : new String[][] {
+              {"GET", "/api/v1/watchlist-groups"},
+              {"POST", "/api/v1/watchlist-groups"},
+              {"PATCH", "/api/v1/watchlist-groups/1"},
+              {"DELETE", "/api/v1/watchlist-groups/1"},
+              {"PUT", "/api/v1/watchlist-groups/order"}}) {
+            MockHttpServletRequestBuilder request = switch (target[0]) {
+              case "GET" -> get(target[1]);
+              case "POST" -> post(target[1]);
+              case "PATCH" -> patch(target[1]);
+              case "DELETE" -> delete(target[1]);
+              default -> put(target[1]);
+            };
+            assertThat(mvc.perform(request).andReturn().getResponse().getStatus())
+                .describedAs("游客访问 %s %s 应当被拒绝", target[0], target[1])
+                .isEqualTo(401);
+          }
+        });
+  }
+
   @Configuration(proxyBeanMethods = false)
   @EnableWebMvc
   static class TestEndpoints {
@@ -142,6 +193,31 @@ class SecurityConfigurationTest {
 
     @GetMapping("/api/v1/users/me")
     String currentUser() {
+      return "ok";
+    }
+
+    @GetMapping("/api/v1/watchlist-groups")
+    String watchlistGroups() {
+      return "ok";
+    }
+
+    @PostMapping("/api/v1/watchlist-groups")
+    String createWatchlistGroup() {
+      return "ok";
+    }
+
+    @PatchMapping("/api/v1/watchlist-groups/{groupId}")
+    String renameWatchlistGroup() {
+      return "ok";
+    }
+
+    @DeleteMapping("/api/v1/watchlist-groups/{groupId}")
+    String deleteWatchlistGroup() {
+      return "ok";
+    }
+
+    @PutMapping("/api/v1/watchlist-groups/order")
+    String reorderWatchlistGroups() {
       return "ok";
     }
   }

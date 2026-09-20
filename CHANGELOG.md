@@ -23,6 +23,44 @@
 
 ---
 
+## 2026-09-20 — M3-01 自选分组 CRUD（V5 两张表首次被代码引用）
+
+### 新增
+
+- **WAT-01~WAT-05 自选分组接口**（`/api/v1/watchlist-groups`，`USER`）：列表、新建、改名、软删（可搬移自选项）、原子重排
+- `stock-system` 新增 `watchlist` 包：`WatchlistGroup` / `WatchlistGroupName` / `WatchlistGroupRepository` /
+  `MyBatisWatchlistGroupRepository` / `WatchlistGroupMapper` / `WatchlistGroupService` /
+  `WatchlistGroupRow` / `CreatedGroup` / `DeleteResult` / `WatchlistErrorCode` / `WatchlistException`
+- `stock-system` 新增 `idempotency` 包（**可复用**，契约里有 8 个接口要求 `Idempotency-Key`）：
+  `IdempotencyStore` / `IdempotencyRecord` / `RedisIdempotencyStore` / `IdempotencyGuard` /
+  `IdempotencyKeyConflictException` / `IdempotencyKeyMissingException`
+- `stock-backend` 新增 `WatchlistGroupController`、`IfMatch`（共用的 `If-Match` 解析）、`InvalidIfMatchException`
+- `DevelopmentAccountSeeder` 调用 `createDefaultGroup`，让 dev / test 数据与契约 §12.3 的"注册后恰好一个默认分组"一致
+
+### 变更
+
+- `StockBackendApplication` 的 `@MapperScan` 由写死 `cn.zhishi.stock.system.auth` 放宽为
+  `cn.zhishi.stock.system`（仍限定 `annotationClass = Mapper.class`），新增 Mapper 不必再回来改这里
+- `stock-system` 显式声明 `spring-boot-starter-json`（`IdempotencyGuard` 需要 Jackson），
+  与 `stock-market` 已有的做法一致，而不是蹭传递依赖
+- `GlobalExceptionHandler` 新增 4 个处理方法：`WatchlistException`（业务码与状态由异常自身携带）、
+  `IdempotencyKeyConflictException`（409）、`IdempotencyKeyMissingException`（400）、`InvalidIfMatchException`（400）
+
+### 修复
+
+- 修复 V5 迁移自 M1 起"结构就绪、无代码引用"的状态：`user_watchlist_group` / `user_watchlist_item`
+  两张表（含两个生成列与全部唯一索引 / CHECK）现在真正被应用层使用
+- `BackendConfigurationTest` 补上 `WatchlistGroupMapper` 的 mock 与 4 个新 Bean 的装配断言——
+  该测试用 `ApplicationContextRunner` 单独装配配置类，不走 `@MapperScan`，缺 mock 时上下文起不来
+
+### 文档
+
+- 新增 spec `docs/superpowers/specs/2026-09-20-watchlist-groups.md`
+- 记录 surefire 对 `@Nested` 的报数怪癖：控制台会出现 `Tests run: 0` 与聚合行并存，
+  统计总数必须以 `target/surefire-reports/TEST-*.xml` 的 `<testcase>` 为准
+
+---
+
 ## 2026-09-20 — M2-11 总览板块预览真实化（关闭已知问题 #14）
 
 ### 新增

@@ -13,6 +13,10 @@ import cn.zhishi.stock.market.application.SectorNotFoundException;
 import cn.zhishi.stock.market.application.SectorQuoteNotAvailableException;
 import cn.zhishi.stock.system.auth.AuthErrorCode;
 import cn.zhishi.stock.system.auth.AuthException;
+import cn.zhishi.stock.system.idempotency.IdempotencyKeyConflictException;
+import cn.zhishi.stock.system.idempotency.IdempotencyKeyMissingException;
+import cn.zhishi.stock.system.watchlist.WatchlistErrorCode;
+import cn.zhishi.stock.system.watchlist.WatchlistException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Clock;
 import java.time.OffsetDateTime;
@@ -209,6 +213,66 @@ public class GlobalExceptionHandler {
                 : exception.code().name();
         return ResponseEntity.status(status).body(ApiResponse.failure(
                 externalCode,
+                exception.getMessage(),
+                null,
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
+    /**
+     * 自选模块的业务异常。
+     *
+     * <p>业务码与 HTTP 状态都由异常自身携带（{@link WatchlistErrorCode}），
+     * 这里只做一件事：分组名非法时按既有约定把字段错误放进 {@code fieldErrors}。
+     */
+    @ExceptionHandler(WatchlistException.class)
+    public ResponseEntity<ApiResponse<Object>> watchlist(
+            WatchlistException exception,
+            HttpServletRequest request) {
+        Object data = exception.code() == WatchlistErrorCode.GROUP_NAME_INVALID
+                ? new ValidationErrors(Map.of("groupName", exception.getMessage()))
+                : null;
+        return ResponseEntity.status(exception.code().httpStatus()).body(ApiResponse.failure(
+                exception.code().externalCode(),
+                exception.getMessage(),
+                data,
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
+    /** 契约 §3.7：同一个幂等键配了不同请求体。 */
+    @ExceptionHandler(IdempotencyKeyConflictException.class)
+    public ResponseEntity<ApiResponse<Void>> idempotencyConflict(
+            IdempotencyKeyConflictException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.failure(
+                "IDEMPOTENCY_KEY_CONFLICT",
+                exception.getMessage(),
+                null,
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
+    /** 契约要求必填 Idempotency-Key 的接口没带这个头。 */
+    @ExceptionHandler(IdempotencyKeyMissingException.class)
+    public ResponseEntity<ApiResponse<Void>> idempotencyKeyMissing(
+            IdempotencyKeyMissingException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.badRequest().body(ApiResponse.failure(
+                "INVALID_REQUEST",
+                exception.getMessage(),
+                null,
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
+    /** 契约 §3.7：含 version 的资源提交了缺失或非法的 If-Match。 */
+    @ExceptionHandler(InvalidIfMatchException.class)
+    public ResponseEntity<ApiResponse<Void>> invalidIfMatch(
+            InvalidIfMatchException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.badRequest().body(ApiResponse.failure(
+                "INVALID_REQUEST",
                 exception.getMessage(),
                 null,
                 TraceIdFilter.current(request),

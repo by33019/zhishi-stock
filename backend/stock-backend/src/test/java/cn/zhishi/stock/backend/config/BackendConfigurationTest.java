@@ -12,6 +12,11 @@ import cn.zhishi.stock.backend.web.TraceIdFilter;
 import cn.zhishi.stock.system.auth.AuthenticationService;
 import cn.zhishi.stock.system.auth.RefreshSessionService;
 import cn.zhishi.stock.system.auth.SysUserMapper;
+import cn.zhishi.stock.system.idempotency.IdempotencyGuard;
+import cn.zhishi.stock.system.idempotency.IdempotencyStore;
+import cn.zhishi.stock.system.watchlist.WatchlistGroupMapper;
+import cn.zhishi.stock.system.watchlist.WatchlistGroupRepository;
+import cn.zhishi.stock.system.watchlist.WatchlistGroupService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
@@ -27,6 +32,7 @@ class BackendConfigurationTest {
     new ApplicationContextRunner()
         .withUserConfiguration(BackendConfiguration.class)
         .withBean(SysUserMapper.class, () -> mock(SysUserMapper.class))
+        .withBean(WatchlistGroupMapper.class, () -> mock(WatchlistGroupMapper.class))
         .withBean(StringRedisTemplate.class, () -> mock(StringRedisTemplate.class))
         .withBean(JdbcTemplate.class, () -> mock(JdbcTemplate.class))
         .withBean(ObjectMapper.class, ObjectMapper::new)
@@ -42,6 +48,10 @@ class BackendConfigurationTest {
           assertThat(context).hasSingleBean(SecurityQuoteProvider.class);
           assertThat(context).hasSingleBean(JwtAuthenticationFilter.class);
           assertThat(context).hasSingleBean(TraceIdFilter.class);
+          assertThat(context).hasSingleBean(WatchlistGroupService.class);
+          assertThat(context).hasSingleBean(WatchlistGroupRepository.class);
+          assertThat(context).hasSingleBean(IdempotencyStore.class);
+          assertThat(context).hasSingleBean(IdempotencyGuard.class);
           FilterRegistrationBean<?> registration =
               context.getBean("traceIdFilterRegistration", FilterRegistrationBean.class);
           assertThat(registration.getFilter()).isSameAs(context.getBean(TraceIdFilter.class));

@@ -50,6 +50,13 @@ import cn.zhishi.stock.system.auth.SessionTokenIssuer;
 import cn.zhishi.stock.system.auth.SysUserMapper;
 import cn.zhishi.stock.system.auth.TokenIssuer;
 import cn.zhishi.stock.system.auth.UserAccountRepository;
+import cn.zhishi.stock.system.idempotency.IdempotencyGuard;
+import cn.zhishi.stock.system.idempotency.IdempotencyStore;
+import cn.zhishi.stock.system.idempotency.RedisIdempotencyStore;
+import cn.zhishi.stock.system.watchlist.MyBatisWatchlistGroupRepository;
+import cn.zhishi.stock.system.watchlist.WatchlistGroupMapper;
+import cn.zhishi.stock.system.watchlist.WatchlistGroupRepository;
+import cn.zhishi.stock.system.watchlist.WatchlistGroupService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
 import java.time.Duration;
@@ -94,6 +101,30 @@ public class BackendConfiguration {
     @Bean
     UserAccountRepository userAccountRepository(SysUserMapper mapper) {
         return new MyBatisUserAccountRepository(mapper);
+    }
+
+    @Bean
+    WatchlistGroupRepository watchlistGroupRepository(WatchlistGroupMapper mapper) {
+        return new MyBatisWatchlistGroupRepository(mapper);
+    }
+
+    @Bean
+    WatchlistGroupService watchlistGroupService(
+            WatchlistGroupRepository watchlistGroupRepository,
+            LongSupplier databaseIdGenerator,
+            Clock clock) {
+        return new WatchlistGroupService(watchlistGroupRepository, databaseIdGenerator, clock);
+    }
+
+    /** 契约 §3.7：幂等键有效窗口默认 24 小时。 */
+    @Bean
+    IdempotencyStore idempotencyStore(StringRedisTemplate redis) {
+        return new RedisIdempotencyStore(redis, IdempotencyGuard.WINDOW);
+    }
+
+    @Bean
+    IdempotencyGuard idempotencyGuard(IdempotencyStore idempotencyStore, ObjectMapper objectMapper) {
+        return new IdempotencyGuard(idempotencyStore, objectMapper);
     }
 
     @Bean

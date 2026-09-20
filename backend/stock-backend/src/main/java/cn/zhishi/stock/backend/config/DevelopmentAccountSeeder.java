@@ -1,5 +1,6 @@
 package cn.zhishi.stock.backend.config;
 
+import cn.zhishi.stock.system.watchlist.WatchlistGroupService;
 import java.util.Objects;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
@@ -20,16 +21,19 @@ public class DevelopmentAccountSeeder implements CommandLineRunner {
 
     private final JdbcTemplate jdbc;
     private final PasswordEncoder passwordEncoder;
+    private final WatchlistGroupService watchlistGroupService;
     private final String username;
     private final String password;
 
     public DevelopmentAccountSeeder(
             JdbcTemplate jdbc,
             PasswordEncoder passwordEncoder,
+            WatchlistGroupService watchlistGroupService,
             @Value("${stock.seed.demo-username:demo}") String username,
             @Value("${stock.seed.demo-password:Stock@123}") String password) {
         this.jdbc = jdbc;
         this.passwordEncoder = passwordEncoder;
+        this.watchlistGroupService = watchlistGroupService;
         this.username = username;
         this.password = password;
     }
@@ -68,5 +72,10 @@ public class DevelopmentAccountSeeder implements CommandLineRunner {
                 VALUES (?, ?, ?, NOW())
                 ON DUPLICATE KEY UPDATE role_id = VALUES(role_id), permission_id = VALUES(permission_id)
                 """, ROLE_PERMISSION_ID, ROLE_ID, PERMISSION_ID);
+
+        // 契约 §12.3：注册完成后创建且仅创建一个默认分组。
+        // AUTH-03 注册流程尚未实现，这里让 dev / test 环境的数据与"注册之后"一致；
+        // AUTH-03 落地时调用同一个方法即可，不需要另写一份。
+        watchlistGroupService.createDefaultGroup(actualUserId);
     }
 }
