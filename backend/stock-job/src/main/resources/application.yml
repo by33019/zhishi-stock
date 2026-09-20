@@ -18,5 +18,8 @@ spring:
 stock:
   market:
     scenario: ${MARKET_SCENARIO:NORMAL}
+    # 必须与 stock-backend 使用同一个值：采集侧与查询侧对"今天是哪一天"的判断
+    # 一旦分叉，落盘的快照会与接口回退到不同交易日，且不会有任何报错。
+    holidays: ${MARKET_HOLIDAYS:}
     collect-initial-delay-ms: ${MARKET_COLLECT_INITIAL_DELAY_MS:1000}
     collect-delay-ms: ${MARKET_COLLECT_DELAY_MS:60000}

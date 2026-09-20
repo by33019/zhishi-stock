@@ -1,10 +1,12 @@
 package cn.zhishi.stock.job;
 
 import cn.zhishi.stock.integration.market.SimulatedQuoteProvider;
+import cn.zhishi.stock.integration.market.SimulatedTradingCalendarProvider;
 import cn.zhishi.stock.market.application.MarketIngestionService;
 import cn.zhishi.stock.market.domain.MarketOverviewArchive;
 import cn.zhishi.stock.market.domain.MarketOverviewStore;
 import cn.zhishi.stock.market.domain.QuoteProvider;
+import cn.zhishi.stock.market.domain.TradingCalendarProvider;
 import cn.zhishi.stock.market.infrastructure.JdbcMarketOverviewArchive;
 import cn.zhishi.stock.market.infrastructure.MarketOverviewJsonCodec;
 import cn.zhishi.stock.market.infrastructure.RedisMarketOverviewStore;
@@ -51,11 +53,30 @@ public class JobConfiguration {
         return new JdbcMarketOverviewArchive(jdbc, codec, jobDatabaseIdGenerator);
     }
 
+    /**
+     * 采集侧与查询侧必须共用同一份交易日历口径。
+     *
+     * <p>此前本模块没有声明日历 Bean，{@code SimulatedQuoteProvider} 自建了一份
+     * **空节假日表**的日历；而 `stock-backend` 用的是 {@code stock.market.holidays}。
+     * 一旦配置了节假日，采集任务会认为当天是交易日并落盘快照，
+     * 而查询侧按节假日回退到上一交易日——两边对"今天是哪一天"给出不同答案，
+     * 且不会有任何测试报错。
+     */
+    @Bean
+    TradingCalendarProvider tradingCalendarProvider(
+            Clock clock, @Value("${stock.market.holidays:}") String holidays) {
+        return SimulatedTradingCalendarProvider.ofCsv(clock, holidays);
+    }
+
     @Bean
     QuoteProvider quoteProvider(
-            Clock clock, @Value("${stock.market.scenario:NORMAL}") String scenario) {
+            Clock clock,
+            TradingCalendarProvider tradingCalendarProvider,
+            @Value("${stock.market.scenario:NORMAL}") String scenario) {
         return new SimulatedQuoteProvider(
-                clock, SimulatedQuoteProvider.Scenario.valueOf(scenario.toUpperCase()));
+                clock,
+                SimulatedQuoteProvider.Scenario.valueOf(scenario.toUpperCase()),
+                tradingCalendarProvider);
     }
 
     @Bean

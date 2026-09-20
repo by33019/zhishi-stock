@@ -15,20 +15,71 @@ import {
   Star,
 } from '@lucide/vue'
 import { storeToRefs } from 'pinia'
+import { computed } from 'vue'
 import { RouterLink, RouterView } from 'vue-router'
 import { useRouter } from 'vue-router'
 
 import AiResearchPanel from '@/components/AiResearchPanel.vue'
 import BrandMark from '@/components/BrandMark.vue'
 import GlobalSearch from '@/components/GlobalSearch.vue'
+import { useMarketStatus } from '@/composables/useMarketStatus'
 import { useUiStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
+import { formatDateTime, formatTime } from '@/utils/format'
 
 const ui = useUiStore()
 const { aiPanelOpen, mobileNavOpen } = storeToRefs(ui)
 const auth = useAuthStore()
 const { authenticated, user } = storeToRefs(auth)
 const router = useRouter()
+
+// 顶栏与侧栏此前是写死的"交易中 14:32"与"数据链路正常 / 延迟 26 秒"，
+// 而这两个值出现在**每一个页面**上。改为消费 MKT-02——它早已实现且能正确判定非交易日。
+const {
+  status: marketStatus,
+  label: marketLabel,
+  isLive: marketIsLive,
+  now: marketNow,
+  nextSessionLabel,
+  isFirstLoad: marketIsFirstLoad,
+  error: marketError,
+  reload: reloadMarketStatus,
+} = useMarketStatus()
+
+/** 拿不到状态就明说"状态未知"，不猜也不沿用上一次的文案。 */
+const marketStateLabel = computed(() => {
+  if (marketError.value) return '状态未知'
+  if (marketLabel.value) return marketLabel.value
+  return marketIsFirstLoad.value ? '加载中' : '状态未知'
+})
+
+/**
+ * 完整信息放进 `title`。
+ *
+ * "下一时段何时开始"只在收盘后有用，而顶栏横向空间有限——挤压布局
+ * 去显示一句多数时候用不到的话不划算。
+ */
+const marketStateTitle = computed(() => {
+  if (marketError.value) {
+    const trace = marketError.value.traceId ? `（追踪号 ${marketError.value.traceId}）` : ''
+    return `${marketError.value.message}${trace}，点击重试`
+  }
+  if (!marketStatus.value) return '正在读取市场状态'
+  const parts = [
+    `${marketStatus.value.tradeDate} · ${marketStatus.value.isTradingDay ? '交易日' : '非交易日'}`,
+  ]
+  if (nextSessionLabel.value) parts.push(`下一时段 ${nextSessionLabel.value}`)
+  return parts.join(' · ')
+})
+
+/** 侧栏：显示交易日历数据源时间。原型那行"延迟 26 秒"没有任何数据来源。 */
+const calendarLabel = computed(() => (marketStatus.value
+  ? `更新于 ${formatDateTime(marketStatus.value.calendarSourceTime)}`
+  : '--'))
+
+const calendarTitle = computed(() => (marketStatus.value
+  ? `交易日历数据源时间 ${formatDateTime(marketStatus.value.calendarSourceTime)}`
+  : '交易日历数据源时间未知'))
 
 async function logout() {
   await auth.logout()
@@ -64,9 +115,16 @@ const navigation = [
       </nav>
       <div class="sidebar__foot">
         <RouterLink to="/admin"><Settings :size="17" /> 系统运营</RouterLink>
-        <div class="data-source">
-          <span class="live-dot" />
-          <span><strong>数据链路正常</strong><small>延迟 26 秒</small></span>
+        <div
+          class="data-source"
+          data-testid="calendar-source"
+          :title="calendarTitle"
+        >
+          <span class="live-dot" :class="{ 'is-idle': !marketIsLive }" />
+          <span>
+            <strong>{{ marketError ? '状态未知' : '交易日历' }}</strong>
+            <small>{{ calendarLabel }}</small>
+          </span>
         </div>
       </div>
     </aside>
@@ -80,7 +138,16 @@ const navigation = [
         </button>
         <GlobalSearch />
         <div class="topbar__actions">
-          <span class="market-state"><i />交易中 <b>14:32</b></span>
+          <button
+            class="market-state"
+            :class="{ 'is-idle': !marketIsLive }"
+            data-testid="market-state"
+            type="button"
+            :title="marketStateTitle"
+            @click="reloadMarketStatus()"
+          >
+            <i />{{ marketStateLabel }}<b v-if="marketIsLive">{{ formatTime(marketNow) }}</b>
+          </button>
           <button class="icon-button" type="button" aria-label="消息通知"><Bell :size="18" /></button>
           <button class="ai-toggle" data-testid="ai-panel-toggle" type="button" @click="ui.toggleAiPanel">
             <PanelRightOpen :size="17" />

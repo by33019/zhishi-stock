@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatChangeRate, formatDateTime, formatMoney, formatVolume, trendClass } from './format'
+import {
+  formatChangeRate,
+  formatDate,
+  formatDateTime,
+  formatMoney,
+  formatTime,
+  formatVolume,
+  trendClass,
+} from './format'
 
 describe('行情格式化', () => {
   it('按 A 股习惯格式化涨跌幅并保留方向', () => {
@@ -41,5 +49,32 @@ describe('行情时间格式化', () => {
     expect(formatDateTime(null)).toBe('--')
     expect(formatDateTime('')).toBe('--')
     expect(formatDateTime('不是时间')).toBe('--')
+  })
+})
+
+describe('纯日期与纯时刻格式化', () => {
+  it('纯日期字段不渲染出 00:00', () => {
+    // tradeDate 是 date 类型，用 formatDateTime 会变成 "09/19 00:00"，
+    // 让人以为存在一个 00:00 的数据时刻
+    expect(formatDate('2026-09-19')).toBe('09/19')
+  })
+
+  it('纯日期同样钉住北京时间，不按 UTC 归日', () => {
+    // `new Date('2026-09-19')` 按 UTC 零点解析；跟随运行环境时区会显示成 09/18
+    expect(formatDate('2026-09-19')).toBe('09/19')
+    expect(formatDate('2026-09-19T00:00:00+08:00')).toBe('09/19')
+  })
+
+  it('时刻只保留 HH:mm，且同样钉住北京时间', () => {
+    expect(formatTime('2026-09-13T14:32:00+08:00')).toBe('14:32')
+    expect(formatTime('2026-09-13T06:32:00Z')).toBe('14:32')
+  })
+
+  it('空值与非时间字符串一律渲染为占位符', () => {
+    expect(formatDate(null)).toBe('--')
+    expect(formatDate('')).toBe('--')
+    expect(formatDate('不是时间')).toBe('--')
+    expect(formatTime(null)).toBe('--')
+    expect(formatTime('不是时间')).toBe('--')
   })
 })

@@ -18,7 +18,10 @@ import cn.zhishi.stock.market.domain.QuoteSnapshotBatchProvider;
 import cn.zhishi.stock.market.domain.RankingType;
 import cn.zhishi.stock.market.domain.SecurityMasterProvider;
 import cn.zhishi.stock.market.domain.SecurityQuoteProvider;
+import cn.zhishi.stock.market.domain.TradingCalendarDay;
 import cn.zhishi.stock.market.domain.TradingCalendarProvider;
+import cn.zhishi.stock.market.domain.TradingSession;
+import cn.zhishi.stock.market.domain.TradingSessions;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.LocalDate;
@@ -44,39 +47,54 @@ public class SimulatedQuoteProvider implements QuoteProvider {
     private final LimitRuleProvider limitRuleProvider;
     private final SecurityQuoteProvider securityQuoteProvider;
     private final QuoteSnapshotBatchProvider quoteSnapshotBatchProvider;
+    private final TradingCalendarProvider tradingCalendarProvider;
+
+    /** 独立使用（定时任务、单测）时的便捷构造：自建一份确定性的整批快照源。 */
+    public SimulatedQuoteProvider(Clock clock, Scenario scenario) {
+        this(clock, scenario, new SimulatedLimitRuleProvider(),
+                SimulatedTradingCalendarProvider.ofCsv(clock, ""));
+    }
 
     /**
-     * 独立使用（定时任务、单测）时的便捷构造：自建一份确定性的整批快照源。
+     * 便捷构造：整批快照源由本构造**按同一个交易日历实例**自建。
      *
-     * <p>生产环境由配置层注入**同一份**整批快照源，使总览的榜单预览与 QTE-01 榜单同源。
-     * 自建版本使用空节假日表，与配置层注入的实例可能对"最近交易日"给出不同答案，
-     * 因此只适用于不关心交易日历差异的场景。
+     * <p>之所以把日历一起收进来，是因为总览的 {@code tradeDate} 与榜单预览的
+     * {@code tradeDate} 必须来自同一份日历。若两者各自持有一份（例如一份带节假日、
+     * 一份不带），非交易日就会算出不同的交易日，而**不会有任何测试报错**——
+     * 这与本切片修复的缺陷是同一个成因。
      */
-    public SimulatedQuoteProvider(Clock clock, Scenario scenario) {
-        this(clock, scenario, new SimulatedLimitRuleProvider());
+    public SimulatedQuoteProvider(
+            Clock clock, Scenario scenario, TradingCalendarProvider tradingCalendarProvider) {
+        this(clock, scenario, new SimulatedLimitRuleProvider(), tradingCalendarProvider);
     }
 
     private SimulatedQuoteProvider(
-            Clock clock, Scenario scenario, LimitRuleProvider limitRuleProvider) {
-        this(clock, scenario, limitRuleProvider, defaultBatchProvider(clock, limitRuleProvider));
+            Clock clock,
+            Scenario scenario,
+            LimitRuleProvider limitRuleProvider,
+            TradingCalendarProvider tradingCalendarProvider) {
+        this(clock, scenario, limitRuleProvider, tradingCalendarProvider,
+                defaultBatchProvider(clock, limitRuleProvider, tradingCalendarProvider));
     }
 
+    /** 生产装配用的完整构造：整批快照源与日历都由配置层注入同一实例。 */
     public SimulatedQuoteProvider(
             Clock clock,
             Scenario scenario,
             LimitRuleProvider limitRuleProvider,
+            TradingCalendarProvider tradingCalendarProvider,
             QuoteSnapshotBatchProvider quoteSnapshotBatchProvider) {
         this.clock = clock;
         this.scenario = scenario;
         this.limitRuleProvider = limitRuleProvider;
         this.securityQuoteProvider = new SimulatedSecurityQuoteProvider(limitRuleProvider);
         this.quoteSnapshotBatchProvider = quoteSnapshotBatchProvider;
+        this.tradingCalendarProvider = tradingCalendarProvider;
     }
 
     private static QuoteSnapshotBatchProvider defaultBatchProvider(
-            Clock clock, LimitRuleProvider limitRuleProvider) {
+            Clock clock, LimitRuleProvider limitRuleProvider, TradingCalendarProvider calendar) {
         SecurityQuoteProvider quotes = new SimulatedSecurityQuoteProvider(limitRuleProvider);
-        TradingCalendarProvider calendar = SimulatedTradingCalendarProvider.ofCsv(clock, "");
         SecurityMasterProvider master =
                 new SimulatedSecurityMasterProvider(quotes, calendar, clock);
         return new SimulatedQuoteSnapshotProvider(
@@ -86,14 +104,24 @@ public class SimulatedQuoteProvider implements QuoteProvider {
     @Override
     public MarketOverview fetch(String marketCode) {
         OffsetDateTime now = OffsetDateTime.now(clock);
-        LocalDate tradeDate = now.toLocalDate();
+        LocalDate today = now.toLocalDate();
+        // 口径与个股/整批快照、MKT-02 查询共用同一份规则（TradingSessions）：
+        // 非交易日回退到最近有效收盘，并标 CLOSED（契约 §3.6 后）。
+        // 修复前这里直接取 now.toLocalDate()，于是周日的快照里 tradeDate 是周日、
+        // marketStatus 是 TRADING，而同一份快照的榜单预览却来自周五的批次。
+        TradingCalendarDay day = tradingCalendarProvider.find(marketCode, today).orElse(null);
+        LocalDate tradeDate =
+                TradingSessions.latestTradeDate(tradingCalendarProvider, marketCode, today);
         DataStatus overallStatus = switch (scenario) {
             case NORMAL, CLOSED -> DataStatus.REALTIME;
             case DELAYED, PARTIAL -> DataStatus.DELAYED;
         };
+        // Scenario.CLOSED 保留为演示/测试用的强制覆盖；它不再是"收盘"的唯一来源，
+        // 非交易日与盘后由日历自然会得到 CLOSED。
         MarketSessionStatus sessionStatus = scenario == Scenario.CLOSED
                 ? MarketSessionStatus.CLOSED
-                : MarketSessionStatus.TRADING;
+                : sessionOf(day, today, now).status();
+        OffsetDateTime dataTime = dataTime(marketCode, day, tradeDate, now);
         Map<String, DataStatus> componentStatus = new LinkedHashMap<>();
         componentStatus.put("indices", scenario == Scenario.DELAYED
                 ? DataStatus.DELAYED
@@ -110,7 +138,7 @@ public class SimulatedQuoteProvider implements QuoteProvider {
                 marketCode,
                 sessionStatus,
                 tradeDate,
-                scenario == Scenario.DELAYED ? now.minusMinutes(8) : now,
+                dataTime,
                 overallStatus,
                 indices(),
                 breadth(tradeDate),
@@ -131,12 +159,47 @@ public class SimulatedQuoteProvider implements QuoteProvider {
      * 广度不再是写死的数字，而是对整批个股行情按限幅规则计数得到的结果。
      *
      * <p>这带来一个可验证的性质：把快照里的广度与同批个股行情重新计一遍，结果必须一致。
+     *
+     * <p>{@code tradeDate} 由调用方传入且与榜单预览同源——修复前这里用的是"今天"，
+     * 于是非交易日会出现"广度按周日算、榜单按周五算"的自相矛盾。
      */
     private BreadthData breadth(LocalDate tradeDate) {
         return BreadthCalculator.calculate(
                 securityQuoteProvider.fetchUniverse(MARKET_CODE, tradeDate),
                 limitRuleProvider.rules(MARKET_CODE, tradeDate),
                 tradeDate);
+    }
+
+    /**
+     * 快照的数据截止时刻。
+     *
+     * <p>契约 §3.6 定义它是「该行情本身对应的时间」，因此：
+     * <ul>
+     *   <li>此刻落在该交易日的某个时段窗口内 → {@code now}，数据正在产生；</li>
+     *   <li>其余情况（收盘后、非交易日）→ 该交易日的**收盘时刻**。
+     *       周日 15:20 生成的快照里装的是周五的行情，写成周日 15:20 是假的。</li>
+     * </ul>
+     *
+     * <p>判据取"有没有窗口覆盖此刻"而不是比较日期，是因为交易日 20:00 时
+     * {@code tradeDate == today} 成立、但市场 15:00 就已收盘。
+     */
+    private OffsetDateTime dataTime(
+            String marketCode, TradingCalendarDay day, LocalDate tradeDate, OffsetDateTime now) {
+        OffsetDateTime base = day != null && day.sessionAt(now.toLocalTime()).isPresent()
+                ? now
+                : SimulatedSessionTimes.sessionEndAt(tradingCalendarProvider, marketCode, tradeDate)
+                        .orElse(now);
+        // 延迟场景在真实数据时间上再后退 8 分钟，而不是拿 now 后退——
+        // 否则非交易日的"延迟"会把数据时间推到根本没有行情的日期上。
+        return scenario == Scenario.DELAYED ? base.minusMinutes(8) : base;
+    }
+
+    /** 日历查不到该市场时按 CLOSED 兜底，与 MKT-02 的既有口径一致。 */
+    private static TradingSession sessionOf(
+            TradingCalendarDay day, LocalDate today, OffsetDateTime now) {
+        return day == null
+                ? TradingSession.CLOSED
+                : TradingSessions.currentSession(day, today, now.toLocalTime());
     }
 
     /**

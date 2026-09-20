@@ -72,6 +72,7 @@
 - [x] **M2-07** P1 板块排行、详情与成分股 — 已完成，见下方详情
 - [x] **M2-08** P0 前端接入 rankings / sectors / sectors:id / stocks:id — 已完成，见下方详情
 - [x] **M2-09** P1 全局搜索接真实接口 — 已完成，见下方详情
+- [x] **M2-10** P0 市场状态真实化（关闭已知问题 #7 / #12） — 已完成，见下方详情
 
 ## M3：用户态闭环与 AI 研究编排
 
@@ -643,6 +644,99 @@ PRD QTE-01 的输出列写「含代码、名称、交易所、状态和涨跌幅
 
 ---
 
+## M2-10 交付详情
+
+> 关闭已知问题 **#7**（非交易日 `tradeDate` / `marketStatus` 未回退）与 **#12**（顶栏写死的"交易中 14:32"）。
+> 设计文档：`docs/superpowers/specs/2026-09-20-market-status-truth.md`。
+> 对应契约：MKT-01 / MKT-02。
+
+### 交付内容
+
+| 层 | 内容 |
+| --- | --- |
+| 新增纯函数 | `stock-market/domain/TradingSessions`：`latestTradeDate` + `currentSession`，两条规则各只有一处实现 |
+| 新增辅助 | `stock-integration/.../SimulatedSessionTimes`：收盘时刻从日历取（不硬编码 15:00），总览与个股快照共用推导过程、各自保留兜底策略 |
+| 后端口径 | `SimulatedQuoteProvider` 注入 `TradingCalendarProvider`；`tradeDate` / `marketStatus` / `dataTime` 由日历推导；`breadth` 与榜单预览共用同一 `tradeDate` |
+| 既有实现收口 | `SimulatedMarketAccess.latestTradeDate()`、`MarketStatusQueryService.getStatus()` 改为委托 `TradingSessions` |
+| 装配 | `BackendConfiguration` / `JobConfiguration` 的 `quoteProvider` 传入共享日历；`stock-job` 新增 `TradingCalendarProvider` Bean 与 `MARKET_HOLIDAYS` 配置（此前它自建了一份**空节假日表**的日历） |
+| 前端 | `types/domain.ts` 新增 MKT-02 契约类型 `MarketStatus`；`marketApi.getMarketStatus`；新增 `composables/useMarketStatus`（60s 刷新 + 页面不可见暂停）；`AppShell` 顶栏与侧栏接真实状态；`MarketOverview` 标注交易日与休市标记 |
+| 格式化 | `format.ts` 新增 `formatDate` / `formatTime`，均显式钉 `Asia/Shanghai` |
+
+### 修复的三处"自相矛盾"
+
+**1. 同一份快照内部两个字段来自不同交易日（#7 的真正形态）**
+
+`breadth` 用 `now.toLocalDate()`（周日），`rankings` 用 `SimulatedMarketAccess.latestTradeDate()`（周五）。
+两处各自都是"合法"的值，**没有任何测试会因此变红**——这正是口径分歧的代价：它不报错，只让数字互相矛盾。
+`latestTradeDate()` 早已实现了正确规则，问题在于它只被部分链路使用。
+
+**2. 采集侧与查询侧对"今天是哪一天"给出不同答案**
+
+`stock-job` 此前没有 `TradingCalendarProvider` Bean，`SimulatedQuoteProvider` 自建了一份**空节假日表**的日历；
+而 `stock-backend` 用的是 `stock.market.holidays`。一旦配置节假日，采集任务会认为当天是交易日并落盘快照，
+接口却按节假日回退到上一交易日。已在 `compose.yaml` 的共享环境锚点与两个 `application.yml` 里统一 `MARKET_HOLIDAYS`。
+
+**3. 总览页的数字与它自己引用的数据矛盾**
+
+原型写死「较昨日 +8.69%」，而同一份响应里的 `amount` / `previousAmount` 算出来是 +7.25%。
+已改为按这两个字段计算。同页写死的「今日市场，温和放量。」与「金融与科技方向形成共振」也一并移除——
+它们在周日显示时，"今日市场"本身就是错的；导语改为由真实广度数据拼出。
+
+### 关键设计取舍
+
+**1. 抽 `TradingSessions`，而不是在总览里再补一段相同逻辑**
+若只在 `SimulatedQuoteProvider` 里补一遍，就有了**两份**实现，下次改一处就会让总览与榜单分叉，
+而且同样不会有测试报错。抽到 `domain` 层纯函数后，三处调用方全部改为委托。
+
+**2. `dataTime` 的"盘中"判定用时段窗口，不比较 `tradeDate == today`**
+两种写法只在**收盘后**有差别：交易日 20:00 时 `tradeDate == today` 成立，但市场 15:00 就已收盘。
+用窗口判定得到 15:00（真实收盘时刻），用日期比较会得到 20:00（一个没有数据的时刻）。
+
+**3. `Scenario.CLOSED` 保留为强制覆盖，不删除**
+日历接管后它已冗余，但被 `compose.yaml`、`backend/README.md`、两个 `application.yml` 与三处测试引用，
+删除属于扩大范围且会破坏用户的 compose 环境变量。语义明确为"演示 / 测试用的强制覆盖"。
+
+**4. 顶栏收盘后不显示时间**
+原型「交易中 14:32」的 `14:32` 是写死的。改为：时段进行中显示状态文案 + 当前北京时间；
+已收盘 / 非交易日只显示状态文案，把 `nextSessionAt` 放进 `title`。
+收盘后显示"已收盘 20:00"是误导——20:00 没有数据。
+
+**5. 60 秒刷新放在独立 composable，不进 `useRemoteData`**
+`useRemoteData` 刻意不做轮询（M2-08 决策），不应为顶栏破例。
+刻意**不**按 `nextSessionAt` 定时唤醒：那样在日历本身过期时会静默停更，固定节拍不会失效。
+
+**6. 休市与已收盘分开**
+判据是**快照的交易日是不是今天**（按北京时间比较）。
+不能用"`dataTime` 与 `tradeDate` 是否同日"——后端在非交易日会把 `dataTime` 回退到上一交易日的收盘时刻，
+两者本来就同日，区分不出周末与盘后。周日显示"已收盘"会让人以为今天开过市。
+
+**7. 写死的指数可以留，写死的板块 ID 不能留**
+判据是"这个值是否需要与系统其它部分对齐"：`idx-*` 不与任何链路冲突，作为模拟源数据自洽；
+而 `sectors()` 返回的 `bk-ai` / `bk-chip` / `bk-broker` 会被总览页当作真实 `sectorId` 跳转，
+必然 404——**写死的数值可以是模拟数据；写死的标识符只要需要被别处解析，就是缺陷**。
+后者归 M2-11。
+
+### 不在本轮范围
+
+| 项 | 归属 |
+| --- | --- |
+| 总览快照写死的板块预览（三张卡片 404） | **M2-11**（已确认） |
+| 总览快照写死的指数 | 不做（`idx-*` 无坏链接，见取舍 7） |
+| 顶栏"消息通知"铃铛 | M3 通知域 |
+| STK-05 批量行情 | M3-03 |
+| 分时 STK-06 | 单独排期 |
+
+### 验证结果
+
+| 项 | 结果 |
+| --- | --- |
+| 后端 | **354 项通过**（本次新增 13 项：`TradingSessionsTest` 8 + 总览非交易日 5） |
+| 前端 | **19 文件 / 99 项通过**（基线 18 / 75；新增 `useMarketStatus` 9、`AppShell` +4、`MarketOverview` +7、`format` +4），`TZ=UTC` 下同样全绿 |
+| 类型 / 构建 | `npm run typecheck` 0 错误；`vite build` 成功 |
+| 环境限制 | `InfrastructureIntegrationTest` 报 `Could not find a valid Docker environment`（本机 Docker 未启动），非回归，CI 覆盖 |
+
+---
+
 ## 已完成
 
 - [x] 阶段 0 只读审计（2026-09-19）
@@ -657,3 +751,4 @@ PRD QTE-01 的输出列写「含代码、名称、交易所、状态和涨跌幅
 - [x] M2-07（2026-09-20）
 - [x] M2-08（2026-09-20）
 - [x] M2-09（2026-09-20）
+- [x] M2-10（2026-09-20）

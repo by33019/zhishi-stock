@@ -259,12 +259,14 @@ public class BackendConfiguration {
     QuoteProvider quoteProvider(
             Clock clock,
             LimitRuleProvider limitRuleProvider,
+            TradingCalendarProvider tradingCalendarProvider,
             QuoteSnapshotBatchProvider quoteSnapshotBatchProvider,
             @Value("${stock.market.scenario:NORMAL}") String scenario) {
         return new SimulatedQuoteProvider(
                 clock,
                 SimulatedQuoteProvider.Scenario.valueOf(scenario.toUpperCase()),
                 limitRuleProvider,
+                tradingCalendarProvider,
                 quoteSnapshotBatchProvider);
     }
 

@@ -18,6 +18,25 @@ export type TradingSession =
   | 'CLOSING_CALL_AUCTION'
   | 'CLOSED'
 
+/**
+ * MKT-02 响应体：市场交易状态。
+ *
+ * `isTradingDay` 的命名是刻意的：后端 Java 字段叫 `tradingDay`，靠
+ * `@JsonProperty("isTradingDay")` 显式改了 JSON 名以与契约逐字一致。
+ * 写成 `tradingDay` 不会报错，只会静默拿到 `undefined`——
+ * 于是"是不是交易日"的分支永远走 else。
+ */
+export interface MarketStatus {
+  marketCode: string
+  tradeDate: string
+  isTradingDay: boolean
+  sessionStatus: MarketSessionStatus
+  currentSession: TradingSession
+  /** 下一时段开始时间；日历未给出未来交易日时为 null。 */
+  nextSessionAt: string | null
+  calendarSourceTime: string
+}
+
 export interface ApiResponse<T> {
   success: true
   code: 'SUCCESS'

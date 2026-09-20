@@ -6,7 +6,7 @@ import { computed, onMounted, ref } from 'vue'
 import BaseChart from '@/components/BaseChart.vue'
 import { getMarketOverview } from '@/services/marketApi'
 import type { MarketOverview } from '@/types/domain'
-import { formatChangeRate, formatDateTime, formatMoney, trendClass } from '@/utils/format'
+import { formatChangeRate, formatDate, formatDateTime, formatMoney, formatTime, trendClass } from '@/utils/format'
 
 const market = ref<MarketOverview>()
 const loading = ref(true)
@@ -35,6 +35,78 @@ const breadthRatio = computed(() => {
   if (!market.value) return 0
   const { riseCount, fallCount, flatCount } = market.value.breadth
   return Math.round((riseCount / (riseCount + fallCount + flatCount)) * 100)
+})
+
+/**
+ * 这份快照对应的是**哪个交易日**的行情。
+ *
+ * 修复 #7 之后，非交易日（周末 / 节假日）与盘后拿到的是最近有效收盘数据，
+ * 而页面上的"数据截止 09/19 15:00"看起来就像数据停更了。不解释清楚，
+ * 用户会以为页面坏了——只改后端会把"显示假数据"换成"显示正确但令人困惑的数据"。
+ */
+const tradeDateLabel = computed(() => (market.value ? formatDate(market.value.tradeDate) : '--'))
+
+/** 快照自身标称的市场状态（后端按交易日历推导），不是本地时钟推出来的。 */
+const isLiveSession = computed(() => {
+  const status = market.value?.marketStatus
+  return status === 'PRE_OPEN' || status === 'CALL_AUCTION'
+    || status === 'TRADING' || status === 'BREAK'
+})
+
+/**
+ * 非交易时段标记。
+ *
+ * "休市"与"已收盘"必须分开：周日显示"已收盘"会让人以为今天开过市。
+ * 判据是**快照的交易日是不是今天**（按北京时间比较）——
+ * 不能用"`dataTime` 与 `tradeDate` 是否同日"：后端在非交易日会把 `dataTime`
+ * 回退到上一交易日的收盘时刻，两者本来就同日，区分不出周末与盘后。
+ */
+const sessionBadge = computed(() => {
+  if (!market.value || isLiveSession.value) return null
+  return tradeDateLabel.value === formatDate(new Date().toISOString()) ? '已收盘' : '非交易日'
+})
+
+/** 首屏导语。写死一句"今日市场，温和放量"在周日是错的——那天没有"今日市场"。 */
+const leadHeadline = computed(() => {
+  if (sessionBadge.value === '非交易日') {
+    return { title: '今日休市，', emphasis: `展示 ${tradeDateLabel.value} 收盘数据。` }
+  }
+  if (sessionBadge.value === '已收盘') {
+    return { title: '今日已收盘，', emphasis: `数据截止 ${formatTime(market.value?.dataTime ?? null)}。` }
+  }
+  return { title: '今日市场，', emphasis: '盘中快照。' }
+})
+
+/**
+ * 头部导语由真实广度数据拼出来，而不是写死一段行情判断。
+ *
+ * 原型那句"金融与科技方向形成共振，市场广度改善"在任何一天都显示同一个结论，
+ * 且没有任何数据支撑它。与 M2-08 的做法一致：没有数据来源的表述不保留。
+ */
+const leadSummary = computed(() => {
+  if (!market.value) return ''
+  const { riseCount, fallCount, flatCount, limitUpCount, limitDownCount } = market.value.breadth
+  const traded = riseCount + fallCount + flatCount
+  const direction = riseCount > fallCount ? '涨多跌少' : riseCount < fallCount ? '跌多涨少' : '涨跌相当'
+  return `${traded} 只交易标的中 ${riseCount} 只上涨、${fallCount} 只下跌、`
+    + `${flatCount} 只平盘，${direction}；涨停 ${limitUpCount} 只、跌停 ${limitDownCount} 只。`
+})
+
+/**
+ * 较昨日成交额变化。
+ *
+ * 原型写死 `+8.69%`，而同一份响应里的 `amount` / `previousAmount` 算出来是别的数——
+ * 页面上的数字与它自己引用的数据互相矛盾，比空白更糟。改为直接算。
+ */
+const turnoverChange = computed(() => {
+  const previous = Number(market.value?.turnover.previousAmount ?? 0)
+  const current = Number(market.value?.turnover.amount ?? 0)
+  if (!Number.isFinite(previous) || !Number.isFinite(current) || previous <= 0) return null
+  const rate = (current / previous - 1) * 100
+  return {
+    text: `${rate >= 0 ? '+' : ''}${rate.toFixed(2)}%`,
+    trend: trendClass(String(current / previous - 1)),
+  }
 })
 
 const breadthOption = computed<EChartsOption>(() => ({
@@ -95,11 +167,18 @@ const turnoverOption = computed<EChartsOption>(() => ({
     <section class="market-lead">
       <div>
         <span class="eyebrow">MARKET PULSE · CN</span>
-        <h1>今日市场，<em>温和放量。</em></h1>
-        <p>金融与科技方向形成共振，市场广度改善。重点观察午后成交持续性，以及高位板块的分化风险。</p>
+        <h1>
+          {{ leadHeadline.title }}<em>{{ leadHeadline.emphasis }}</em>
+        </h1>
+        <p data-testid="market-lead-summary">{{ leadSummary }}</p>
       </div>
       <div class="market-lead__aside">
-        <div class="data-time"><Clock3 :size="15" /> 数据截止 {{ formatDateTime(market.dataTime) }}</div>
+        <div class="data-time">
+          <Clock3 :size="15" /> 数据截止 {{ formatDateTime(market.dataTime) }}
+          <b v-if="sessionBadge" class="trade-date-badge" data-testid="trade-date-badge">
+            交易日 {{ tradeDateLabel }} · {{ sessionBadge }}
+          </b>
+        </div>
         <div
           v-if="market.dataStatus !== 'REALTIME'"
           class="market-data-status"
@@ -108,7 +187,9 @@ const turnoverOption = computed<EChartsOption>(() => ({
           {{ market.dataStatus === 'DELAYED' ? '行情存在延迟' : '当前展示最近有效快照' }}
           · 最近同步 {{ formatDateTime(market.lastSuccessfulSyncAt) }}
         </div>
-        <button type="button"><Sparkles :size="16" /> 生成市场解读</button>
+        <button type="button" disabled title="AI 市场解读待接入（M3-06）">
+          <Sparkles :size="16" /> 生成市场解读
+        </button>
       </div>
     </section>
 
@@ -152,7 +233,15 @@ const turnoverOption = computed<EChartsOption>(() => ({
       <article class="research-panel turnover-panel">
         <header class="section-heading">
           <div><span class="section-index">02</span><div><h2>成交趋势</h2><p>两市累计成交额</p></div></div>
-          <div class="headline-number"><strong>{{ formatMoney(market.turnover.amount) }}</strong><small class="trend-up">较昨日 +8.69%</small></div>
+          <div class="headline-number">
+            <strong>{{ formatMoney(market.turnover.amount) }}</strong>
+            <small
+              v-if="turnoverChange"
+              :class="turnoverChange.trend"
+              data-testid="turnover-change"
+            >较昨日 {{ turnoverChange.text }}</small>
+            <small v-else data-testid="turnover-change">较昨日 --</small>
+          </div>
         </header>
         <BaseChart :option="turnoverOption" height="230px" />
       </article>

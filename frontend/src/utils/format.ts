@@ -54,3 +54,34 @@ export function formatDateTime(value: string | null): string {
     hour12: false,
   }).format(parsed)
 }
+
+/**
+ * 只要日期（`09/19`），用于 `tradeDate` 这类纯日期字段。
+ *
+ * 不能用 {@link formatDateTime}：纯日期字段会渲染成 `09/19 00:00`，
+ * 让人以为有一个 00:00 的数据时刻。时区同样显式钉住——
+ * `new Date('2026-09-19')` 按 UTC 零点解析，跟随运行环境时区会显示成 09/18。
+ */
+export function formatDate(value: string | null): string {
+  if (value === null || value === '') return '--'
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return '--'
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(parsed)
+}
+
+/** 只要时刻（`14:32`），用于顶栏的当前时间。 */
+export function formatTime(value: string | null): string {
+  if (value === null || value === '') return '--'
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return '--'
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(parsed)
+}

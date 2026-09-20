@@ -55,6 +55,7 @@ mvn -f backend/pom.xml -pl stock-market -am test
 | `JWT_SECRET` | 空 | JWT 签名密钥，**生产必须显式设置** |
 | `COOKIE_SECURE` | `true` | refresh cookie 是否仅走 HTTPS；本地 http 联调需设为 `false` |
 | `MARKET_SCENARIO` | `NORMAL` | 模拟行情场景（`NORMAL` / 其它确定性场景） |
+| `MARKET_HOLIDAYS` | 空 | 模拟交易日历的节假日集合，逗号分隔 ISO 日期。**采集与查询共用**，两边必须一致 |
 | `DEMO_USERNAME` / `DEMO_PASSWORD` | `demo` / `Stock@123` | 演示账号种子 |
 | `MARKET_COLLECT_INITIAL_DELAY_MS` | `1000` | 行情采集首次延迟（仅 `stock-job`） |
 | `MARKET_COLLECT_DELAY_MS` | `60000` | 行情采集间隔（仅 `stock-job`） |

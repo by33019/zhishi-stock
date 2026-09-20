@@ -6,11 +6,11 @@ import cn.zhishi.stock.market.domain.SecurityQuoteProvider;
 import cn.zhishi.stock.market.domain.SecuritySummary;
 import cn.zhishi.stock.market.domain.TradingCalendarDay;
 import cn.zhishi.stock.market.domain.TradingCalendarProvider;
+import cn.zhishi.stock.market.domain.TradingSessions;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -27,9 +27,6 @@ import java.util.Optional;
 final class SimulatedMarketAccess {
 
   private static final String SUPPORTED_MARKET = "CN";
-
-  /** A 股行情时间固定在北京时间（与前端渲染口径一致）。 */
-  private static final ZoneOffset MARKET_OFFSET = ZoneOffset.ofHours(8);
 
   private final SecurityQuoteProvider securityQuoteProvider;
   private final SecurityMasterProvider securityMasterProvider;
@@ -55,13 +52,15 @@ final class SimulatedMarketAccess {
     return SUPPORTED_MARKET.equals(marketCode);
   }
 
-  /** 最近的有效交易日：盘中为当日，盘后与节假日回退到上一交易日。 */
+  /**
+   * 最近的有效交易日：盘中为当日，盘后与节假日回退到上一交易日。
+   *
+   * <p>规则本体在 {@link TradingSessions}——总览 Provider 也需要同一份口径，
+   * 各写一遍的话两处会对"今天是哪一天"给出不同答案，而且不会有测试报错。
+   */
   LocalDate latestTradeDate() {
-    LocalDate today = LocalDate.now(clock);
-    return tradingCalendarProvider
-        .find(SUPPORTED_MARKET, today)
-        .map(day -> day.tradingDay() ? day.tradeDate() : day.previousTradeDate())
-        .orElse(today);
+    return TradingSessions.latestTradeDate(
+        tradingCalendarProvider, SUPPORTED_MARKET, LocalDate.now(clock));
   }
 
   /** 指定交易日的一整批个股行情。整批装配只调一次，避免逐只查找退化成 O(n²)。 */
@@ -127,15 +126,13 @@ final class SimulatedMarketAccess {
   /**
    * 某交易日的收盘时刻。
    *
-   * <p>收盘时刻从交易日历取，不硬编码 15:00——硬编码会在遇到半日市或时段调整时静默出错。
-   * 日历缺失时退化为当日零点，表示"时刻未知"，比伪造一个 15:00 诚实。
+   * <p>日历缺失时退化为当日零点，表示"时刻未知"，比伪造一个 15:00 诚实。
+   * 推导过程与总览快照共用 {@link SimulatedSessionTimes}，只有兜底策略不同。
    */
   OffsetDateTime sessionEndAt(LocalDate tradeDate) {
-    LocalTime close = tradingCalendarProvider
-        .find(SUPPORTED_MARKET, tradeDate)
-        .flatMap(TradingCalendarDay::lastSessionEnd)
-        .orElse(LocalTime.MIDNIGHT);
-    return OffsetDateTime.of(tradeDate, close, MARKET_OFFSET);
+    return SimulatedSessionTimes.sessionEndAt(tradingCalendarProvider, SUPPORTED_MARKET, tradeDate)
+        .orElse(OffsetDateTime.of(
+            tradeDate, LocalTime.MIDNIGHT, SimulatedSessionTimes.MARKET_OFFSET));
   }
 
   Clock clock() {

@@ -169,6 +169,13 @@
   animation: pulse-dot 2s infinite;
 }
 
+/* 非交易时段不再脉动：一个一直在跳的"在线"点会让人以为数据在实时更新 */
+.live-dot.is-idle {
+  background: rgba(242, 234, 219, 0.32);
+  box-shadow: none;
+  animation: none;
+}
+
 .workspace {
   grid-column: 2;
   min-width: 0;
@@ -330,10 +337,26 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  /* 它现在是一个按钮（点击重试），需要清掉浏览器默认外观 */
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
   color: var(--down);
+  font: inherit;
   font-size: var(--text-label);
   font-weight: 750;
+  cursor: pointer;
 }
+
+.market-state:hover { background: var(--paper-muted); }
+
+/*
+ * 非交易时段：颜色退到弱化档且停止脉动。
+ * "正在跳动"本身就是"市场活着"的暗示，休市时保持跳动会误导。
+ */
+.market-state.is-idle { color: var(--ink-faint); }
+.market-state.is-idle i { animation: none; }
 
 .market-state i {
   width: 6px;

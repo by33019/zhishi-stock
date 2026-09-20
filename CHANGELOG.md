@@ -23,6 +23,47 @@
 
 ---
 
+## 2026-09-20 — M2-10 市场状态真实化（关闭已知问题 #7 / #12）
+
+### 新增
+
+- `stock-market/domain/TradingSessions`：纯函数 `latestTradeDate` + `currentSession`，让 MKT-01 摄入、MKT-02 查询、个股/整批快照三条链路共用同一份"今天是哪一天、此刻是哪个时段"的口径
+- `stock-integration/.../SimulatedSessionTimes`：收盘时刻从交易日历取（不硬编码 15:00），总览与个股快照共用推导过程、各自保留兜底策略
+- `TradingSessionsTest`（8 项）；`SimulatedQuoteProviderTest` 新增 5 项非交易日 / 盘后 / 盘前 / 节假日用例
+- 前端 `types/domain.ts` 新增 MKT-02 契约类型 `MarketStatus`（`isTradingDay` 的命名与 Java 字段名不同，靠 `@JsonProperty` 对齐）
+- 前端 `composables/useMarketStatus`：60s 定时刷新 + `visibilitychange` 页面不可见时暂停 + 暴露与刷新同节拍的 `now`
+- `utils/format.ts` 新增 `formatDate` / `formatTime`（均显式钉 `Asia/Shanghai`）
+- 测试：`useMarketStatus.test.ts`（9）、`format.test.ts`（+4）、`AppShell.test.ts`（+4）、`MarketOverview.test.ts`（+7）
+- 设计文档 `docs/superpowers/specs/2026-09-20-market-status-truth.md`
+
+### 变更
+
+- **`SimulatedQuoteProvider` 的 `tradeDate` / `marketStatus` / `dataTime` 改由交易日历推导**（此前 `tradeDate = now.toLocalDate()` 完全不看日历、`sessionStatus` 由配置决定）：非交易日回退到最近有效收盘并标 `CLOSED`，`dataTime` 取该交易日的收盘时刻而不是"现在"
+- `breadth` 与榜单预览共用同一个 `tradeDate`：此前广度按"今天"算、榜单按"最近交易日"算，非交易日两者相差一天
+- `SimulatedMarketAccess.latestTradeDate()` 与 `MarketStatusQueryService.getStatus()` 改为委托 `TradingSessions`（等价搬移，行为不变）
+- `stock-job` 新增 `TradingCalendarProvider` Bean 与 `MARKET_HOLIDAYS` 配置：此前它自建了一份**空节假日表**的日历，而 `stock-backend` 用 `stock.market.holidays`——配置了节假日时采集与查询会对"今天是哪一天"给出不同答案
+- `compose.yaml` 的共享环境锚点补 `MARKET_HOLIDAYS`（`stock-api` 与 `stock-job` 同时生效）
+- **`AppShell.vue` 顶栏的「交易中 14:32」改为消费 MKT-02**：时段进行中显示状态文案 + 当前北京时间；已收盘 / 非交易日只显示状态文案（收盘后显示当前时刻会被读成"数据截止该时刻"，而那时没有数据），`nextSessionAt` 放进 `title`
+- **侧栏的「数据链路正常 / 延迟 26 秒」改为真实的交易日历数据源时间**；接口失败时顶栏与侧栏显示"状态未知"并可点击重试，不沿用上一次的文案
+- **`MarketOverview.vue` 标注交易日与休市 / 已收盘标记**：修好 #7 之后非交易日展示的是上一交易日收盘数据，不解释清楚会让人以为页面坏了。判据是"快照的交易日是不是今天"——不能用 `dataTime` 与 `tradeDate` 是否同日，后端在非交易日会把 `dataTime` 回退到上一交易日收盘，两者本来就同日
+- `market-state` 与 `live-dot` 在非交易时段停止脉动：一个一直在跳的"在线"点本身就在暗示数据在实时更新
+
+### 修复
+
+- **同一份总览快照内部两个字段来自不同交易日**（已知问题 #7）：修复前周日访问 `/markets/overview` 会得到 `tradeDate = 周日`、`marketStatus = TRADING`，而榜单预览来自周五。两处各自都是"合法"值，**没有任何测试会因此变红**
+- **顶栏与侧栏的写死值**（已知问题 #12）：这两处出现在除 `/login` 外的每一个页面上
+- **总览页的「较昨日 +8.69%」与它自己引用的数据矛盾**：同一份响应里的 `amount` / `previousAmount` 算出来是 +7.25%。已改为按这两个字段计算，`previousAmount` 缺失或为 0 时显示 `--` 而不是编一个涨跌幅
+- 总览页写死的「今日市场，温和放量。」与「金融与科技方向形成共振」移除，导语改由真实广度数据拼出——那句固定文案在周日显示时，"今日市场"本身就是错的
+- 总览页未接入的「生成市场解读」按钮改为 `disabled` + `title`（可点但无反应比禁用更糟）
+
+### 文档
+
+- `TASKS.md`：M2-10 交付详情（含 7 条取舍与"不在本轮范围"）
+- `PROJECT_STATUS.md`：M2 进度 9/9 → 10/10，已知问题 #7 / #12 关闭，接口覆盖率盘点更新（MKT-02 由"已实现但无人消费"变为已消费）
+- `backend/README.md`：补 `MARKET_HOLIDAYS` 环境变量说明（采集与查询共用，两边必须一致）
+
+---
+
 ## 2026-09-20 — M2-09 全局搜索接真实接口（STK-01）
 
 ### 新增

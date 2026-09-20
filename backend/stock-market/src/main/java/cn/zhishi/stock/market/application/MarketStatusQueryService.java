@@ -4,6 +4,7 @@ import cn.zhishi.stock.market.domain.MarketStatus;
 import cn.zhishi.stock.market.domain.TradingCalendarDay;
 import cn.zhishi.stock.market.domain.TradingCalendarProvider;
 import cn.zhishi.stock.market.domain.TradingSession;
+import cn.zhishi.stock.market.domain.TradingSessions;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -34,10 +35,10 @@ public class MarketStatusQueryService {
         TradingCalendarDay day = provider.find(normalized, target)
                 .orElseThrow(() -> new MarketNotFoundException(marketCode));
 
+        // 时段推导与 MKT-01 的摄入共用同一份规则：只有"目标日期就是今天"时才按当前时刻匹配窗口。
+        TradingSession current =
+                TradingSessions.currentSession(day, now.toLocalDate(), now.toLocalTime());
         boolean live = target.equals(now.toLocalDate());
-        TradingSession current = live && day.tradingDay()
-                ? day.sessionAt(now.toLocalTime()).orElse(TradingSession.CLOSED)
-                : TradingSession.CLOSED;
 
         return new MarketStatus(
                 normalized,

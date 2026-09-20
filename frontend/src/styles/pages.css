@@ -58,6 +58,32 @@
   font-size: var(--text-caption);
 }
 
+/*
+ * 非交易时段的交易日标注。
+ * 与"数据截止 09/19 15:00"并排出现，用来解释为什么页面上的日期不是今天。
+ */
+.trade-date-badge {
+  padding: 2px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--paper-muted);
+  color: var(--ink-soft);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+/* 死按钮：禁用态必须看起来像禁用态，否则用户会反复点击 */
+.market-lead__aside button:disabled {
+  border-color: var(--line-strong);
+  color: var(--ink-faint);
+  cursor: not-allowed;
+}
+
+.market-lead__aside button:disabled:hover {
+  background: transparent;
+  color: var(--ink-faint);
+}
+
 .market-lead__aside button {
   height: 41px;
   display: inline-flex;
