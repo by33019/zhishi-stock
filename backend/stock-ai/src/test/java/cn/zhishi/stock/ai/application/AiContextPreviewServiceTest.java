@@ -90,7 +90,8 @@ class AiContextPreviewServiceTest {
     private AiContextPreviewService service() {
         AiContextBuilder builder = new AiContextBuilder(
                 quotes, overviewService(), sectors, news, AiFixtures.hasher(), newsLimit);
-        return new AiContextPreviewService(catalog, builder, securities, sectorIdentities);
+        return new AiContextPreviewService(
+                new AiTaskRequestResolver(catalog, securities, sectorIdentities), builder);
     }
 
     private MarketOverviewQueryService overviewService() {

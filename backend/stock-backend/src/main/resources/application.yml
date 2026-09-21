@@ -42,6 +42,20 @@ stock:
     model-code: ${AI_MODEL_CODE:sim-analyst-v1}
     # 单个任务可进入 AI 上下文的资讯证据条数上限。
     news-evidence-limit: ${AI_NEWS_EVIDENCE_LIMIT:20}
+    # ---- M3-07 任务编排 ----
+    # 单用户每日任务上限（契约 §26.4 的 dailyLimit，口径 = 今日创建的**任务**数）。
+    daily-task-limit: ${AI_DAILY_TASK_LIMIT:20}
+    # 单用户并发上限（契约 §13.5）：活跃任务数，终态自然释放。
+    max-concurrent-tasks: ${AI_MAX_CONCURRENT_TASKS:2}
+    # 超时阈值：超过即由 Worker 置 TIMED_OUT，不再等 LLM。
+    task-deadline-seconds: ${AI_TASK_DEADLINE_SECONDS:60}
+    # 事件流（chunk / status）的保留期；报告本身落 ai_report，不受此影响。
+    chunk-retention-minutes: ${AI_CHUNK_RETENTION_MINUTES:30}
+    # 写进 ai_report 的版本标识：将来换 Prompt 或换内容结构时，历史报告仍能自我说明。
+    prompt-version: ${AI_PROMPT_VERSION:p1}
+    content-schema-version: ${AI_CONTENT_SCHEMA_VERSION:v1}
+    # 单次调用的输出上限，透传给 LlmProviderPort。
+    max-output-tokens: ${AI_MAX_OUTPUT_TOKENS:2048}
   seed:
     demo-username: ${DEMO_USERNAME:demo}
     demo-password: ${DEMO_PASSWORD:Stock@123}

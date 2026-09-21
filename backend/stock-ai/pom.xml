@@ -22,6 +22,14 @@
       显式声明而不是蹭传递依赖：对外响应体用 Jackson 注解控制字段（同 SecuritySummary / Sector）。
     -->
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-json</artifactId></dependency>
+    <!--
+      M3-07 起 AI 域开始落库（V6 的六张表此前零行零引用），并需要 Redis Stream 做
+      任务队列与事件流。依赖与 stock-news / stock-system 同形：端口 + MyBatis 实现同模块，
+      @MapperScan 由两个可启动模块各自声明。
+    -->
+    <dependency><groupId>com.baomidou</groupId><artifactId>mybatis-plus-spring-boot3-starter</artifactId></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-jdbc</artifactId></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-redis</artifactId></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
   </dependencies>
 </project>

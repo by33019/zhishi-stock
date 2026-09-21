@@ -1,10 +1,31 @@
 package cn.zhishi.stock.backend.config;
 
 import cn.zhishi.stock.ai.application.AiContextPreviewService;
+import cn.zhishi.stock.ai.application.AiTaskRequestResolver;
+import cn.zhishi.stock.ai.application.AiTaskService;
 import cn.zhishi.stock.ai.domain.AiContentHasher;
 import cn.zhishi.stock.ai.domain.AiContextBuilder;
+import cn.zhishi.stock.ai.domain.AiContextSnapshotStore;
+import cn.zhishi.stock.ai.domain.AiMessageStore;
+import cn.zhishi.stock.ai.domain.AiReportStore;
 import cn.zhishi.stock.ai.domain.AiSceneCatalog;
+import cn.zhishi.stock.ai.domain.AiSessionStore;
+import cn.zhishi.stock.ai.domain.AiTaskEventStream;
+import cn.zhishi.stock.ai.domain.AiTaskQueue;
+import cn.zhishi.stock.ai.domain.AiTaskStore;
 import cn.zhishi.stock.ai.domain.LlmProviderPort;
+import cn.zhishi.stock.ai.infrastructure.AiContextSnapshotMapper;
+import cn.zhishi.stock.ai.infrastructure.AiMessageMapper;
+import cn.zhishi.stock.ai.infrastructure.AiReportMapper;
+import cn.zhishi.stock.ai.infrastructure.AiSessionMapper;
+import cn.zhishi.stock.ai.infrastructure.AiTaskMapper;
+import cn.zhishi.stock.ai.infrastructure.MyBatisAiContextSnapshotStore;
+import cn.zhishi.stock.ai.infrastructure.MyBatisAiMessageStore;
+import cn.zhishi.stock.ai.infrastructure.MyBatisAiReportStore;
+import cn.zhishi.stock.ai.infrastructure.MyBatisAiSessionStore;
+import cn.zhishi.stock.ai.infrastructure.MyBatisAiTaskStore;
+import cn.zhishi.stock.ai.infrastructure.RedisAiTaskEventStream;
+import cn.zhishi.stock.ai.infrastructure.RedisAiTaskQueue;
 import cn.zhishi.stock.backend.security.JwtAuthenticationFilter;
 import cn.zhishi.stock.backend.web.TraceIdFilter;
 import cn.zhishi.stock.integration.ai.SimulatedContentHasher;
@@ -579,12 +600,8 @@ public class BackendConfiguration {
 
     @Bean
     AiContextPreviewService aiContextPreviewService(
-            AiSceneCatalog aiSceneCatalog,
-            AiContextBuilder aiContextBuilder,
-            SecurityIdentityProvider securityIdentityProvider,
-            SectorIdentityProvider sectorIdentityProvider) {
-        return new AiContextPreviewService(
-                aiSceneCatalog, aiContextBuilder, securityIdentityProvider, sectorIdentityProvider);
+            AiTaskRequestResolver aiTaskRequestResolver, AiContextBuilder aiContextBuilder) {
+        return new AiContextPreviewService(aiTaskRequestResolver, aiContextBuilder);
     }
 
     /**
@@ -597,5 +614,133 @@ public class BackendConfiguration {
             @Value("${stock.ai.provider-code:SIMULATED}") String providerCode,
             @Value("${stock.ai.model-code:sim-analyst-v1}") String modelCode) {
         return new SimulatedLlmProvider(aiContentHasher, providerCode, modelCode);
+    }
+
+    // ---------- AI 域：任务编排（M3-07） ----------
+
+    /**
+     * 任务请求解析器。
+     *
+     * <p>预览（AI-02）与创建（AI-03）**共用同一个实例**：两份实现会让同一份非法请求
+     * 在两个入口报出不同的业务码或不同的文案，而用户看到的解释就会随入口变化。
+     */
+    @Bean
+    AiTaskRequestResolver aiTaskRequestResolver(
+            AiSceneCatalog aiSceneCatalog,
+            SecurityIdentityProvider securityIdentityProvider,
+            SectorIdentityProvider sectorIdentityProvider) {
+        return new AiTaskRequestResolver(
+                aiSceneCatalog, securityIdentityProvider, sectorIdentityProvider);
+    }
+
+    /**
+     * 任务聚合存储。
+     *
+     * <p>ID 用 {@code databaseIdGenerator}（数据库自增段），与自选、资讯一致；
+     * 不再有第二个 ID 生成器。
+     */
+    @Bean
+    AiTaskStore aiTaskStore(AiTaskMapper mapper, LongSupplier databaseIdGenerator, Clock clock) {
+        return new MyBatisAiTaskStore(mapper, databaseIdGenerator, clock);
+    }
+
+    @Bean
+    AiSessionStore aiSessionStore(AiSessionMapper mapper, Clock clock) {
+        return new MyBatisAiSessionStore(mapper, clock);
+    }
+
+    @Bean
+    AiMessageStore aiMessageStore(AiMessageMapper mapper, Clock clock) {
+        return new MyBatisAiMessageStore(mapper, clock);
+    }
+
+    @Bean
+    AiReportStore aiReportStore(AiReportMapper mapper, Clock clock) {
+        return new MyBatisAiReportStore(mapper, clock);
+    }
+
+    /**
+     * 上下文快照存储。
+     *
+     * <p>依赖 {@code ObjectMapper} 把 {@code context_data} 序列化成 JSON 列——
+     * 该列的内容形状（资讯证据 / 行情字段）由 M3-06 的 {@code AiContextBuilder} 决定，
+     * 这里只负责原样存取，不做二次加工。
+     */
+    @Bean
+    AiContextSnapshotStore aiContextSnapshotStore(
+            AiContextSnapshotMapper mapper,
+            ObjectMapper objectMapper,
+            LongSupplier databaseIdGenerator,
+            Clock clock) {
+        return new MyBatisAiContextSnapshotStore(mapper, objectMapper, databaseIdGenerator, clock);
+    }
+
+    /**
+     * 投递队列。Web 侧**只入队、不消费**，所以这里的消费者名只用于日志可读性；
+     * 真正的消费方是 {@code stock-ai-worker}，它有自己的一份（消费者名 = 实例名）。
+     */
+    @Bean
+    AiTaskQueue aiTaskQueue(
+            StringRedisTemplate stringRedisTemplate,
+            @Value("${spring.application.name:stock-backend}") String applicationName) {
+        return new RedisAiTaskQueue(stringRedisTemplate, applicationName);
+    }
+
+    /**
+     * 任务事件流（SSE 的数据源）。
+     *
+     * <p>保留期取配置：契约 §13.4 允许"连接结束后片段可被清理"，而报告本身
+     * 落在 {@code ai_report} 里，所以清理片段不会丢结论。
+     */
+    @Bean
+    AiTaskEventStream aiTaskEventStream(
+            StringRedisTemplate stringRedisTemplate,
+            @Value("${stock.ai.chunk-retention-minutes:30}") long retentionMinutes) {
+        return new RedisAiTaskEventStream(stringRedisTemplate, Duration.ofMinutes(retentionMinutes));
+    }
+
+    /**
+     * 任务编排用例。
+     *
+     * <p>刻意**不注入** {@code IdempotencyGuard}：幂等的第一层（回放完整响应）
+     * 是 Web 层关心的事（需要记住 HTTP 响应体），用例层只认
+     * {@code ai_task.request_id} 这第二层。把两层揉进一个类，会让"Redis 抖动"
+     * 变成一个必须在这里处理的异常分支。
+     */
+    @Bean
+    AiTaskService aiTaskService(
+            AiTaskRequestResolver aiTaskRequestResolver,
+            AiContextBuilder aiContextBuilder,
+            AiTaskStore aiTaskStore,
+            AiSessionStore aiSessionStore,
+            AiMessageStore aiMessageStore,
+            AiReportStore aiReportStore,
+            AiTaskQueue aiTaskQueue,
+            SecurityIdentityProvider securityIdentityProvider,
+            SectorIdentityProvider sectorIdentityProvider,
+            LongSupplier databaseIdGenerator,
+            Clock clock,
+            @Value("${stock.ai.daily-task-limit:20}") int dailyTaskLimit,
+            @Value("${stock.ai.max-concurrent-tasks:2}") int maxConcurrentTasks,
+            @Value("${stock.ai.task-deadline-seconds:60}") long taskDeadlineSeconds,
+            @Value("${stock.ai.provider-code:SIMULATED}") String providerCode,
+            @Value("${stock.ai.model-code:sim-analyst-v1}") String modelCode) {
+        return new AiTaskService(
+                aiTaskRequestResolver,
+                aiContextBuilder,
+                aiTaskStore,
+                aiSessionStore,
+                aiMessageStore,
+                aiReportStore,
+                aiTaskQueue,
+                securityIdentityProvider,
+                sectorIdentityProvider,
+                databaseIdGenerator,
+                clock,
+                dailyTaskLimit,
+                maxConcurrentTasks,
+                Duration.ofSeconds(taskDeadlineSeconds),
+                providerCode,
+                modelCode);
     }
 }

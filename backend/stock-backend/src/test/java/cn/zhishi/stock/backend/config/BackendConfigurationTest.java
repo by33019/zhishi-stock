@@ -3,6 +3,21 @@ package cn.zhishi.stock.backend.config;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
+import cn.zhishi.stock.ai.application.AiContextPreviewService;
+import cn.zhishi.stock.ai.application.AiTaskRequestResolver;
+import cn.zhishi.stock.ai.application.AiTaskService;
+import cn.zhishi.stock.ai.domain.AiContextSnapshotStore;
+import cn.zhishi.stock.ai.domain.AiMessageStore;
+import cn.zhishi.stock.ai.domain.AiReportStore;
+import cn.zhishi.stock.ai.domain.AiSessionStore;
+import cn.zhishi.stock.ai.domain.AiTaskEventStream;
+import cn.zhishi.stock.ai.domain.AiTaskQueue;
+import cn.zhishi.stock.ai.domain.AiTaskStore;
+import cn.zhishi.stock.ai.infrastructure.AiContextSnapshotMapper;
+import cn.zhishi.stock.ai.infrastructure.AiMessageMapper;
+import cn.zhishi.stock.ai.infrastructure.AiReportMapper;
+import cn.zhishi.stock.ai.infrastructure.AiSessionMapper;
+import cn.zhishi.stock.ai.infrastructure.AiTaskMapper;
 import cn.zhishi.stock.market.application.MarketOverviewQueryService;
 import cn.zhishi.stock.market.application.SecurityQueryService;
 import cn.zhishi.stock.market.domain.SecurityIdentityProvider;
@@ -52,6 +67,11 @@ class BackendConfigurationTest {
         .withBean(NewsSourceMapper.class, () -> mock(NewsSourceMapper.class))
         .withBean(NewsArticleMapper.class, () -> mock(NewsArticleMapper.class))
         .withBean(NewsRelationMapper.class, () -> mock(NewsRelationMapper.class))
+        .withBean(AiTaskMapper.class, () -> mock(AiTaskMapper.class))
+        .withBean(AiSessionMapper.class, () -> mock(AiSessionMapper.class))
+        .withBean(AiMessageMapper.class, () -> mock(AiMessageMapper.class))
+        .withBean(AiReportMapper.class, () -> mock(AiReportMapper.class))
+        .withBean(AiContextSnapshotMapper.class, () -> mock(AiContextSnapshotMapper.class))
         .withBean(StringRedisTemplate.class, () -> mock(StringRedisTemplate.class))
         .withBean(JdbcTemplate.class, () -> mock(JdbcTemplate.class))
         .withBean(ObjectMapper.class, ObjectMapper::new)
@@ -85,6 +105,20 @@ class BackendConfigurationTest {
               .isInstanceOf(cn.zhishi.stock.news.domain.NewsCountProvider.class);
           assertThat(context).hasSingleBean(IdempotencyStore.class);
           assertThat(context).hasSingleBean(IdempotencyGuard.class);
+
+          // AI 域：M3-06 的预览 + M3-07 的编排。解析器必须只有一份，
+          // 否则预览与创建会对同一份非法请求报出不同的业务码。
+          assertThat(context).hasSingleBean(AiContextPreviewService.class);
+          assertThat(context).hasSingleBean(AiTaskRequestResolver.class);
+          assertThat(context).hasSingleBean(AiTaskService.class);
+          assertThat(context).hasSingleBean(AiTaskStore.class);
+          assertThat(context).hasSingleBean(AiSessionStore.class);
+          assertThat(context).hasSingleBean(AiMessageStore.class);
+          assertThat(context).hasSingleBean(AiReportStore.class);
+          assertThat(context).hasSingleBean(AiContextSnapshotStore.class);
+          assertThat(context).hasSingleBean(AiTaskQueue.class);
+          assertThat(context).hasSingleBean(AiTaskEventStream.class);
+
           FilterRegistrationBean<?> registration =
               context.getBean("traceIdFilterRegistration", FilterRegistrationBean.class);
           assertThat(registration.getFilter()).isSameAs(context.getBean(TraceIdFilter.class));

@@ -10,18 +10,25 @@ import org.springframework.boot.autoconfigure.security.servlet.UserDetailsServic
         scanBasePackages = "cn.zhishi.stock",
         exclude = UserDetailsServiceAutoConfiguration.class)
 /**
- * 扫描用户域（{@code cn.zhishi.stock.system}）与资讯域（{@code cn.zhishi.stock.news}）的
- * Mapper，而不是逐个包列举：加了 {@code annotationClass = Mapper.class} 之后只有带
- * {@code @Mapper} 的接口会成为 Bean，因此范围放宽不会顺带把无关接口注册进来，
- * 而新增一个 Mapper 也不必再回来改这里。
+ * 扫描用户域（{@code cn.zhishi.stock.system}）、资讯域（{@code cn.zhishi.stock.news}）
+ * 与 AI 域（{@code cn.zhishi.stock.ai}）的 Mapper，而不是逐个包列举：加了
+ * {@code annotationClass = Mapper.class} 之后只有带 {@code @Mapper} 的接口会成为 Bean，
+ * 因此范围放宽不会顺带把无关接口注册进来，而新增一个 Mapper 也不必再回来改这里。
  *
- * <p>资讯域是 M3-04 新增的第 7 个模块，它落在 {@code cn.zhishi.stock.news} 下；
- * 漏掉这一项的后果是整个 {@code ApplicationContext} 起不来
- * （{@code No qualifying bean of type ...Mapper available}），
+ * <p>资讯域是 M3-04 新增的第 7 个模块（{@code cn.zhishi.stock.news}）、AI 域是 M3-06
+ * 新增的第 8 个（{@code cn.zhishi.stock.ai}）；漏掉这一项的后果是整个
+ * {@code ApplicationContext} 起不来（{@code No qualifying bean of type ...Mapper available}），
  * 看起来像"配置类写错了"而不是"扫描范围没覆盖"（M3-01 已踩过一次）。
+ *
+ * <p>M3-07 起 AI 域的写入侧在 {@code stock-ai-worker}，那个可启动模块上有**同样一份**
+ * {@code @MapperScan}——两个入口各声明一次，不能只改这里。
  */
 @MapperScan(
-        basePackages = {"cn.zhishi.stock.system", "cn.zhishi.stock.news"},
+        basePackages = {
+            "cn.zhishi.stock.system",
+            "cn.zhishi.stock.news",
+            "cn.zhishi.stock.ai"
+        },
         annotationClass = Mapper.class)
 public class StockBackendApplication {
 
