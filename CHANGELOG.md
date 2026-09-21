@@ -23,6 +23,88 @@
 
 ---
 
+## 2026-09-21 — M3-07 AI 任务编排 + SSE 流式契约（第 9 个模块 `stock-ai-worker`）
+
+### 新增
+
+- **第 9 个模块 `stock-ai-worker`**（架构 §3.2 的部署单元）：`StockAiWorkerApplication`
+  （`@MapperScan` 覆盖 `cn.zhishi.stock.ai` 与 `cn.zhishi.stock.news` 两个包、
+  不开放 HTTP）、`AiWorkerConfiguration`、`AiTaskConsumer`（`@Scheduled` 轮询消费，
+  无论结果都 ACK）、`ScheduledAiTaskRecovery`（30 秒一轮恢复扫描）。`compose.yaml`
+  增加对应服务。
+- **AI-03~AI-08 六个端点**：`AiTaskController`（创建 202 / 查询 / 取消 / 重试 202 /
+  追问 202，四个写接口都要 `Idempotency-Key`）、`AiTaskStreamController` +
+  `SseTaskEventSink`（AI-05 SSE，六类事件 + `Last-Event-ID` 补发）。
+- **编排用例层**：`AiTaskService`（四道闸门顺序固定）、`AiTaskExecutionService`
+  （抢执行权 → 固化上下文 → 流式调 LLM → 校验 → 定稿）、`AiTaskRecoveryService`
+  （补投 / 重投 / 兑现取消 / 判超时）、`AiTaskStreamRelay`（中继，不依赖 Spring Web）。
+- **V6 六张表的持久化**：`ai_session` / `ai_task` / `ai_task_target` /
+  `ai_context_snapshot` / `ai_message` / `ai_report` 的 Mapper 与 MyBatis 实现；
+  Redis Stream 队列（`stream:ai:tasks`）与事件流（`stream:ai:chunk:{taskId}`）。
+- 状态机白名单补三条边：`QUEUED→PREPARING`（抢占执行权）、`RUNNING→QUEUED`（自动重试）、
+  `VALIDATING→QUEUED`（恢复扫描重跑）。
+
+### 修复
+
+**真库 / 真 Redis 与真实端到端查出 8 处缺陷，每一处都不会让任何单测变红。**
+
+前 3 处（持久化层，见 `docs/superpowers/specs/2026-09-20-ai-task-orchestration.md` §3.12）：
+
+- `ai_task` 表**没有 `report_id` 列**，而列清单与 `UPDATE` 都引用了它 → 所有走真库的
+  `ai_task` 路径报 `Unknown column 'report_id'`。删掉引用而不是补列：报告与任务的关联
+  唯一地存在 `ai_report.task_id` 上。
+- **乐观锁版本方向反了** → `save` 永远返回"冲突"，心跳一次都写不进去、状态推进静默丢失。
+  `AiTask.version()` 改为"库里那一行的当前版本"，推进由数据库负责，
+  `save` 返回写入后的聚合。
+- **`AiReportRow` 缺 `limited` 属性** → 每一次写报告都失败。访问器必须叫 `limited()`
+  （MyBatis 对 record 以访问器方法名当属性名，不按 `get`/`is` 前缀推导）。
+
+第 4~7 处（执行器与 Redis 两层，见 §3.13）：
+
+- `isBusyGroup` 只看最外层 message（`BUSYGROUP` 在根因上）→ 进程内第二次 `receive`
+  就抛异常，worker 只能消费一轮。改为沿 cause 链查找。
+- `Map<byte[], byte[]>.get(byte[])` 是**引用相等** → 队列把每一条消息都当成"缺少 taskId"
+  丢弃并 ACK，任务永远停在 `QUEUED`；而 `XADD` / `XLEN` / `last-delivered-id` /
+  `XPENDING` 全部正常。改为按字节比较（`RedisStreamFields.fieldOf`）。
+- 同一处坑在 `RedisAiTaskEventStream` 里还有一份 → `readAfter` 与 `latestSequence`
+  永远返回空，SSE 一条事件都发不出去。两处共用同一个实现。
+- **执行器没有还原目标的对外标识** → `ai_task_target` 只存 bigint 代理键，
+  读回来的 `targetId` 是 null，而 `AiContextBuilder` 要拿它取行情 →
+  **每个任务都以 `AI_CONTEXT_BUILD_FAILED` 失败**；AI-07 重试与 AI-08 追问同样遗漏。
+  抽成 `AiTargetHydrator`（唯一实现），创建 / 查询 / 执行 / 重试 / 追问五处共用。
+
+第 8 处（真实端到端）：
+
+- **投递发生在事务提交之前** → `AiTaskService.submit` 是 `@Transactional`，而
+  `queue.enqueue(taskId)` 写在事务里；worker 可能抢在提交前读到消息，那时 `ai_task`
+  里还没有这一行，它记一条「任务不存在」并 ACK 掉消息，事务随后提交，库里于是留下
+  一个永远不会被执行的 `QUEUED` 任务，要等恢复扫描（默认 5 分钟）才被重新投出去。
+  实测 `ai-task.real.mjs` 跑 6 个任务复现 1 个。修法：`enqueueAfterCommit`。
+
+另外修掉两处会让 SSE 直接不可用的问题：`AiTaskEventPayloads` 用的是裸 `ObjectMapper`
+（不支持 `java.time`，而 `snapshot` 载荷里嵌着带 `OffsetDateTime` 的 `AiTaskSummary`，
+于是建连第一条事件就发不出去）；SSE 入口的错误响应不预设 `Content-Type` 时
+Spring 内容协商失败（客户端发 `Accept: text/event-stream`），前端拿到 500 而不是 404。
+
+### 变更
+
+- `AiTaskEvent` 携带**任务内序号**而不是 Redis 消息 ID：SSE 的 `id:`、`Last-Event-ID`
+  与 `readAfter` 的游标从此是同一个数，不再需要"消息 ID → 序号"的映射（第二个索引）。
+  原 record 的注释与 `RedisAiTaskEventStream` 的实现互相矛盾，一并统一。
+- `AiTaskExecutionServiceTest` 的内存任务桩改成与 `MyBatisAiTaskStore` 同形（抹掉对外
+  标识），并新增捕获实参的断言——此前桩不抹，所以"忘了还原"在单测里永远看不见。
+
+### 验证
+
+- 后端 9 模块 `mvn test` 全绿：**890 项**（`stock-ai` 159、`stock-ai-worker` 18 含
+  5 项真库集成、`stock-backend` 225 含 18 项 AI 任务契约、market 156、news 103、
+  system 89、integration 127、job 12、common 1）。
+- 真实端到端（全栈 7 容器 + `frontend/e2e/ai-task.real.mjs`）10 项全通过。
+- 已知问题关闭：#23（V6 六张表已有真实数据）；新增 #24（全局并发上限未实现）、
+  #25（`findByRequestId` 的非 ASCII 入参会抛 collation 错，生产路径不可达）。
+
+---
+
 ## 2026-09-20 — M3-06 AI Provider 抽象 + 确定性模拟实现（第 8 个模块 `stock-ai`）
 
 ### 新增

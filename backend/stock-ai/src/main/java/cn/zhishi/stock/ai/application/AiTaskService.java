@@ -28,8 +28,12 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.LongSupplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * AI 任务编排用例：AI-03（创建）、AI-04（查询）、AI-06（取消）、AI-07（重试）、AI-08（追问）。
@@ -58,6 +62,8 @@ import org.springframework.transaction.annotation.Transactional;
  * 若 Worker 那份也缺核心行情，任务以 {@code AI_CORE_DATA_MISSING} 失败（同一判据的两处兑现）。
  */
 public class AiTaskService {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(AiTaskService.class);
 
     /** V6 的 {@code ai_task.max_attempts} 默认值：自动重试一次。 */
     private static final int DEFAULT_MAX_ATTEMPTS = 2;
@@ -348,10 +354,47 @@ public class AiTaskService {
 
         writeQuestionMessage(sessionId, taskId, normalizedQuestion, now);
         sessions.touch(sessionId, taskId, now);
-        // 投递失败不回滚任务：它已是 QUEUED，恢复扫描会重新投递。
-        // 反过来（先投递后落库）会出现"Worker 拿到了一个库里还不存在的任务"。
-        queue.enqueue(taskId);
+        enqueueAfterCommit(taskId);
         return accepted(task, userId, now);
+    }
+
+    /**
+     * 在**事务提交之后**投递；没有事务时立即投递。
+     *
+     * <h2>为什么不能在事务里 XADD</h2>
+     * 在事务里投递，worker 可能抢在提交之前读到这条消息，而那时 {@code ai_task} 里
+     * **还没有这一行**——它会记一条「任务不存在」并 ACK 掉消息。
+     * 事务随后提交，于是库里留下一个永远不会被执行的 {@code QUEUED} 任务，
+     * 要等恢复扫描（默认 5 分钟）才被重新投出去。
+     *
+     * <p>这不是理论风险：M3-07 的真实端到端跑 6 个任务就复现了 1 个——
+     * 任务行创建于 {@code 20:36:10.196}，worker 在 {@code 20:36:10.336} 收到消息并
+     * 报「任务不存在」。原注释写着"先投递后落库会出现 Worker 拿到库里不存在的任务"，
+     * 而代码正是那么做的。
+     *
+     * <h2>投递失败不回滚任务</h2>
+     * 任务已是 {@code QUEUED}，恢复扫描会重新投递。所以这里吞掉异常并留痕——
+     * 让它冒出去会把"任务其实已创建成功"变成一个 500，而客户端重试还会再创建一次。
+     */
+    private void enqueueAfterCommit(long taskId) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            deliver(taskId);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                deliver(taskId);
+            }
+        });
+    }
+
+    private void deliver(long taskId) {
+        try {
+            queue.enqueue(taskId);
+        } catch (RuntimeException exception) {
+            LOGGER.error("AI 任务投递失败，交由恢复扫描兜底：taskId={}", taskId, exception);
+        }
     }
 
     private void guardConcurrency(long userId) {

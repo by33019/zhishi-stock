@@ -83,7 +83,7 @@
 - [x] **M3-04** P0 资讯 Provider 抽象 + 模拟源 + 去重 + 标的关联 — 已完成，见下方详情
 - [x] **M3-05** P1 前端 news 接真实 API — 已完成，见下方详情
 - [x] **M3-06** P0 AI Provider 抽象 + 确定性模拟实现 — 已完成，见下方详情
-- [ ] **M3-07** P0 AI 任务编排 + SSE 流式契约（V6 表） — 依赖：M3-06
+- [x] **M3-07** P0 AI 任务编排 + SSE 流式契约（V6 表） — 已完成，见下方详情
 - [ ] **M3-08** P0 AI 报告/证据/反馈持久化 — 依赖：M3-07
 - [ ] **M3-09** P1 AI 配额与用量统计 — 依赖：M3-07
 - [ ] **M3-10** P0 前端 ai 工作台 + history 接真实 API/SSE — 依赖：M3-08
@@ -1304,6 +1304,114 @@ WAT-02 的 `createdAt` 取自应用 `Clock`，表里的列只作审计。
 
 ---
 
+## M3-07 交付详情
+
+**交付范围**：AI 任务编排 + SSE 流式契约。新增第 9 个模块 `stock-ai-worker`，
+AI-03~AI-08 六个端点，V6 六张表从零行到有真实数据。
+
+### 交付内容
+
+**领域与用例层（`stock-ai`）**
+
+- `AiTask` 聚合 + `AiTaskStatusMachine` 白名单。补三条缺失的边：`QUEUED→PREPARING`
+  （抢占执行权）、`RUNNING→QUEUED`（自动重试）、`VALIDATING→QUEUED`（恢复扫描重跑）。
+- `AiTaskService`（AI-03/04/06/07/08）：四道闸门顺序固定（校验与目标解析 → 并发上限 →
+  每日额度 → 核心行情）；幂等的第二层靠 `ai_task.request_id` 唯一索引。
+- `AiTaskExecutionService`：抢执行权（`claimForExecution` 原子条件更新）→ 固化上下文 →
+  调 LLM 流式 → 校验必填章节与引用编号 → 定稿；六类事件写 Redis 事件流。
+- `AiTaskRecoveryService`：补投丢失的队列消息 / 重投死执行者 / 兑现取消意图 / 判超时。
+- `AiTaskStreamRelay`（AI-05 中继）：snapshot + 按序号补发 + 兜底收尾。
+
+**持久化（V6 六张表）**：`ai_session` / `ai_task` / `ai_task_target` /
+`ai_context_snapshot` / `ai_message` / `ai_report` 的 Mapper 与 MyBatis 实现；
+Redis Stream 队列（`stream:ai:tasks`，消费组 `ai-worker`）与事件流
+（`stream:ai:chunk:{taskId}`，`INCR ai:task:seq:{taskId}` 分配序号）。
+
+**第 9 个模块 `stock-ai-worker`**：`StockAiWorkerApplication`（自带 `@MapperScan`
+覆盖 `ai` 与 `news` 两个包、不开放 HTTP）、`AiTaskConsumer`（轮询消费，无论结果都 ACK）、
+`ScheduledAiTaskRecovery`（30 秒一轮）。
+
+**Web 层（`stock-backend`）**：`AiTaskController`（AI-03~AI-08）、
+`AiTaskStreamController` + `SseTaskEventSink`（AI-05）。
+
+### 真库 / 真 Redis 查出的 8 处缺陷（单测全绿也发现不了）
+
+前 3 处是持久化层的问题，见 `docs/superpowers/specs/2026-09-20-ai-task-orchestration.md` §3.12；
+第 4~7 处是执行器与 Redis 两层的问题，见 §3.13；第 8 处由真实端到端查出：
+
+1. **`ai_task` 没有 `report_id` 列**，而列清单与 `UPDATE` 都引用了它 →
+   所有走真库的 `ai_task` 路径报 `Unknown column 'report_id'`。修法是删掉引用而不是补列：
+   报告与任务的关联唯一地存在 `ai_report.task_id` 上。
+2. **乐观锁版本方向反了** → `save` 永远返回"冲突"，心跳一次都写不进去。
+   修法：`AiTask.version()` = 库里那一行的当前版本，推进由数据库负责，
+   `save` 返回写入后的聚合。
+3. **`AiReportRow` 缺 `limited` 属性** → 每一次写报告都失败。访问器必须叫 `limited()`
+   （MyBatis 对 record 以访问器方法名当属性名）。
+4. **`isBusyGroup` 只看最外层 message** → `BUSYGROUP` 在根因上，判定永远为 false →
+   进程内第二次 `receive` 就抛异常，worker 只能消费一轮。
+5. **`Map<byte[], byte[]>.get(byte[])` 是引用相等** → 队列把**每一条**消息都当成
+   "缺少 taskId"丢弃并 ACK，任务永远停在 `QUEUED`；而 `XADD` / `XLEN` /
+   `last-delivered-id` / `XPENDING` 全部正常。
+6. **同一处坑在 `RedisAiTaskEventStream` 里还有一份** → `readAfter` 与 `latestSequence`
+   永远返回空，SSE 一条事件都发不出去。两处现共用 `RedisStreamFields.fieldOf`。
+7. **执行器没有还原目标的对外标识** → `ai_task_target` 只存 bigint 代理键，
+   读回来的 `targetId` 是 null，而 `AiContextBuilder` 要拿它取行情 →
+   `Map.get(null)` 抛 NPE，**每个任务都以 `AI_CONTEXT_BUILD_FAILED` 失败**；
+   AI-07 重试与 AI-08 追问同样遗漏。修法：抽成 `AiTargetHydrator`（唯一实现）五处共用。
+8. **投递发生在事务提交之前** → `AiTaskService.submit` 是 `@Transactional`，而
+   `queue.enqueue(taskId)` 写在事务里；worker 可能抢在提交前读到消息，那时
+   `ai_task` 里还没有这一行，它记一条「任务不存在」并 ACK 掉消息，事务随后提交，
+   库里于是留下一个永远不会被执行的 `QUEUED` 任务，要等恢复扫描（默认 5 分钟）
+   才被重新投出去。实测 `ai-task.real.mjs` 跑 6 个任务复现 1 个（任务行创建于
+   `20:36:10.196`，worker 在 `20:36:10.336` 报「任务不存在」）。
+   原代码注释写着"先投递后落库会出现 Worker 拿到库里不存在的任务"，而代码正是那么做的。
+   修法：`enqueueAfterCommit` —— 有事务时注册 `TransactionSynchronization.afterCommit`，
+   并补确定性单测（提交前队列必须为空）。
+
+### 关键设计取舍
+
+- **`AiTaskEvent` 只带任务内序号，不带 Redis 消息 ID**：SSE 的 `id:`、`Last-Event-ID`、
+  `readAfter` 的游标是同一个数，因此不需要"消息 ID → 序号"的映射——那是第二个索引，
+  而两个索引必然分叉，分叉的表现是重连后丢一段或重一段。原 record 的注释与
+  `RedisAiTaskEventStream` 的实现互相矛盾，本轮一并统一。
+- **`AiTaskStreamRelay` 不依赖 Spring Web**：出口抽成 `AiTaskEventSink`，
+  于是中继的循环逻辑（事件序列、`Last-Event-ID` 起点、两条终止路径）能用假实现单测。
+- **归属校验发生在建流之前**：SSE 一旦开始，响应头就发出去了，之后再无法表达 404；
+  前端只会看到一个空流，而它无从区分"没有权限"与"还没产生事件"。
+- **两条终止路径**：收到 `done`，或"流里没有 `done` 但任务已终态"（恢复扫描判的超时、
+  事件被保留期清理）。少了后者，连接会挂到最长时限，而前端一直在转圈。
+- **`AiTaskEventPayloads` 必须注册 `JavaTimeModule`**：`snapshot` 载荷里嵌着带
+  `OffsetDateTime` 的 `AiTaskSummary`，裸 `ObjectMapper` 不支持 `java.time`——
+  不注册的话建连第一条事件就发不出去。
+- **错误响应必须预设 `Content-Type: application/json`**：SSE 客户端发
+  `Accept: text/event-stream`，不预设时 Spring 内容协商失败抛
+  `HttpMediaTypeNotAcceptableException`，前端拿到的是 500 而不是 404。
+
+### 不在本轮范围
+
+- `ai_evidence` / `ai_feedback` / `ai_usage` 三张表仍零行（M3-08）
+- 契约 §13.5 的**全局 30 并发**未实现；本轮只做单用户并发上限
+- SSE 的断线重连由客户端发起，服务端不做主动推送补偿（契约未要求）
+- 前端 `/ai` 工作台与 `/history` 仍是静态原型（M3-10）
+
+### 验证结果
+
+- **单测 + 契约测试**：后端 9 模块 `mvn test` 全绿 —— `stock-ai` 159、
+  `stock-ai-worker` 18（含 5 项真库集成）、`stock-backend` 225（含 18 项 AI 任务契约）、
+  `stock-market` 156、`stock-news` 103、`stock-system` 89、`stock-integration` 127、
+  `stock-job` 12、`stock-common` 1。
+- **真库集成测试**（Testcontainers MySQL 8.4 + Redis 8.2）：`AiWorkerIntegrationTest`
+  5 项 —— 完整上下文启动、投递→取回、入队→消费→落五张表、重投幂等、事件流按序号读回。
+- **真实端到端**（全栈 7 容器 + `frontend/e2e/ai-task.real.mjs`）：10 项全通过 ——
+  未登录 6 个端点全部 401、AI-03 返回 202、同键重发回放同一 `taskId` 且不重复消耗额度、
+  状态推进 `QUEUED → PREPARING → RUNNING → COMPLETED`、SSE 收齐
+  `snapshot/status/chunk/report/done`（17 个 chunk，`section` 全部属于六章节）、
+  `Last-Event-ID=2` 只补发 `id>2` 的 20 条、查库五张表都有真实行、
+  报告的 `market_data_cutoff_at` 来自真实行情批次、取消已完成任务状态不变、
+  并发上限触发 429。
+
+---
+
 ## 已完成
 
 - [x] 阶段 0 只读审计（2026-09-19）
@@ -1326,3 +1434,4 @@ WAT-02 的 `createdAt` 取自应用 `Clock`，表里的列只作审计。
 - [x] M3-04（2026-09-20）
 - [x] M3-05（2026-09-20）
 - [x] M3-06（2026-09-20）
+- [x] M3-07（2026-09-21）

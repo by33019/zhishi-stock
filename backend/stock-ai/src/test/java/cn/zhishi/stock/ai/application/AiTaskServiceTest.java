@@ -51,6 +51,8 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * AI-03 / AI-04 / AI-06 / AI-07 / AI-08 编排用例测试。
@@ -179,6 +181,41 @@ class AiTaskServiceTest {
         assertThat(messages.rows).hasSize(1);
         assertThat(messages.rows.get(0).roleType()).isEqualTo(AiMessageRole.USER);
         assertThat(messages.rows.get(0).sequenceNo()).isEqualTo(1);
+    }
+
+    /**
+     * 投递必须发生在**事务提交之后**。
+     *
+     * <p>在事务里 XADD，worker 可能抢在提交前读到消息，而那时 {@code ai_task} 里
+     * 还没有这一行——它会记一条「任务不存在」并 ACK 掉消息，事务随后提交，
+     * 于是库里留下一个永远不会被执行的 {@code QUEUED} 任务，要等恢复扫描
+     * （默认 5 分钟）才被重新投出去。
+     *
+     * <p>这条不变量**只有**用真实的 {@code TransactionSynchronizationManager} 才验得到：
+     * 本类的其它用例没有事务，{@code enqueueAfterCommit} 会走"立即投递"那条分支，
+     * 于是"投递发生在提交后"与"投递发生在提交前"在它们眼里完全一样。
+     * 真实缺陷由 M3-07 的端到端脚本复现（6 个任务里 1 个卡住），这里是它的确定性版本。
+     */
+    @Test
+    @DisplayName("创建：投递发生在事务提交之后（提交前队列必须是空的）")
+    void enqueuesOnlyAfterCommit() {
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            AiTaskAccepted accepted =
+                    service().create(stockRequest(null, "近期量价如何"), USER, "key-1", "trace-1");
+
+            assertThat(queue.enqueued)
+                    .describedAs("事务还没提交，此刻投递会让 worker 读到一个不存在的任务")
+                    .isEmpty();
+
+            TransactionSynchronizationManager.getSynchronizations()
+                    .forEach(TransactionSynchronization::afterCommit);
+
+            assertThat(queue.enqueued)
+                    .containsExactly(Long.parseLong(accepted.task().taskId()));
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 
     @Test
