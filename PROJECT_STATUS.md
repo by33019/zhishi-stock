@@ -111,6 +111,16 @@
 - 后端 Maven：`Premature end of Content-Length delimited message body` → 阿里云镜像 + wagon 重试 `count=5`
 - 前端 npm：直连 `registry.npmjs.org` 报 `ECONNRESET`；换 npmmirror 后报 `EIDLETIMEOUT`（tarball 所在 `cdn.npmmirror.com` 连接空闲挂死）→ 国内镜像源 + `--maxsockets=5` + 拉长超时 + 外层 3 次重试（保留 npm 缓存使重试增量续传）
 
+**8. nginx 缓存了 `stock-api` 的 IP，重建后端后全站 `/api/**` 变 502** ——
+`frontend/nginx.conf` 里 `proxy_pass http://stock-api:8080;` 是**字面量**上游，
+而 nginx 对字面量上游只在**启动时**解析一次主机名并把 IP 缓存下来；
+`docker-compose up -d --build` 重建 `stock-api` 会分配新 IP，nginx 于是继续打旧 IP
+（实测：`stock-api` 已是 `172.22.0.5`，nginx 仍在打 `172.22.0.6`）。
+**症状极具误导性**：前端拿到 502 的 HTML 页面，`apiClient` 解析不出响应壳，
+报的是「服务返回了无法识别的数据」（`INVALID_RESPONSE`）——看起来像前端没写完，
+而后端明明是好的。**对策**：改用变量形式的 `proxy_pass` + 显式 `resolver 127.0.0.11`
+（Docker 内嵌 DNS，`valid=10s`），解析发生在每次请求时，后端换 IP 最多 10 秒自愈。
+
 **7. Spring 按具体类型解析 `@Bean` 时别名 Bean 会形成两个候选** —— M2-06 实测踩到：
 为让依赖方按端口注入，曾把一个 `SimulatedQuoteSnapshotProvider` 实例拆成「具体类型 Bean + 两个返回接口类型的别名 Bean」，
 结果 Spring 解析 `SimulatedQuoteSnapshotProvider` 时报
