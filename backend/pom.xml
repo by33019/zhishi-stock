@@ -26,6 +26,7 @@
     <module>stock-integration</module>
     <module>stock-backend</module>
     <module>stock-job</module>
+    <module>stock-ai-worker</module>
   </modules>
 
   <properties>

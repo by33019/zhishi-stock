@@ -1,0 +1,49 @@
+spring:
+  application:
+    name: stock-ai-worker
+  # 不开放公开业务接口（架构 §3.2）：执行器只消费队列、写事件流与落库。
+  main:
+    web-application-type: none
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/stock_system?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+    username: ${DB_USERNAME:stock}
+    password: ${DB_PASSWORD:}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+  jackson:
+    time-zone: Asia/Shanghai
+
+stock:
+  market:
+    # 必须与 stock-backend / stock-job 使用同一个值：三个进程对"今天是哪一天"
+    # 一旦分叉，报告里引用的交易日会与页面显示的不同，且不会有任何报错。
+    holidays: ${MARKET_HOLIDAYS:}
+  ai:
+    provider-code: ${AI_PROVIDER_CODE:SIMULATED}
+    model-code: ${AI_MODEL_CODE:sim-analyst-v1}
+    news-evidence-limit: ${AI_NEWS_EVIDENCE_LIMIT:20}
+    # 写进 ai_report 的版本标识：换 Prompt 或换内容结构后，历史报告仍能自我说明。
+    prompt-version: ${AI_PROMPT_VERSION:p1}
+    content-schema-version: ${AI_CONTENT_SCHEMA_VERSION:v1}
+    max-output-tokens: ${AI_MAX_OUTPUT_TOKENS:2048}
+    # 事件流（chunk / status）保留期；报告本身落 ai_report，不受此影响。
+    # 必须与 stock-backend 取同一个值：中继侧按 Last-Event-ID 补发，
+    # 两侧保留期不一致会让"重连后少了一段"只在长任务上偶发。
+    chunk-retention-minutes: ${AI_CHUNK_RETENTION_MINUTES:30}
+    worker:
+      # 一轮取几条。一次执行可能包含真实的模型调用，取太多会让单轮耗时不可控。
+      batch-size: ${AI_WORKER_BATCH_SIZE:5}
+      poll-initial-delay-ms: ${AI_WORKER_POLL_INITIAL_DELAY_MS:1000}
+      poll-delay-ms: ${AI_WORKER_POLL_DELAY_MS:1000}
+      # 恢复扫描：30 秒一轮（架构 §"任务超时与恢复"）。
+      recovery-initial-delay-ms: ${AI_WORKER_RECOVERY_INITIAL_DELAY_MS:5000}
+      recovery-delay-ms: ${AI_WORKER_RECOVERY_DELAY_MS:30000}
+      recovery-batch-limit: ${AI_WORKER_RECOVERY_BATCH_LIMIT:50}
+      # 「投递出去多久没被执行」才认为队列消息丢了。
+      queue-lost-minutes: ${AI_WORKER_QUEUE_LOST_MINUTES:5}
+      # 「心跳多久没刷新」才认为执行者死了。必须明显大于心跳周期（每个片段都刷），
+      # 否则一个正在正常生成的长任务会被误判成死执行者并被重投。
+      heartbeat-lost-minutes: ${AI_WORKER_HEARTBEAT_LOST_MINUTES:5}
