@@ -381,6 +381,58 @@ permitAll 列表——但 `SecurityConfigurationTest` 要补一条「未登录�
 三处的共同点：**它们都不会让任何单测变红**。这正是 §5.4 那条"真实端到端不可省"的理由，
 也是本轮把 V6 六张表的持久化往返先写成集成测试、再往上搭 Worker 的原因。
 
+### 3.13 `stock-ai-worker` 集成测试查出的四处缺陷（已修）
+
+§3.12 那三处是**持久化层**的问题，靠 `stock-backend` 的集成测试查出来。
+这一节是**执行器与 Redis 那两层**的问题，靠 `stock-ai-worker` 自己的
+`AiWorkerIntegrationTest`（完整上下文 + Testcontainers MySQL/Redis +
+"入队 → 消费 → 落报告"整条链路）查出来。它们有一个共同特征：
+**Redis 那一侧看起来完全健康**（`XLEN` 在涨、消费组偏移在推进、`XPENDING` 会清零），
+而任务只是安静地什么都不做或者全部失败。
+
+1. **`isBusyGroup` 只看最外层的 message。** Spring 把 Lettuce 的
+   `RedisBusyException`（message 里才有 `BUSYGROUP`）包成 `RedisSystemException`
+   （message 固定是 `Error in execution`）。只看最外层 → 判定永远为 false →
+   `BUSYGROUP` 被抛出去。后果是**进程内第二次 `receive` 就炸**，
+   也就是 worker 消费一轮之后每轮都报错。修法是沿 cause 链找。
+2. **`Map<byte[], byte[]>.get(byte[])` 的引用相等。** 从协议回复反序列化出来的
+   字段表里，key 与代码里的常量 `byte[]` 是两个不同实例，`get` 永远返回 `null`。
+   `RedisAiTaskQueue.receive` 因此把**每一条**消息都当成"缺少 taskId"丢弃并 ACK：
+   `XADD` 正常、`XLEN` 正常、消费组 `last-delivered-id` 正常推进、
+   `XPENDING` 正常清零——而任务永远停在 `QUEUED`。
+3. **同一处坑在 `RedisAiTaskEventStream` 里还有一份。** `readAfter` 与
+   `latestSequence` 都用 `value.get(FIELD_*)`，于是**所有事件都被跳过**：
+   `readAfter` 永远返回空、`latestSequence` 永远为空，SSE 中继一条事件都发不出去，
+   而 `XLEN` 在正常增长。两处现在共用 `RedisStreamFields.fieldOf`（唯一实现）。
+4. **执行器没有还原目标的对外标识。** `ai_task_target` 只存 bigint 代理键与代码快照，
+   所以从库里读回来的目标 `targetId` 是 `null`；而 `AiContextBuilder` 要拿它去取行情，
+   `batch.snapshotOf(null)` 在不可变 Map 上抛
+   `NullPointerException: Cannot invoke "Object.hashCode()" because "pk" is null`
+   → **每一个任务都以 `AI_CONTEXT_BUILD_FAILED` 失败**。
+   同一处遗漏还在 **AI-07 重试**与 **AI-08 追问**上（它们把 `original.targets()`
+   原样往下传，会在核心行情检查那一步失败）。
+
+   根因是「把库里的代理键还原成对外标识」这段逻辑**只写在 `AiTaskService` 里**，
+   执行器与重试/追问都没走它。修法是抽成 `AiTargetHydrator`（唯一实现），
+   让创建、查询、执行、重试、追问五处都走它——这正是 §4 第 3 条
+   「同一个事实只允许一处实现」在 AI 域内的又一次兑现。
+
+**为什么这四处单测全都看不见**：执行器测试里的 `AiContextBuilder` 是 Mockito 桩，
+无论喂进去什么目标都返回同一份预置结果；而它的内存任务桩此前**没有**像真存储那样
+抹掉 `targetId`。本轮把这个桩改成与 `MyBatisAiTaskStore` 同形（抹掉对外标识），
+并新增 `hydratesTargetsBeforeBuildingTheContext` 捕获实参来断言，
+这样"忘了还原"就不再依赖真库才能发现。
+
+### 3.14 一条测试设计教训：`@EnableScheduling` 会与集成测试争抢队列
+
+`StockAiWorkerApplication` 上有 `@EnableScheduling`，所以 `@SpringBootTest` 一起上下文，
+`AiTaskConsumer` 就开始按配置的间隔轮询。它与测试**争抢同一条队列消息**：
+测试刚投递完，后台那一轮就可能先取走并 ACK，于是测试自己的 `poll()` 什么也取不到。
+表现是"任务卡在排队中"，而且**时快时慢**，极难定位。
+
+对策是把两个调度器的首次延迟与间隔在测试里都设成一小时，让测试拿到独占的队列。
+凡是给"带定时任务的应用"写集成测试，都要先做这件事。
+
 ## 4. 一致性约束（写成测试）
 
 1. **状态机白名单**：任意两个状态之间，只有 §3.2 表里列出的迁移被允许；

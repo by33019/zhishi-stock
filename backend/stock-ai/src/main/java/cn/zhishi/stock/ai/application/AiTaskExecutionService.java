@@ -89,6 +89,7 @@ public class AiTaskExecutionService {
     private final AiTaskEventStream events;
     private final AiTaskQueue queue;
     private final AiContextBuilder contextBuilder;
+    private final AiTargetHydrator targetHydrator;
     private final LlmProviderPort llm;
     private final AiContentHasher hasher;
     private final LongSupplier idGenerator;
@@ -105,6 +106,7 @@ public class AiTaskExecutionService {
             AiTaskEventStream events,
             AiTaskQueue queue,
             AiContextBuilder contextBuilder,
+            AiTargetHydrator targetHydrator,
             LlmProviderPort llm,
             AiContentHasher hasher,
             LongSupplier idGenerator,
@@ -119,6 +121,7 @@ public class AiTaskExecutionService {
         this.events = events;
         this.queue = queue;
         this.contextBuilder = contextBuilder;
+        this.targetHydrator = targetHydrator;
         this.llm = llm;
         this.hasher = hasher;
         this.idGenerator = idGenerator;
@@ -166,8 +169,15 @@ public class AiTaskExecutionService {
 
         AiContextBuildResult context;
         try {
+            // 必须先还原对外标识：从库里读回来的目标只有 bigint 代理键
+            // （ai_task_target 不存 sim-600519 那种对外标识），而 AiContextBuilder
+            // 要用它去取行情。少了这一步，batch.snapshotOf(null) 会在不可变 Map 上抛
+            // NullPointerException，**每一个任务都会以 AI_CONTEXT_BUILD_FAILED 失败**——
+            // 而单测里的 contextBuilder 是桩，喂什么进去都返回同一份预置结果，看不见。
             context = contextBuilder.build(
-                    claimed.targets(), claimed.analysisStartAt(), claimed.analysisEndAt());
+                    targetHydrator.hydrate(claimed.targets()),
+                    claimed.analysisStartAt(),
+                    claimed.analysisEndAt());
         } catch (RuntimeException exception) {
             return finishFailed(
                     claimed,

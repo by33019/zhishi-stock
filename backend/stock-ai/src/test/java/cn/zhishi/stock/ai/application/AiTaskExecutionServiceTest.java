@@ -3,9 +3,11 @@ package cn.zhishi.stock.ai.application;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import cn.zhishi.stock.ai.domain.AiContentHasher;
+import cn.zhishi.stock.ai.domain.AiFixtures;
 import cn.zhishi.stock.ai.domain.AiContextBuildResult;
 import cn.zhishi.stock.ai.domain.AiContextBuilder;
 import cn.zhishi.stock.ai.domain.AiContextSnapshot;
@@ -29,6 +31,9 @@ import cn.zhishi.stock.ai.domain.AiTaskEventType;
 import cn.zhishi.stock.ai.domain.AiTaskQueue;
 import cn.zhishi.stock.ai.domain.AiTaskStatus;
 import cn.zhishi.stock.ai.domain.AiTaskStore;
+import cn.zhishi.stock.market.domain.SectorIdentityProvider;
+import cn.zhishi.stock.market.domain.SecurityIdentity;
+import cn.zhishi.stock.market.domain.SecurityIdentityProvider;
 import cn.zhishi.stock.ai.domain.AiTargetRole;
 import cn.zhishi.stock.ai.domain.AiTargetType;
 import cn.zhishi.stock.ai.domain.LlmChunk;
@@ -49,6 +54,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
@@ -56,6 +62,7 @@ import java.util.function.LongFunction;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 /**
  * AI 任务执行器测试（M3-07 的核心）。
@@ -82,6 +89,8 @@ class AiTaskExecutionServiceTest {
     private static final long SESSION_ID = 5001L;
     private static final long USER_ID = 1001L;
     private static final OffsetDateTime CUTOFF = OffsetDateTime.parse("2026-09-18T15:00:00+08:00");
+    private static final String SECURITY_ID = "sim-600519";
+    private static final long SECURITY_STORAGE_ID = 600_519L;
 
     private final InMemoryTaskStore tasks = new InMemoryTaskStore();
     private final InMemorySnapshotStore snapshots = new InMemorySnapshotStore();
@@ -90,6 +99,8 @@ class AiTaskExecutionServiceTest {
     private final InMemoryEventStream events = new InMemoryEventStream();
     private final RecordingQueue queue = new RecordingQueue();
     private final AiContextBuilder contextBuilder = mock(AiContextBuilder.class);
+    private final SecurityIdentityProvider securities = mock(SecurityIdentityProvider.class);
+    private final SectorIdentityProvider sectors = mock(SectorIdentityProvider.class);
     private final ScriptedLlm llm = new ScriptedLlm();
 
     /** 两个抽象方法，所以不是函数接口，只能写成匿名类。 */
@@ -110,6 +121,15 @@ class AiTaskExecutionServiceTest {
     void seedTaskAndContext() {
         tasks.insert(task(AiTaskStatus.QUEUED));
         when(contextBuilder.build(any(), any(), any())).thenReturn(context(List.of(), true));
+        // 主数据：让还原器能把代理键 600519 还原成对外标识 sim-600519
+        when(securities.findByStorageIds(any())).thenAnswer(invocation -> {
+            Set<Long> asked = invocation.getArgument(0);
+            return asked.contains(SECURITY_STORAGE_ID)
+                    ? Map.of(SECURITY_STORAGE_ID, new SecurityIdentity(
+                            SECURITY_STORAGE_ID, AiFixtures.security("600519", "模拟证券600519")))
+                    : Map.of();
+        });
+        when(sectors.findByStorageIds(any())).thenReturn(Map.of());
     }
 
     private AiTaskExecutionService service() {
@@ -121,6 +141,7 @@ class AiTaskExecutionServiceTest {
                 events,
                 queue,
                 contextBuilder,
+                new AiTargetHydrator(securities, sectors),
                 llm,
                 hasher,
                 ids::incrementAndGet,
@@ -128,6 +149,38 @@ class AiTaskExecutionServiceTest {
                 "p1",
                 "v1",
                 2048);
+    }
+
+    /**
+     * 取数之前必须把"库里的目标"还原成带对外标识的形状。
+     *
+     * <p>这条不变量此前**完全没有测试守着**，而它一旦破了，每一个任务都会失败：
+     * {@code ai_task_target} 只存 bigint 代理键，从库里读回来的 {@code targetId} 是
+     * {@code null}，而 {@code AiContextBuilder} 要拿它去取行情——
+     * {@code batch.snapshotOf(null)} 会在不可变 Map 上抛
+     * {@code NullPointerException}，任务以 {@code AI_CONTEXT_BUILD_FAILED} 结束。
+     *
+     * <p>它之所以一直没被发现，是因为本类的 {@code contextBuilder} 是 Mockito 桩：
+     * 无论喂进去什么目标都返回同一份预置结果。所以这里必须**捕获实参**来断言，
+     * 而不是断言结果。
+     */
+    @Test
+    @DisplayName("取数前把目标还原成带对外标识的形状（库里读回来的是 null）")
+    void hydratesTargetsBeforeBuildingTheContext() {
+        assertThat(tasks.find(TASK_ID).orElseThrow().targets().get(0).targetId())
+                .describedAs("前提：存储层读回来的目标没有对外标识")
+                .isNull();
+
+        llm.completion = completionOf(validSections());
+        service().execute(TASK_ID);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<AiContextTarget>> captor = ArgumentCaptor.forClass(List.class);
+        verify(contextBuilder).build(captor.capture(), any(), any());
+        assertThat(captor.getValue())
+                .extracting(AiContextTarget::targetId)
+                .describedAs("喂给上下文构建器的必须是还原后的对外标识")
+                .containsExactly(SECURITY_ID);
     }
 
     // ---------- 抢执行权 ----------
@@ -546,9 +599,12 @@ class AiTaskExecutionServiceTest {
                     errorCode,
                     errorMessage,
                     version,
+                    // 与 MyBatisAiTaskStore 同形：ai_task_target 只存 bigint 代理键与代码快照，
+                    // **不存对外标识**。这里必须如实抹掉它，否则"执行器忘了还原对外标识"
+                    // 这类缺陷在单测里永远看不出来（它正是靠真 Redis/MySQL 集成测试才暴露的）。
                     List.of(new AiContextTarget(
                             AiTargetType.SECURITY,
-                            "sim-600519",
+                            null,
                             "600519",
                             "模拟证券600519",
                             AiTargetRole.PRIMARY,

@@ -100,14 +100,21 @@ public class RedisAiTaskEventStream implements AiTaskEventStream {
         List<AiTaskEvent> events = new ArrayList<>();
         for (ByteRecord record : records) {
             Map<byte[], byte[]> value = record.getValue();
-            if (value == null || parseLong(value.get(FIELD_SEQUENCE)) <= lastSequence) {
+            // 取字段必须走 RedisStreamFields：Map<byte[], byte[]> 的 get(byte[])
+            // 用的是数组的引用相等，直接 get 会永远拿到 null，于是所有事件都被跳过。
+            byte[] rawSequence = RedisStreamFields.fieldOf(value, FIELD_SEQUENCE);
+            if (rawSequence == null || parseLong(rawSequence) <= lastSequence) {
                 continue;
             }
-            AiTaskEventType type = AiTaskEventType.fromName(text(value.get(FIELD_TYPE)));
+            AiTaskEventType type =
+                    AiTaskEventType.fromName(text(RedisStreamFields.fieldOf(value, FIELD_TYPE)));
             if (type == null) {
                 continue;
             }
-            events.add(new AiTaskEvent(record.getId().getValue(), type, text(value.get(FIELD_DATA))));
+            events.add(new AiTaskEvent(
+                    record.getId().getValue(),
+                    type,
+                    text(RedisStreamFields.fieldOf(value, FIELD_DATA))));
             if (events.size() >= count) {
                 break;
             }
@@ -125,11 +132,12 @@ public class RedisAiTaskEventStream implements AiTaskEventStream {
         if (records == null || records.isEmpty()) {
             return Optional.empty();
         }
-        Map<byte[], byte[]> value = records.get(0).getValue();
-        if (value == null || value.get(FIELD_SEQUENCE) == null) {
+        byte[] rawSequence =
+                RedisStreamFields.fieldOf(records.get(0).getValue(), FIELD_SEQUENCE);
+        if (rawSequence == null) {
             return Optional.empty();
         }
-        return Optional.of(parseLong(value.get(FIELD_SEQUENCE)));
+        return Optional.of(parseLong(rawSequence));
     }
 
     private long nextSequence(long taskId) {

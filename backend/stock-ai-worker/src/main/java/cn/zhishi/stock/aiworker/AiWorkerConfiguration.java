@@ -1,5 +1,6 @@
 package cn.zhishi.stock.aiworker;
 
+import cn.zhishi.stock.ai.application.AiTargetHydrator;
 import cn.zhishi.stock.ai.application.AiTaskExecutionService;
 import cn.zhishi.stock.ai.application.AiTaskRecoveryService;
 import cn.zhishi.stock.ai.domain.AiContentHasher;
@@ -260,6 +261,20 @@ public class AiWorkerConfiguration {
                 newsEvidenceLimit);
     }
 
+    /**
+     * 任务目标的对外标识还原器。
+     *
+     * <p>执行器**必须**用它：从 {@code ai_task_target} 读回来的目标只有 bigint 代理键，
+     * 而 {@code AiContextBuilder} 要用对外标识去取行情。少了它，每个任务都会在
+     * {@code batch.snapshotOf(null)} 上抛 NPE 并以 {@code AI_CONTEXT_BUILD_FAILED} 失败。
+     */
+    @Bean
+    AiTargetHydrator aiTargetHydrator(
+            SecurityIdentityProvider securityIdentityProvider,
+            SectorIdentityProvider sectorIdentityProvider) {
+        return new AiTargetHydrator(securityIdentityProvider, sectorIdentityProvider);
+    }
+
     @Bean
     LlmProviderPort llmProviderPort(
             AiContentHasher aiContentHasher,
@@ -333,6 +348,7 @@ public class AiWorkerConfiguration {
             AiTaskEventStream aiTaskEventStream,
             AiTaskQueue aiTaskQueue,
             AiContextBuilder aiContextBuilder,
+            AiTargetHydrator aiTargetHydrator,
             LlmProviderPort llmProviderPort,
             AiContentHasher aiContentHasher,
             LongSupplier workerDatabaseIdGenerator,
@@ -348,6 +364,7 @@ public class AiWorkerConfiguration {
                 aiTaskEventStream,
                 aiTaskQueue,
                 aiContextBuilder,
+                aiTargetHydrator,
                 llmProviderPort,
                 aiContentHasher,
                 workerDatabaseIdGenerator,

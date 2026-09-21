@@ -18,21 +18,14 @@ import cn.zhishi.stock.ai.domain.AiTaskStatus;
 import cn.zhishi.stock.ai.domain.AiTaskStatusMachine;
 import cn.zhishi.stock.ai.domain.AiTaskStore;
 import cn.zhishi.stock.ai.domain.AiTargetType;
-import cn.zhishi.stock.market.domain.SectorIdentity;
-import cn.zhishi.stock.market.domain.SectorIdentityProvider;
-import cn.zhishi.stock.market.domain.SecurityIdentity;
-import cn.zhishi.stock.market.domain.SecurityIdentityProvider;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import java.util.function.LongSupplier;
 import org.springframework.dao.DuplicateKeyException;
@@ -79,8 +72,7 @@ public class AiTaskService {
     private final AiMessageStore messages;
     private final AiReportStore reports;
     private final AiTaskQueue queue;
-    private final SecurityIdentityProvider securities;
-    private final SectorIdentityProvider sectors;
+    private final AiTargetHydrator targetHydrator;
     private final LongSupplier idGenerator;
     private final Clock clock;
     private final int dailyTaskLimit;
@@ -97,8 +89,7 @@ public class AiTaskService {
             AiMessageStore messages,
             AiReportStore reports,
             AiTaskQueue queue,
-            SecurityIdentityProvider securities,
-            SectorIdentityProvider sectors,
+            AiTargetHydrator targetHydrator,
             LongSupplier idGenerator,
             Clock clock,
             int dailyTaskLimit,
@@ -113,8 +104,7 @@ public class AiTaskService {
         this.messages = messages;
         this.reports = reports;
         this.queue = queue;
-        this.securities = securities;
-        this.sectors = sectors;
+        this.targetHydrator = targetHydrator;
         this.idGenerator = idGenerator;
         this.clock = clock;
         this.dailyTaskLimit = dailyTaskLimit;
@@ -220,7 +210,9 @@ public class AiTaskService {
                 original.sessionId(),
                 userId,
                 original.scene(),
-                original.targets(),
+                // 原任务的目标是从库里读回来的（对外标识为空），必须先还原：
+                // submit 里的核心行情检查要用它取数，否则会在 Map.get(null) 上抛 NPE。
+                targetHydrator.hydrate(original.targets()),
                 original.analysisStartAt(),
                 original.analysisEndAt(),
                 effectiveQuestion,
@@ -276,7 +268,8 @@ public class AiTaskService {
                 sessionId,
                 userId,
                 session.scene(),
-                last.targets(),
+                // 同上：追问复用上一次任务的目标，那一份也是从库里读回来的。
+                targetHydrator.hydrate(last.targets()),
                 start,
                 end,
                 request.question(),
@@ -410,77 +403,7 @@ public class AiTaskService {
      */
     private AiTaskSummary summaryOf(AiTask task) {
         Long reportId = reports.findByTask(task.taskId()).map(AiReport::reportId).orElse(null);
-        return AiTaskSummary.from(task, hydrate(task.targets()), reportId);
-    }
-
-    /**
-     * 把库里的目标还原成带对外标识的形状。
-     *
-     * <p>{@code ai_task_target} 只存 bigint 代理键与代码 / 名称快照，**不存对外标识**
-     * （{@code sim-600519}）。还原必须走 {@code *IdentityProvider.findByStorageIds}——
-     * 在这里拼 {@code "sim-" + code} 就是第二份构词规则，而两份规则分歧不会报错，
-     * 只会让前端拼出的跳转链接 404（M2-06 / M2-11 各踩过一次）。
-     *
-     * <p>市场目标的对外标识就是市场代码本身，库里那份快照已经够用，不需要查主数据。
-     *
-     * <p>主数据里查不到的（如已退市的证券）保留在列表里、对外标识留 {@code null}：
-     * 契约要求降级不失败，而前端只在有标识时才渲染跳转链接。
-     */
-    private List<AiContextTarget> hydrate(List<AiContextTarget> targets) {
-        Set<Long> securityIds = new LinkedHashSet<>();
-        Set<Long> sectorIds = new LinkedHashSet<>();
-        for (AiContextTarget target : targets) {
-            if (target.storageId() == null) {
-                continue;
-            }
-            switch (target.targetType()) {
-                case SECURITY -> securityIds.add(target.storageId());
-                case SECTOR -> sectorIds.add(target.storageId());
-                case MARKET -> {
-                    // 无需查询
-                }
-            }
-        }
-        Map<Long, SecurityIdentity> resolvedSecurities = securities.findByStorageIds(securityIds);
-        Map<Long, SectorIdentity> resolvedSectors = sectors.findByStorageIds(sectorIds);
-
-        List<AiContextTarget> hydrated = new ArrayList<>(targets.size());
-        for (AiContextTarget target : targets) {
-            hydrated.add(switch (target.targetType()) {
-                case SECURITY -> {
-                    SecurityIdentity identity = target.storageId() == null
-                            ? null
-                            : resolvedSecurities.get(target.storageId());
-                    yield new AiContextTarget(
-                            AiTargetType.SECURITY,
-                            identity == null ? null : identity.securityId(),
-                            target.targetCode(),
-                            target.targetName(),
-                            target.targetRole(),
-                            target.storageId());
-                }
-                case SECTOR -> {
-                    SectorIdentity identity = target.storageId() == null
-                            ? null
-                            : resolvedSectors.get(target.storageId());
-                    yield new AiContextTarget(
-                            AiTargetType.SECTOR,
-                            identity == null ? null : identity.sectorId(),
-                            target.targetCode(),
-                            target.targetName(),
-                            target.targetRole(),
-                            target.storageId());
-                }
-                case MARKET -> new AiContextTarget(
-                        AiTargetType.MARKET,
-                        target.targetCode(),
-                        target.targetCode(),
-                        target.targetName(),
-                        target.targetRole(),
-                        target.storageId());
-            });
-        }
-        return List.copyOf(hydrated);
+        return AiTaskSummary.from(task, targetHydrator.hydrate(task.targets()), reportId);
     }
 
     private AiTaskQuota quotaOf(long userId, OffsetDateTime now) {

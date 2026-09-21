@@ -78,8 +78,7 @@ public class RedisAiTaskQueue implements AiTaskQueue {
         }
         List<AiTaskQueueMessage> messages = new ArrayList<>();
         for (ByteRecord record : records) {
-            Map<byte[], byte[]> value = record.getValue();
-            byte[] raw = value == null ? null : value.get(FIELD_TASK_ID);
+            byte[] raw = RedisStreamFields.fieldOf(record.getValue(), FIELD_TASK_ID);
             if (raw == null) {
                 // 没有 taskId 的消息无法执行。ACK 掉它而不是留在 pending 里——
                 // 留着的唯一后果是每次恢复扫描都要再看它一眼。
@@ -95,6 +94,7 @@ public class RedisAiTaskQueue implements AiTaskQueue {
         return List.copyOf(messages);
     }
 
+
     @Override
     public void ack(String messageId) {
         redis.execute((RedisCallback<Long>) connection ->
@@ -109,6 +109,10 @@ public class RedisAiTaskQueue implements AiTaskQueue {
      * 启动前投递的任务会被永久跳过。
      *
      * <p>{@code BUSYGROUP} 表示组已存在（另一个实例先建了），不是错误。
+     *
+     * <p>每轮 {@code receive} 都建一次组是刻意的：组是**跨进程共享**的，
+     * 记在实例内存里就会在"另一个实例还没起来"时漏建。代价是每轮多一次注定失败的
+     * {@code XGROUP CREATE}，而它被下面的判定吞掉、不产生日志。
      */
     private void ensureGroup() {
         try {
@@ -121,8 +125,28 @@ public class RedisAiTaskQueue implements AiTaskQueue {
         }
     }
 
+    /**
+     * 判定"组已存在"。
+     *
+     * <p>必须**沿 cause 链找**，不能只看最外层：Spring 把 Lettuce 的
+     * {@code RedisBusyException} 包成 {@code RedisSystemException}，
+     * 而最外层那条的 message 是固定的 {@code "Error in execution"}——
+     * {@code BUSYGROUP} 只出现在**根因**上。只看最外层会让这个判定永远为 false，
+     * 于是第二次 {@code receive} 就把 {@code BUSYGROUP} 抛出去：
+     * 进程内**只能消费一轮**，之后每轮都报错，而任务看起来只是"卡在排队中"。
+     * 这个缺陷只有让 {@code receive} 在同一个进程里被调第二次才会暴露
+     * （单测用的是桩队列，看不见）。
+     */
     private static boolean isBusyGroup(RuntimeException exception) {
-        String message = exception.getMessage();
-        return message != null && message.contains("BUSYGROUP");
+        for (Throwable current = exception; current != null; current = current.getCause()) {
+            String message = current.getMessage();
+            if (message != null && message.contains("BUSYGROUP")) {
+                return true;
+            }
+            if (current.getCause() == current) {
+                break;
+            }
+        }
+        return false;
     }
 }

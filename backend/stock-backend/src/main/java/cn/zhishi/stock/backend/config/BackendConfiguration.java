@@ -2,6 +2,7 @@ package cn.zhishi.stock.backend.config;
 
 import cn.zhishi.stock.ai.application.AiContextPreviewService;
 import cn.zhishi.stock.ai.application.AiTaskRequestResolver;
+import cn.zhishi.stock.ai.application.AiTargetHydrator;
 import cn.zhishi.stock.ai.application.AiTaskService;
 import cn.zhishi.stock.ai.domain.AiContentHasher;
 import cn.zhishi.stock.ai.domain.AiContextBuilder;
@@ -634,6 +635,20 @@ public class BackendConfiguration {
     }
 
     /**
+     * 任务目标的对外标识还原器。
+     *
+     * <p>它与 {@code aiTaskRequestResolver} 是**两个不同的东西**：解析器把"请求里的标识"
+     * 变成代理键，这个还原器把"库里的代理键"变回标识。两个方向都需要，
+     * 而且都必须只有一份实现——执行器、重试、追问、任务摘要四处都走它。
+     */
+    @Bean
+    AiTargetHydrator aiTargetHydrator(
+            SecurityIdentityProvider securityIdentityProvider,
+            SectorIdentityProvider sectorIdentityProvider) {
+        return new AiTargetHydrator(securityIdentityProvider, sectorIdentityProvider);
+    }
+
+    /**
      * 任务聚合存储。
      *
      * <p>ID 用 {@code databaseIdGenerator}（数据库自增段），与自选、资讯一致；
@@ -716,8 +731,7 @@ public class BackendConfiguration {
             AiMessageStore aiMessageStore,
             AiReportStore aiReportStore,
             AiTaskQueue aiTaskQueue,
-            SecurityIdentityProvider securityIdentityProvider,
-            SectorIdentityProvider sectorIdentityProvider,
+            AiTargetHydrator aiTargetHydrator,
             LongSupplier databaseIdGenerator,
             Clock clock,
             @Value("${stock.ai.daily-task-limit:20}") int dailyTaskLimit,
@@ -733,8 +747,7 @@ public class BackendConfiguration {
                 aiMessageStore,
                 aiReportStore,
                 aiTaskQueue,
-                securityIdentityProvider,
-                sectorIdentityProvider,
+                aiTargetHydrator,
                 databaseIdGenerator,
                 clock,
                 dailyTaskLimit,
