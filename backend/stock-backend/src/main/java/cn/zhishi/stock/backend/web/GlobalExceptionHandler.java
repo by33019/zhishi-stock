@@ -1,5 +1,9 @@
 package cn.zhishi.stock.backend.web;
 
+import cn.zhishi.stock.ai.application.AiQuotaExceededException;
+import cn.zhishi.stock.ai.application.AiTaskErrorCode;
+import cn.zhishi.stock.ai.application.AiTaskException;
+import cn.zhishi.stock.ai.application.AiTaskQuota;
 import cn.zhishi.stock.ai.application.InvalidAiContextQueryException;
 import cn.zhishi.stock.ai.application.InvalidAiTargetException;
 import cn.zhishi.stock.common.api.ApiResponse;
@@ -27,6 +31,7 @@ import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestCookieException;
@@ -278,6 +283,61 @@ public class GlobalExceptionHandler {
                 null,
                 TraceIdFilter.current(request),
                 OffsetDateTime.now(clock)));
+    }
+
+    /**
+     * 每日额度用尽（契约 §13.5 的 {@code AI_QUOTA_EXCEEDED}）。
+     *
+     * <p><b>必须显式预设 {@code Content-Type: application/json}。</b>
+     * SSE 入口（AI-05）的客户端发的是 {@code Accept: text/event-stream}，
+     * 而错误响应体是 JSON——不预设的话 Spring 会做内容协商，发现没有任何转换器
+     * 能写出 {@code text/event-stream} 的 JSON，于是抛
+     * {@code HttpMediaTypeNotAcceptableException}。前端看到的就不是 404 而是一个
+     * 失败的流，且**无从区分**"任务不是我的"与"网络断了"。
+     * 预设之后 Spring 直接采用它、跳过协商（{@code writeWithMessageConverters}
+     * 在 {@code Content-Type} 已经具体时不再协商）。
+     *
+     * <p>单独一个 handler 而不是并进下面的 {@code AiTaskException}：它的响应体要带
+     * {@code quota}（{@code dailyLimit} / {@code usedCount} / {@code resetsAt}），
+     * 前端据此显示"今天还能用几次、什么时候恢复"。只回一句文案的话，
+     * 用户只能看到一个"额度用完了"却不知道该等多久。
+     */
+    @ExceptionHandler(AiQuotaExceededException.class)
+    public ResponseEntity<ApiResponse<AiTaskQuota>> aiQuotaExceeded(
+            AiQuotaExceededException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.status(exception.code().httpStatus())
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(ApiResponse.failure(
+                        exception.code().externalCode(),
+                        exception.getMessage(),
+                        exception.quota(),
+                        TraceIdFilter.current(request),
+                        OffsetDateTime.now(clock)));
+    }
+
+    /**
+     * AI 任务域的其它业务失败。
+     *
+     * <p>{@code Content-Type} 同样是显式预设的，理由见上面的额度 handler——
+     * 这两个 handler 都会在 SSE 入口上被触发。
+     *
+     * <p>HTTP 状态取自 {@link AiTaskErrorCode} 而不是在这里 switch：同一个域里
+     * 404 / 409 / 429 / 503 都有，在 handler 里推断会让"新增一个业务码"必须同时改两处，
+     * 而漏改一处的表现是"接口返回 200 但 body 里是错误码"。
+     */
+    @ExceptionHandler(AiTaskException.class)
+    public ResponseEntity<ApiResponse<Void>> aiTaskFailure(
+            AiTaskException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.status(exception.code().httpStatus())
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(ApiResponse.failure(
+                        exception.code().externalCode(),
+                        exception.getMessage(),
+                        null,
+                        TraceIdFilter.current(request),
+                        OffsetDateTime.now(clock)));
     }
 
     @ExceptionHandler(AuthException.class)

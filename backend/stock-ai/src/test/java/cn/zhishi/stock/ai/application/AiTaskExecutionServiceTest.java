@@ -760,7 +760,7 @@ class AiTaskExecutionServiceTest {
             List<AiTaskEvent> list = byTask.computeIfAbsent(taskId, key -> new ArrayList<>());
             long sequence = list.size() + 1L;
             AiTaskEvent event =
-                    new AiTaskEvent(Long.toString(sequence), type, payloadBuilder.apply(sequence));
+                    new AiTaskEvent(sequence, type, payloadBuilder.apply(sequence));
             list.add(event);
             return event;
         }
@@ -768,7 +768,7 @@ class AiTaskExecutionServiceTest {
         @Override
         public List<AiTaskEvent> readAfter(long taskId, long lastSequence, int count) {
             return byTask.getOrDefault(taskId, List.of()).stream()
-                    .filter(event -> Long.parseLong(event.eventId()) > lastSequence)
+                    .filter(event -> event.sequence() > lastSequence)
                     .limit(count)
                     .toList();
         }
@@ -778,7 +778,7 @@ class AiTaskExecutionServiceTest {
             List<AiTaskEvent> list = byTask.getOrDefault(taskId, List.of());
             return list.isEmpty()
                     ? Optional.empty()
-                    : Optional.of(Long.parseLong(list.get(list.size() - 1).eventId()));
+                    : Optional.of(list.get(list.size() - 1).sequence());
         }
 
         List<AiTaskEventType> typesOf(long taskId) {

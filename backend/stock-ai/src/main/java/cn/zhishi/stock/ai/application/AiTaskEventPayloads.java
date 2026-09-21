@@ -4,9 +4,13 @@ import cn.zhishi.stock.ai.domain.AiReport;
 import cn.zhishi.stock.ai.domain.AiReportSection;
 import cn.zhishi.stock.ai.domain.AiTaskStatus;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * SSE 事件的 {@code data} 载荷（契约 §13.4）。
@@ -27,7 +31,20 @@ import java.util.Map;
  */
 public final class AiTaskEventPayloads {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    /**
+     * 载荷序列化器。
+     *
+     * <p>必须注册 {@code JavaTimeModule}：{@code snapshot} 载荷里嵌着整个
+     * {@code AiTaskSummary}，它带 {@code OffsetDateTime}，而**裸的 ObjectMapper
+     * 不支持 java.time 类型**——不注册的话 {@code snapshot} 会直接抛
+     * "无法序列化"，也就是建连时第一条事件就发不出去。
+     *
+     * <p>关掉 {@code WRITE_DATES_AS_TIMESTAMPS}：时间要写成 ISO 字符串，
+     * 与契约里其余接口的形状一致（数字数组形状的日期前端认不出来）。
+     */
+    private static final ObjectMapper MAPPER = new ObjectMapper()
+            .registerModule(new JavaTimeModule())
+            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
     private AiTaskEventPayloads() {
     }
@@ -94,6 +111,36 @@ public final class AiTaskEventPayloads {
             payload.put("partialContent", partialContent);
         }
         return write(payload);
+    }
+
+    /**
+     * 从 {@code chunk} 载荷里读回片段。
+     *
+     * <p>中继要用它把"已经产生的临时文本"拼出来（重连时的 {@code partialContent}）。
+     * 读的口径与 {@link #chunk} 的写出口径**放在同一处**：分两处写就会出现
+     * "写的时候叫 {@code delta}、读的时候找 {@code text}"这种不一致，
+     * 而它不会报错，只会让重连后前端拿到一段空白。
+     *
+     * @return 载荷不是 chunk 形状时返回 {@code Optional.empty()}（不抛异常：
+     *         中继只是转发者，遇到不认识的载荷应当跳过而不是让整条流断掉）
+     */
+    public static Optional<ChunkView> readChunk(String dataJson) {
+        try {
+            JsonNode node = MAPPER.readTree(dataJson);
+            String section = node.path("section").asText(null);
+            String delta = node.path("delta").asText(null);
+            if (section == null || delta == null) {
+                return Optional.empty();
+            }
+            AiReportSection parsed = AiReportSection.valueOf(section);
+            return Optional.of(new ChunkView(parsed, delta));
+        } catch (JsonProcessingException | IllegalArgumentException exception) {
+            return Optional.empty();
+        }
+    }
+
+    /** {@code chunk} 载荷里与中继有关的两个字段。 */
+    public record ChunkView(AiReportSection section, String delta) {
     }
 
     private static String write(Map<String, Object> payload) {

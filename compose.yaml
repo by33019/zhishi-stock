@@ -96,6 +96,28 @@ services:
       redis:
         condition: service_healthy
 
+  # AI 任务执行器（架构 §3.2 的部署单元）。它不开放 HTTP，只消费 Redis Stream
+  # 并落库，因此没有 ports、也没有 healthcheck 的 TCP 探活——「健康」对它意味着
+  # 「定时器在跑」，而那由日志与 ai_task 的状态推进体现。
+  #
+  # 它必须与 stock-api 共用同一份 DB / Redis / 交易日历配置（锚点里已经包含）：
+  # 三个进程对"今天是哪一天"或"队列是哪一个键"一旦分叉，任务会停在排队中，
+  # 而两边各自看都正常。
+  stock-ai-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      args:
+        APP_MODULE: stock-ai-worker
+    environment:
+      <<: *stock-environment
+      SPRING_PROFILES_ACTIVE: dev
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
   frontend:
     build:
       context: .

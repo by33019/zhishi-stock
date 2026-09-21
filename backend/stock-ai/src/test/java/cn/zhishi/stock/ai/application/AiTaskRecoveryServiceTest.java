@@ -288,7 +288,7 @@ class AiTaskRecoveryServiceTest {
             List<AiTaskEvent> list = byTask.computeIfAbsent(taskId, key -> new ArrayList<>());
             long sequence = list.size() + 1L;
             AiTaskEvent event =
-                    new AiTaskEvent(Long.toString(sequence), type, payloadBuilder.apply(sequence));
+                    new AiTaskEvent(sequence, type, payloadBuilder.apply(sequence));
             list.add(event);
             return event;
         }

@@ -20,21 +20,18 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 /**
  * {@link AiTaskEventStream} 的 Redis Stream 实现。
  *
- * <h2>两个编号，两种语义（刻意不是同一个数）</h2>
- * <ul>
- *   <li><b>事件 ID</b>（SSE 的 {@code id:}）＝ Redis Stream 的消息 ID，由 Redis 生成，
- *       单调且可在 {@code XRANGE} 里作排他起点。它是**断线续传的游标**。
- *   <li><b>{@code sequence}</b> ＝ 任务内序号（{@code INCR ai:task:seq:{taskId}}），
- *       从 1 开始的小整数。它是**前端排序与去重的依据**，与契约 §13.4 的示例形状一致。
- * </ul>
+ * <h2>对外只暴露一个编号：任务内序号</h2>
+ * {@code sequence} ＝ {@code INCR ai:task:seq:{taskId}}，从 1 开始。它同时是
+ * SSE 的 {@code id:}、客户端回传的 {@code Last-Event-ID}、以及
+ * {@link #readAfter} 的游标——三者共用一个数，因此不需要"消息 ID → 序号"的映射。
  *
- * <p>契约示例里两者恰好相等（那份流从 1 开始且没有别的事件），但语义不同：
- * 用一个数同时承担两种职责，就必须保证"游标恰好等于序号"，
- * 而 Redis 的消息 ID 是毫秒时间戳形状，做不到。硬凑的结果是补发时会丢一段或重一段，
- * 而两端都不会报错。
+ * <p>Redis 自己的消息 ID（{@code 1689...-0} 那种毫秒时间戳形状）**不对外暴露**：
+ * 一旦拿它当 {@code id:}，中继就必须维护上面那张映射，而那就是第二个索引，
+ * 两个索引必然分叉——分叉的表现是重连补发时丢一段或重一段，两端都不会报错。
  *
  * <p>序号既写在条目字段里，也由载荷构造器写进 JSON。两份由**同一个入参**写出，
- * 不可能分叉；字段那一份是为了让 {@code latestSequence} 不必解析载荷。
+ * 不可能分叉；字段那一份是为了让 {@code readAfter} 与 {@code latestSequence}
+ * 不必解析载荷。
  *
  * <h2>保留期在每次追加时刷新</h2>
  * 契约 §13.4 要求"任务完成后临时片段默认保留 30 分钟"。最后一次追加就发生在任务
@@ -71,16 +68,16 @@ public class RedisAiTaskEventStream implements AiTaskEventStream {
         byte[] key = keyOf(taskId);
         long seconds = Math.max(1, retention.toSeconds());
 
-        String eventId = redis.execute((RedisCallback<String>) connection -> {
+        redis.execute((RedisCallback<RecordId>) connection -> {
             RecordId id = connection.streamCommands().xAdd(key, Map.of(
                     FIELD_TYPE, type.eventName().getBytes(StandardCharsets.UTF_8),
                     FIELD_SEQUENCE, Long.toString(sequence).getBytes(StandardCharsets.UTF_8),
                     FIELD_DATA, dataJson.getBytes(StandardCharsets.UTF_8)));
             connection.keyCommands().expire(key, seconds);
             connection.keyCommands().expire(sequenceKeyOf(taskId), seconds);
-            return id.getValue();
+            return id;
         });
-        return new AiTaskEvent(eventId, type, dataJson);
+        return new AiTaskEvent(sequence, type, dataJson);
     }
 
     @Override
@@ -112,7 +109,7 @@ public class RedisAiTaskEventStream implements AiTaskEventStream {
                 continue;
             }
             events.add(new AiTaskEvent(
-                    record.getId().getValue(),
+                    parseLong(rawSequence),
                     type,
                     text(RedisStreamFields.fieldOf(value, FIELD_DATA))));
             if (events.size() >= count) {

@@ -176,7 +176,14 @@ class SecurityConfigurationTest {
               .build();
           for (String[] target : new String[][] {
               {"GET", "/api/v1/ai/scenes"},
-              {"POST", "/api/v1/ai/context-previews"}}) {
+              {"POST", "/api/v1/ai/context-previews"},
+              {"POST", "/api/v1/ai/tasks"},
+              {"GET", "/api/v1/ai/tasks/1"},
+              // SSE 入口同样要挡游客：否则任何人都能靠 taskId 试探别人的分析进度
+              {"GET", "/api/v1/ai/tasks/1/stream"},
+              {"POST", "/api/v1/ai/tasks/1/cancel"},
+              {"POST", "/api/v1/ai/tasks/1/retry"},
+              {"POST", "/api/v1/ai/sessions/1/follow-up-tasks"}}) {
             MockHttpServletRequestBuilder request = switch (target[0]) {
               case "GET" -> get(target[1]);
               default -> post(target[1]);
@@ -283,6 +290,36 @@ class SecurityConfigurationTest {
 
     @PostMapping("/api/v1/ai/context-previews")
     String aiContextPreviews() {
+      return "ok";
+    }
+
+    @PostMapping("/api/v1/ai/tasks")
+    String createAiTask() {
+      return "ok";
+    }
+
+    @GetMapping("/api/v1/ai/tasks/{taskId}")
+    String aiTask() {
+      return "ok";
+    }
+
+    @GetMapping("/api/v1/ai/tasks/{taskId}/stream")
+    String aiTaskStream() {
+      return "ok";
+    }
+
+    @PostMapping("/api/v1/ai/tasks/{taskId}/cancel")
+    String cancelAiTask() {
+      return "ok";
+    }
+
+    @PostMapping("/api/v1/ai/tasks/{taskId}/retry")
+    String retryAiTask() {
+      return "ok";
+    }
+
+    @PostMapping("/api/v1/ai/sessions/{sessionId}/follow-up-tasks")
+    String followUpAiTask() {
       return "ok";
     }
 

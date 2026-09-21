@@ -4,6 +4,7 @@ import cn.zhishi.stock.ai.application.AiContextPreviewService;
 import cn.zhishi.stock.ai.application.AiTaskRequestResolver;
 import cn.zhishi.stock.ai.application.AiTargetHydrator;
 import cn.zhishi.stock.ai.application.AiTaskService;
+import cn.zhishi.stock.ai.application.AiTaskStreamRelay;
 import cn.zhishi.stock.ai.domain.AiContentHasher;
 import cn.zhishi.stock.ai.domain.AiContextBuilder;
 import cn.zhishi.stock.ai.domain.AiContextSnapshotStore;
@@ -115,6 +116,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.ZoneId;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 import org.springframework.beans.factory.annotation.Value;
@@ -712,6 +715,48 @@ public class BackendConfiguration {
             StringRedisTemplate stringRedisTemplate,
             @Value("${stock.ai.chunk-retention-minutes:30}") long retentionMinutes) {
         return new RedisAiTaskEventStream(stringRedisTemplate, Duration.ofMinutes(retentionMinutes));
+    }
+
+    /**
+     * SSE 中继。
+     *
+     * <p>它不依赖任何 Web 类型（{@code stock-ai} 里没有 spring-web），
+     * 所以"往哪写"由 {@code AiTaskEventSink} 注入；本模块提供
+     * {@code SseTaskEventSink} 实现。这样中继的循环逻辑能用假实现单测，
+     * 而不用起一个真的 Servlet 容器。
+     */
+    @Bean
+    AiTaskStreamRelay aiTaskStreamRelay(
+            AiTaskEventStream aiTaskEventStream,
+            AiTaskStore aiTaskStore,
+            @Value("${stock.ai.stream.batch-size:100}") int batchSize,
+            @Value("${stock.ai.stream.poll-delay-ms:200}") long pollDelayMillis,
+            @Value("${stock.ai.stream.max-duration-seconds:900}") long maxDurationSeconds,
+            @Value("${stock.ai.stream.partial-content-scan-limit:500}") int partialContentScanLimit) {
+        return new AiTaskStreamRelay(
+                aiTaskEventStream,
+                aiTaskStore,
+                batchSize,
+                Duration.ofMillis(pollDelayMillis),
+                Duration.ofSeconds(maxDurationSeconds),
+                partialContentScanLimit);
+    }
+
+    /**
+     * SSE 中继的线程池。
+     *
+     * <p>Servlet 栈下**每条 SSE 连接占一个线程**（中继是阻塞循环），
+     * 所以这个池的大小就是并发 SSE 连接数的上限。设小了会让新连接排队到超时，
+     * 设大了只是多占内存。用守护线程：应用关闭时不必等它们。
+     */
+    @Bean(destroyMethod = "shutdown")
+    ExecutorService aiStreamExecutor(
+            @Value("${stock.ai.stream.threads:32}") int threads) {
+        return Executors.newFixedThreadPool(threads, runnable -> {
+            Thread thread = new Thread(runnable, "ai-stream-relay");
+            thread.setDaemon(true);
+            return thread;
+        });
     }
 
     /**

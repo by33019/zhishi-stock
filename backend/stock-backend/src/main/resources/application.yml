@@ -56,6 +56,18 @@ stock:
     content-schema-version: ${AI_CONTENT_SCHEMA_VERSION:v1}
     # 单次调用的输出上限，透传给 LlmProviderPort。
     max-output-tokens: ${AI_MAX_OUTPUT_TOKENS:2048}
+    # ---- SSE 中继（AI-05）----
+    # Servlet 栈下每条 SSE 连接占一个线程（中继是阻塞循环），所以 threads 就是
+    # 并发 SSE 连接数的上限。设小了会让新连接排队到超时。
+    stream:
+      threads: ${AI_STREAM_THREADS:32}
+      # 单条连接的最长存活时间。它是兜底：任务若因未预料的路径停在非终态，
+      # 连接不会永久挂着（前端最多多一次重连）。
+      timeout-seconds: ${AI_STREAM_TIMEOUT_SECONDS:120}
+      max-duration-seconds: ${AI_STREAM_MAX_DURATION_SECONDS:900}
+      batch-size: ${AI_STREAM_BATCH_SIZE:100}
+      poll-delay-ms: ${AI_STREAM_POLL_DELAY_MS:200}
+      partial-content-scan-limit: ${AI_STREAM_PARTIAL_SCAN_LIMIT:500}
   seed:
     demo-username: ${DEMO_USERNAME:demo}
     demo-password: ${DEMO_PASSWORD:Stock@123}
