@@ -838,6 +838,42 @@
   font-size: 0.9rem;
 }
 
+/* 详情区的写操作。删除用两步确认（history-confirm），一次点击就删掉一条
+   研究会话太容易误触，而它只是软删——用户很容易以为"点错了也没事"。 */
+.history-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.history-rename {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.history-rename input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-bg);
+  color: inherit;
+  font: inherit;
+}
+
+.history-confirm {
+  margin: 8px 0;
+  padding: 12px;
+  border: 1px solid var(--down-soft);
+  border-radius: 6px;
+}
+
+.history-confirm p {
+  margin: 0 0 8px;
+  font-size: var(--text-caption);
+}
+
 .history-detail h3:first-child {
   margin-top: 0;
 }

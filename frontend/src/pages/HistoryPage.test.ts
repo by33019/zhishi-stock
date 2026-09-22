@@ -2,13 +2,21 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import HistoryPage from './HistoryPage.vue'
-import { getSession, getSessionMessages, getSessions } from '@/services/historyApi'
+import {
+  deleteSession,
+  getSession,
+  getSessionMessages,
+  getSessions,
+  updateSession,
+} from '@/services/historyApi'
 import type { AiSessionDetail, AiSessionSummary, PageData } from '@/types/domain'
 
 vi.mock('@/services/historyApi', () => ({
   getSessions: vi.fn(),
   getSession: vi.fn(),
   getSessionMessages: vi.fn(),
+  updateSession: vi.fn(),
+  deleteSession: vi.fn(),
 }))
 
 const NOW = '2026-09-22T15:00:00+08:00'
@@ -200,5 +208,113 @@ describe('分析历史页', () => {
     await wrapper.get('.state-note--error .link-button').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('请说明这只股票近期的量价特征')
+  })
+
+  // ---------- HIS-03 / HIS-04 ----------
+
+  async function openDetail() {
+    const wrapper = mountPage()
+    await flushPromises()
+    await wrapper.get('.report-info h2 button').trigger('click')
+    await flushPromises()
+    return wrapper
+  }
+
+  it('收藏用当前渲染的那一版提交（If-Match 必须是这一版，不是最新版）', async () => {
+    vi.mocked(getSession).mockResolvedValue(detail({ version: 7, isFavorite: false }))
+    vi.mocked(updateSession).mockResolvedValue({
+      sessionId: '6001',
+      title: '请说明这只股票近期的量价特征',
+      isFavorite: true,
+      version: 8,
+    })
+
+    const wrapper = await openDetail()
+    const favorite = wrapper
+      .findAll('.history-actions button')
+      .find((button) => button.text() === '收藏')
+    await favorite?.trigger('click')
+    await flushPromises()
+
+    expect(updateSession).toHaveBeenCalledWith('6001', 7, { isFavorite: true })
+    expect(wrapper.text()).toContain('已加入收藏')
+    // 写成功后必须重新拉取：服务端会改写 version，本地那份已经过期
+    expect(vi.mocked(getSessions).mock.calls.length).toBeGreaterThan(1)
+  })
+
+  it('重命名成功后提示并刷新；空标题被前端拦下，不发请求', async () => {
+    vi.mocked(getSession).mockResolvedValue(detail({ version: 3 }))
+    vi.mocked(updateSession).mockResolvedValue({
+      sessionId: '6001',
+      title: '新标题',
+      isFavorite: false,
+      version: 4,
+    })
+
+    const wrapper = await openDetail()
+    await wrapper
+      .findAll('.history-actions button')
+      .find((button) => button.text() === '重命名')
+      ?.trigger('click')
+
+    const input = wrapper.get('.history-rename input')
+    await input.setValue('   ')
+    await wrapper.get('.history-rename').trigger('submit')
+    await flushPromises()
+    expect(wrapper.text()).toContain('标题不能为空')
+    expect(updateSession).not.toHaveBeenCalled()
+
+    await input.setValue('  新标题  ')
+    await wrapper.get('.history-rename').trigger('submit')
+    await flushPromises()
+    // 前后空白由服务端裁剪，前端原样提交即可
+    expect(updateSession).toHaveBeenCalledWith('6001', 3, { title: '新标题' })
+    expect(wrapper.text()).toContain('标题已更新')
+  })
+
+  it('版本冲突（409）不是「操作非法」：提示已刷新并重新拉取，请用户再试', async () => {
+    vi.mocked(getSession).mockResolvedValue(detail({ version: 2, isFavorite: false }))
+    vi.mocked(updateSession).mockRejectedValue(
+      Object.assign(new Error('会话已被修改'), { status: 409 }),
+    )
+
+    const wrapper = await openDetail()
+    const before = vi.mocked(getSessions).mock.calls.length
+    await wrapper
+      .findAll('.history-actions button')
+      .find((button) => button.text() === '收藏')
+      ?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('刚被修改过，已为你刷新')
+    expect(vi.mocked(getSessions).mock.calls.length).toBeGreaterThan(before)
+  })
+
+  it('删除要两步确认，成功后清空详情并告知彻底清理时间', async () => {
+    vi.mocked(getSession).mockResolvedValue(detail({ version: 1 }))
+    vi.mocked(deleteSession).mockResolvedValue({
+      deleted: true,
+      purgeAfter: '2026-10-22T15:00:00+08:00',
+    })
+
+    const wrapper = await openDetail()
+    const del = wrapper
+      .findAll('.history-actions button')
+      .find((button) => button.text() === '删除')
+    await del?.trigger('click')
+    await flushPromises()
+
+    // 第一次点击只是展开确认区，不能已经发出删除请求
+    expect(deleteSession).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('确定删除')
+
+    await wrapper.get('.history-confirm button').trigger('click')
+    await flushPromises()
+
+    expect(deleteSession).toHaveBeenCalledWith('6001', 1)
+    // 格式跟随 formatDate（MM/DD），与列表里的时间列一致
+    expect(wrapper.text()).toContain('10/22 之后彻底清理')
+    // 详情应当收起来：那个会话已经不在列表里了
+    expect(wrapper.find('.history-detail').exists()).toBe(false)
   })
 })

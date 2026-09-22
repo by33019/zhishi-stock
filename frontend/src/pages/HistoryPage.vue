@@ -4,7 +4,14 @@ import { computed, onMounted, ref, watch } from 'vue'
 
 import PageHeader from '@/components/PageHeader.vue'
 import { useRemoteData } from '@/composables/useRemoteData'
-import { getSession, getSessionMessages, getSessions } from '@/services/historyApi'
+import { ApiError } from '@/services/apiClient'
+import {
+  deleteSession,
+  getSession,
+  getSessionMessages,
+  getSessions,
+  updateSession,
+} from '@/services/historyApi'
 import type { AiMessage, AiScene, AiSessionQuery, AiSessionSummary } from '@/types/domain'
 import { formatDate, formatDateTime, formatTime } from '@/utils/format'
 
@@ -147,6 +154,92 @@ function roleLabel(role: AiMessage['roleType']) {
   return role === 'USER' ? '提问' : role === 'ASSISTANT' ? '分析结论' : ''
 }
 
+// ---------- HIS-03 / HIS-04：改名、收藏、删除 ----------
+
+/** 写操作的提示。与列表的加载错误分开：一个是"数据没读到"，一个是"刚做的操作结果"。 */
+const actionNotice = ref('')
+const actionError = ref('')
+const mutating = ref(false)
+const renaming = ref(false)
+const renameInput = ref('')
+const confirmingDelete = ref(false)
+
+/**
+ * 统一的写操作流程。
+ *
+ * **409 单独处理**：它不是"操作非法"，而是"这份会话在你操作期间被别人改过"。
+ * 此时正确响应是重新拉取并请用户再试，而不是把错误原样抛给他——
+ * 用户改一次标题却看到一句"版本冲突"，无从知道下一步该做什么。
+ */
+async function runMutation(operation: () => Promise<string>) {
+  mutating.value = true
+  actionError.value = ''
+  actionNotice.value = ''
+  try {
+    actionNotice.value = await operation()
+    await reload()
+    await reloadDetail()
+    await reloadMessages()
+  } catch (cause) {
+    const failure = cause as Partial<ApiError>
+    if (failure.status === 409) {
+      actionError.value = '这个会话刚被修改过，已为你刷新，请再试一次。'
+      await reload()
+      await reloadDetail()
+    } else {
+      actionError.value = failure.message ?? '操作失败，请稍后重试。'
+    }
+  } finally {
+    mutating.value = false
+  }
+}
+
+function toggleFavorite() {
+  const current = detail.value
+  if (!current) return
+  void runMutation(async () => {
+    // 用当前渲染的那一版提交。自己重新取版本就等于"用最新版写"，乐观锁会失效。
+    const result = await updateSession(current.sessionId, current.version, {
+      isFavorite: !current.isFavorite,
+    })
+    return result.isFavorite ? '已加入收藏。' : '已取消收藏。'
+  })
+}
+
+function startRename() {
+  renameInput.value = detail.value?.title ?? ''
+  renaming.value = true
+  confirmingDelete.value = false
+  actionError.value = ''
+}
+
+function saveRename() {
+  const current = detail.value
+  if (!current) return
+  const title = renameInput.value.trim()
+  if (!title) {
+    // 前端先拦一次给出即时反馈；服务端仍会独立校验（它才是权威）。
+    actionError.value = '标题不能为空。'
+    return
+  }
+  void runMutation(async () => {
+    await updateSession(current.sessionId, current.version, { title })
+    renaming.value = false
+    return '标题已更新。'
+  })
+}
+
+function removeSession() {
+  const current = detail.value
+  if (!current) return
+  void runMutation(async () => {
+    const result = await deleteSession(current.sessionId, current.version)
+    selectedId.value = null
+    confirmingDelete.value = false
+    return `已删除，${formatDate(result.purgeAfter)} 之后彻底清理。`
+  })
+}
+
 onMounted(reload)
 </script>
 
@@ -264,6 +357,14 @@ onMounted(reload)
           </div>
         </template>
 
+        <!--
+          写操作的提示放在详情区**之外**：删除成功后详情会收起（那个会话已经不在列表里），
+          提示若挂在详情区内就会跟着消失——用户点完删除看到列表少了一行，
+          却不知道发生了什么、数据什么时候清理。
+        -->
+        <p v-if="actionError" class="state-note state-note--error">{{ actionError }}</p>
+        <p v-else-if="actionNotice" class="state-note">{{ actionNotice }}</p>
+
         <section v-if="selectedId" class="history-detail">
           <p v-if="detailLoading" class="state-note">正在加载会话详情…</p>
           <p v-else-if="detailError" class="state-note state-note--error">
@@ -271,6 +372,34 @@ onMounted(reload)
             <button class="link-button" type="button" @click="reloadDetail()">重试</button>
           </p>
           <template v-else-if="detail">
+            <div class="history-actions">
+              <button class="secondary-button" type="button" :disabled="mutating" @click="toggleFavorite">
+                {{ detail.isFavorite ? '取消收藏' : '收藏' }}
+              </button>
+              <button class="secondary-button" type="button" :disabled="mutating" @click="startRename">
+                重命名
+              </button>
+              <button class="secondary-button" type="button" :disabled="mutating" @click="confirmingDelete = true">
+                删除
+              </button>
+            </div>
+
+            <form v-if="renaming" class="history-rename" @submit.prevent="saveRename">
+              <!-- maxlength 与服务端的 1~60 对齐，让用户不必先提交才知道上限 -->
+              <input v-model="renameInput" maxlength="60" aria-label="会话标题" />
+              <button class="secondary-button" type="submit" :disabled="mutating">保存</button>
+              <button class="secondary-button" type="button" @click="renaming = false">取消</button>
+            </form>
+
+            <!-- 删除是两步：一次点击就删掉一条研究会话太容易误触 -->
+            <div v-if="confirmingDelete" class="history-confirm">
+              <p>删除后不再出现在列表里，30 天后彻底清理。确定删除这个会话？</p>
+              <button class="secondary-button" type="button" :disabled="mutating" @click="removeSession">
+                确定删除
+              </button>
+              <button class="secondary-button" type="button" @click="confirmingDelete = false">取消</button>
+            </div>
+
             <h3>分析目标</h3>
             <ul v-if="detail.targets.length" class="target-list">
               <li v-for="target in detail.targets" :key="target.targetId">

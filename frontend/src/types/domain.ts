@@ -844,3 +844,22 @@ export interface AiMessage {
   dataCutoffAt: string | null
   createdAt: string
 }
+
+/**
+ * HIS-03 的响应：更新后的会话与**新版本**。
+ *
+ * 服务端回传新版本，是为了让下一次提交能直接用它——否则只能重新拉一次详情，
+ * 而那次拉取与本次写入之间又可能被别人改动，把乐观锁的收益丢掉一半。
+ */
+export interface AiSessionUpdated {
+  sessionId: string
+  title: string
+  isFavorite: boolean
+  version: number
+}
+
+/** HIS-04 的响应。`purgeAfter` 是数据彻底消失的时间（默认删除后 30 天）。 */
+export interface AiSessionDeletion {
+  deleted: boolean
+  purgeAfter: string
+}
