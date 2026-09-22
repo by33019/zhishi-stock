@@ -41,6 +41,13 @@ public final class AiPromptRenderer {
                     .append(section.required() ? " —— 必填" : " —— 有材料时才输出")
                     .append('\n');
         }
+        prompt.append("章节分隔（格式固定，解析器按它切分，写错即整份作废）：\n");
+        prompt.append("  - 每章正文之前必须输出一行分隔标记，形如 ")
+                .append(AiSectionMarker.of(AiReportSection.CORE_CONCLUSION))
+                .append("，把其中的英文名换成该章自己的英文名。\n");
+        prompt.append("  - 标记必须独占一行，前后不加其它文字；不要用 Markdown 标题代替它。\n");
+        prompt.append("  - 六个标记按上面的顺序全部输出，一个都不能少。\n");
+        prompt.append("  - 标记之外不要输出任何开场白、寒暄或收尾总结。\n");
         prompt.append("引用规则：\n");
         prompt.append("  - 正文里的每条事实性表述必须用 [n] 标注来源，n 是证据候选的编号。\n");
         prompt.append("  - 只能引用候选集合里存在的编号；引用不存在的编号会导致整份输出被拒绝。\n");

@@ -31,7 +31,7 @@ import cn.zhishi.stock.ai.infrastructure.RedisAiTaskQueue;
 import cn.zhishi.stock.backend.security.JwtAuthenticationFilter;
 import cn.zhishi.stock.backend.web.TraceIdFilter;
 import cn.zhishi.stock.integration.ai.SimulatedContentHasher;
-import cn.zhishi.stock.integration.ai.SimulatedLlmProvider;
+import cn.zhishi.stock.integration.ai.LlmProviderFactory;
 import cn.zhishi.stock.integration.market.SimulatedKlineProvider;
 import cn.zhishi.stock.integration.market.SimulatedLimitRuleProvider;
 import cn.zhishi.stock.integration.market.SimulatedQuoteProvider;
@@ -615,9 +615,24 @@ public class BackendConfiguration {
     @Bean
     LlmProviderPort llmProviderPort(
             AiContentHasher aiContentHasher,
+            ObjectMapper objectMapper,
             @Value("${stock.ai.provider-code:SIMULATED}") String providerCode,
-            @Value("${stock.ai.model-code:sim-analyst-v1}") String modelCode) {
-        return new SimulatedLlmProvider(aiContentHasher, providerCode, modelCode);
+            @Value("${stock.ai.model-code:sim-analyst-v1}") String modelCode,
+            @Value("${stock.ai.llm-mode:SIMULATED}") String llmMode,
+            @Value("${stock.ai.base-url:}") String baseUrl,
+            @Value("${stock.ai.api-key:}") String apiKey,
+            @Value("${stock.ai.llm-timeout-seconds:120}") long llmTimeoutSeconds) {
+        // 装配逻辑收在工厂里，与 stock-ai-worker 共用同一处——两个进程选了不同实现时，
+        // 在线侧按真实模型报"将使用的数据"、执行侧却产出占位正文，而两边各自看都正常。
+        return LlmProviderFactory.create(
+                LlmProviderFactory.modeOf(llmMode),
+                aiContentHasher,
+                objectMapper,
+                providerCode,
+                modelCode,
+                baseUrl,
+                apiKey,
+                Duration.ofSeconds(llmTimeoutSeconds));
     }
 
     // ---------- AI 域：任务编排（M3-07） ----------
@@ -781,7 +796,7 @@ public class BackendConfiguration {
             Clock clock,
             @Value("${stock.ai.daily-task-limit:20}") int dailyTaskLimit,
             @Value("${stock.ai.max-concurrent-tasks:2}") int maxConcurrentTasks,
-            @Value("${stock.ai.task-deadline-seconds:60}") long taskDeadlineSeconds,
+            @Value("${stock.ai.task-deadline-seconds:180}") long taskDeadlineSeconds,
             @Value("${stock.ai.provider-code:SIMULATED}") String providerCode,
             @Value("${stock.ai.model-code:sim-analyst-v1}") String modelCode) {
         return new AiTaskService(

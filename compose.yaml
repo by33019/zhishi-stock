@@ -68,6 +68,19 @@ services:
       MARKET_SCENARIO: ${MARKET_SCENARIO:-NORMAL}
       # 采集（stock-job）与查询（stock-backend）共用同一个值，两边口径必须一致。
       MARKET_HOLIDAYS: ${MARKET_HOLIDAYS:-}
+      # ---- AI / LLM ----
+      # 三个进程（api / job / ai-worker）共用同一份配置。ai-worker 是真正调用模型的一侧，
+      # api 侧只用 provider-code / model-code 组装请求描述——两边一旦分叉，
+      # 在线侧按真实模型报"将使用的数据"、执行侧却产出占位正文，而两边各自看都正常。
+      AI_LLM_MODE: ${AI_LLM_MODE:-SIMULATED}
+      AI_PROVIDER_CODE: ${AI_PROVIDER_CODE:-SIMULATED}
+      AI_MODEL_CODE: ${AI_MODEL_CODE:-sim-analyst-v1}
+      AI_BASE_URL: ${AI_BASE_URL:-}
+      # 密钥只从 .env（已 gitignore）注入，绝不写入代码库或镜像。
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_LLM_TIMEOUT_SECONDS: ${AI_LLM_TIMEOUT_SECONDS:-120}
+      AI_TASK_DEADLINE_SECONDS: ${AI_TASK_DEADLINE_SECONDS:-180}
+      AI_PROMPT_VERSION: ${AI_PROMPT_VERSION:-p2}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       DEMO_USERNAME: ${DEMO_USERNAME:-demo}
       DEMO_PASSWORD: ${DEMO_PASSWORD:-Stock@123}

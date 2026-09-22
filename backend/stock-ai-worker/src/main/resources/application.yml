@@ -24,9 +24,22 @@ stock:
   ai:
     provider-code: ${AI_PROVIDER_CODE:SIMULATED}
     model-code: ${AI_MODEL_CODE:sim-analyst-v1}
+    # 实现模式：SIMULATED（确定性占位）/ OPENAI_COMPATIBLE（真实供应商）。
+    # 显式要求 OPENAI_COMPATIBLE 而缺 api-key 时启动即失败，不静默回落到模拟实现。
+    llm-mode: ${AI_LLM_MODE:SIMULATED}
+    # OpenAI 兼容协议的基地址（需含版本段），例如通义的 compatible-mode。
+    base-url: ${AI_BASE_URL:}
+    api-key: ${AI_API_KEY:}
+    # 单次模型调用的总时限。推理模型先产出思维链再产出正文，需要长于普通对话模型。
+    llm-timeout-seconds: ${AI_LLM_TIMEOUT_SECONDS:120}
+    # 单任务超时阈值。必须大于 llm-timeout-seconds，否则任务先超时而模型还在输出，
+    # 这次调用的费用与产出都被丢掉。默认由 60 提到 180（真实推理模型需要）。
+    task-deadline-seconds: ${AI_TASK_DEADLINE_SECONDS:180}
     news-evidence-limit: ${AI_NEWS_EVIDENCE_LIMIT:20}
     # 写进 ai_report 的版本标识：换 Prompt 或换内容结构后，历史报告仍能自我说明。
-    prompt-version: ${AI_PROMPT_VERSION:p1}
+    # p1 → p2：p2 起系统提示词要求每章以 [[SECTION:...]] 分隔标记开头，
+    # 解析器按它切分章节。旧报告标着 p1，回看时能分辨它当时用的是哪一版规则。
+    prompt-version: ${AI_PROMPT_VERSION:p2}
     content-schema-version: ${AI_CONTENT_SCHEMA_VERSION:v1}
     max-output-tokens: ${AI_MAX_OUTPUT_TOKENS:2048}
     # 事件流（chunk / status）保留期；报告本身落 ai_report，不受此影响。

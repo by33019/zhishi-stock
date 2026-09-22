@@ -23,7 +23,7 @@ import cn.zhishi.stock.ai.infrastructure.MyBatisAiTaskStore;
 import cn.zhishi.stock.ai.infrastructure.RedisAiTaskEventStream;
 import cn.zhishi.stock.ai.infrastructure.RedisAiTaskQueue;
 import cn.zhishi.stock.integration.ai.SimulatedContentHasher;
-import cn.zhishi.stock.integration.ai.SimulatedLlmProvider;
+import cn.zhishi.stock.integration.ai.LlmProviderFactory;
 import cn.zhishi.stock.integration.market.SimulatedLimitRuleProvider;
 import cn.zhishi.stock.integration.market.SimulatedQuoteSnapshotProvider;
 import cn.zhishi.stock.integration.market.SimulatedSecurityIdentityProvider;
@@ -278,9 +278,24 @@ public class AiWorkerConfiguration {
     @Bean
     LlmProviderPort llmProviderPort(
             AiContentHasher aiContentHasher,
+            ObjectMapper objectMapper,
             @Value("${stock.ai.provider-code:SIMULATED}") String providerCode,
-            @Value("${stock.ai.model-code:sim-analyst-v1}") String modelCode) {
-        return new SimulatedLlmProvider(aiContentHasher, providerCode, modelCode);
+            @Value("${stock.ai.model-code:sim-analyst-v1}") String modelCode,
+            @Value("${stock.ai.llm-mode:SIMULATED}") String llmMode,
+            @Value("${stock.ai.base-url:}") String baseUrl,
+            @Value("${stock.ai.api-key:}") String apiKey,
+            @Value("${stock.ai.llm-timeout-seconds:120}") long llmTimeoutSeconds) {
+        // 与 stock-backend 共用同一个工厂：两个进程选了不同实现时，在线侧按真实模型
+        // 报"将使用的数据"、执行侧却产出占位正文，而两边各自看都正常。
+        return LlmProviderFactory.create(
+                LlmProviderFactory.modeOf(llmMode),
+                aiContentHasher,
+                objectMapper,
+                providerCode,
+                modelCode,
+                baseUrl,
+                apiKey,
+                Duration.ofSeconds(llmTimeoutSeconds));
     }
 
     /**

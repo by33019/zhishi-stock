@@ -40,6 +40,16 @@ stock:
     # AI Provider 与模型标识。当前只有确定性模拟实现，真实 LLM 源就位后换实现即可。
     provider-code: ${AI_PROVIDER_CODE:SIMULATED}
     model-code: ${AI_MODEL_CODE:sim-analyst-v1}
+    # 实现模式：SIMULATED（确定性占位，CI 与本地默认）/ OPENAI_COMPATIBLE（真实供应商）。
+    # 显式要求 OPENAI_COMPATIBLE 而缺 api-key 时启动即失败，**不静默回落**到模拟实现——
+    # 那会产出一份带着真实证据编号、读起来与真报告无异的占位文本。
+    llm-mode: ${AI_LLM_MODE:SIMULATED}
+    # OpenAI 兼容协议的基地址（需含版本段）。通义 compatible-mode 即 OpenAI 协议。
+    base-url: ${AI_BASE_URL:}
+    # 密钥只从环境变量来。默认空值配合 llm-mode=SIMULATED 时不会触发任何外网调用。
+    api-key: ${AI_API_KEY:}
+    # 单次模型调用的总时限。推理模型先产出思维链再产出正文，需要长于普通对话模型。
+    llm-timeout-seconds: ${AI_LLM_TIMEOUT_SECONDS:120}
     # 单个任务可进入 AI 上下文的资讯证据条数上限。
     news-evidence-limit: ${AI_NEWS_EVIDENCE_LIMIT:20}
     # ---- M3-07 任务编排 ----
@@ -48,7 +58,10 @@ stock:
     # 单用户并发上限（契约 §13.5）：活跃任务数，终态自然释放。
     max-concurrent-tasks: ${AI_MAX_CONCURRENT_TASKS:2}
     # 超时阈值：超过即由 Worker 置 TIMED_OUT，不再等 LLM。
-    task-deadline-seconds: ${AI_TASK_DEADLINE_SECONDS:60}
+    # 默认由 60 提到 180：真实推理模型要先产出思维链（实测一次简短问答的思维链
+    # 就占 69 个 reasoning token），60 秒会让正常任务被判超时。必须大于
+    # llm-timeout-seconds，否则任务先超时而模型还在输出，调用被白白丢弃。
+    task-deadline-seconds: ${AI_TASK_DEADLINE_SECONDS:180}
     # 事件流（chunk / status）的保留期；报告本身落 ai_report，不受此影响。
     chunk-retention-minutes: ${AI_CHUNK_RETENTION_MINUTES:30}
     # 写进 ai_report 的版本标识：将来换 Prompt 或换内容结构时，历史报告仍能自我说明。

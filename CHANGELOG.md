@@ -23,6 +23,95 @@
 
 ---
 
+## 2026-09-22 — 接入真实大模型（通义 DashScope）：LlmProviderPort 有了第二个实现
+
+### 新增
+
+- **`stock-integration/ai/OpenAiCompatibleLlmProvider`**：按 **OpenAI 协议**而非按供应商实现。
+  通义 compatible-mode 与多数国内供应商都暴露同一套 `/chat/completions`，因此换供应商通常
+  只改 `base-url` + `model-code` 两个配置项，不需要新写一个类。用 JDK 自带 `HttpClient`，
+  **零新增 HTTP 依赖**（架构 §12 提到的 WebClient / Resilience4j 仍未引入）。
+- **`stock-integration/ai/LlmProviderFactory`**：LLM 实现的两个装配处
+  （`stock-backend` 与 `stock-ai-worker`）共用同一处选择逻辑。分开写两份的后果是
+  两个进程可能选了不同实现——在线侧按真实模型报"将使用的数据"、执行侧却产出占位正文，
+  而两边各自看都对。
+- **`stock-ai/domain/AiSectionMarker`**：章节分隔标记 `[[SECTION:CORE_CONCLUSION]]` 的
+  **唯一定义处**，由 Prompt 渲染器与适配器共用。
+- **`stock-ai/domain/AiSectionSplitter`**：把连续文本流切成「章节 + 增量」的有状态切分器。
+- 配置项 `stock.ai.llm-mode` / `base-url` / `api-key` / `llm-timeout-seconds`（api / worker 两侧），
+  以及 `compose.yaml` 共享环境锚点的 8 个 `AI_*` 变量；`.env.example` 补齐占位说明。
+- 测试：`AiSectionSplitterTest` 9 项（含逐字符喂入覆盖所有分片边界）。
+
+### 变更
+
+- **`AiPromptRenderer.systemPrompt()` 增加章节标记要求**：真实模型输出的是连续文本，
+  而定稿校验要求 `LlmCompletion` 是「章节 → 文本」的映射。标记格式由 `AiSectionMarker`
+  单点提供，不在渲染器里手写第二份——两份定义分叉的表现是
+  "模型按新格式输出、解析按旧格式切分"，所有任务失败而两边各自看都对。
+- **`promptVersion` p1 → p2**：提示词的输出格式要求变了，架构 §11.4 要求提示模板版本化，
+  历史报告必须能说明自己当时用的是哪一版规则。
+- **`task-deadline-seconds` 默认 60 → 180**（api 与 worker 两侧，含 `BackendConfiguration` 的
+  `@Value` 兜底值）。实测真实推理模型从建任务到首段耗时约 **88 秒**，
+  60 秒会把正常任务判成 `TIMED_OUT`。必须大于 `llm-timeout-seconds`（120）。
+- `BackendConfiguration` / `AiWorkerConfiguration` 的 `llmProviderPort` 改走工厂；
+  `stock-integration` 显式声明 `spring-boot-starter-json`（不蹭传递依赖）。
+
+### 修复
+
+- **`backend/Dockerfile` 用 `-Dmaven.test.skip=true` 取代 `-DskipTests`**：后者只是不"运行"
+  测试，仍会解析并下载整个 test 作用域（spring-boot-test、junit、mockito、assertj、
+  testcontainers、byte-buddy 9MB…），而运行时镜像一个都用不到。
+- **`backend/Dockerfile` 为 Maven 本地仓库加 BuildKit 缓存挂载**（`sharing=locked`）：
+  `stock-api` / `stock-job` / `stock-ai-worker` 三个镜像各自执行一次完整 `mvn package`，
+  没有共享缓存时等于把整棵依赖树下载三遍，把已知环境故障（容器网络约 3% 的偶发
+  连接中断）的失败概率放大了三倍。共享后只下载一遍，且**失败重试变成增量**
+  （失败的下载不进构建层，但进缓存挂载），与前端 npm 的做法一致。
+  实测：改造前 6 分钟构建失败，改造后 3 分 49 秒成功。
+
+### 关键设计取舍
+
+- **只取 `delta.content`，`reasoning_content` 只计数不进报告**。实测 `qwen3.8-max-0902`
+  是推理模型，delta 有两条通道且文本完全不同。混入思维链的后果是思维链里随机出现的
+  `[数字]` 被定稿校验器判成越界引用、整份输出被拒，而正文本身是合规的——
+  这类失败**只在偶发任务上出现**，不会在"随手跑一次"时暴露。
+- **`llm-mode` 显式开关，缺省 `SIMULATED`**。CI 无密钥必须能跑完测试；而显式要求
+  `OPENAI_COMPATIBLE` 却缺密钥时**启动即失败**，不静默回落——回落会产出一份带着真实
+  证据编号、读起来与真报告无异的占位文本。
+- **适配器在"一个片段都没切出来"时区分两种成因**：思维链非空 → `AI_OUTPUT_TRUNCATED`
+  （调大 `maxOutputTokens` 才有用）；无标记 → `AI_SECTION_MARKERS_MISSING`
+  （要改 Prompt 或换模型）。合并报错会让处置方式完全不同的两种情况看起来一样。
+- **`LlmUsage` 不变量由适配器兜底**：推理模型的 reasoning token 可能不被计入 `total`，
+  直接构造会抛 `IllegalArgumentException`（"本侧系统故障"语义，会掩盖真实原因）。
+
+### 验证
+
+- 10 个模块 `mvn clean compile` 全绿；`stock-ai` 测试 **159 → 168**，
+  `stock-market` 156 / `stock-news` 103 无回归，Prompt 改动未打破任何既有测试。
+- **真实端到端**（Docker 全栈 + 真实通义模型，STOCK 场景 / `sim-600519` / 一题）：
+  - AI-02 预览 `canGenerate=true`，`dataCategories=[QUOTE]`，并如实报出
+    "没有可用资讯，报告将为受限分析"；
+  - AI-03 创建 202 → `QUEUED → RUNNING → COMPLETED`，`attempts=1`、无错误；
+  - `ai_report` 六章节**全部有内容**（核心结论 200 / 量价依据 170 / 对比分析 75 /
+    资讯线索 67 / 风险 260 / 免责声明 53 字符，markdown 888）；
+  - `provider_code=DASHSCOPE`、`model_code=qwen3.8-max-0902`、`prompt_version=p2`、
+    `market_data_cutoff_at=2026-09-22 15:00:00`（真实行情批次）；
+    `quality_status=LIMITED`（无资讯，符合预览预期）；
+  - **思维链未泄漏**：报告正文对 7 个思维链特征串全部零命中；
+  - 报告正文的引用编号全部落在候选集合内（本例只有 1 条证据，正文统一引用 `[1]`）；
+  - 落库链路完整：`ai_context_snapshot` 1 / `ai_task_target` 1 /
+    `ai_message` 2（USER + ASSISTANT）；Redis 事件流 162 条。
+- 模型表现出正确的克制：正文明确写出"涨跌幅字段为 0.0043、换手率为 0.02，
+  **材料未说明其百分比/比例口径，不能擅自换算或推断**"，并把"模拟证券"属性本身
+  列为不确定性来源——与 Prompt 要求的"数据不足时明确说明，不要用估计值填补"一致。
+
+### 不在本轮范围
+
+- **HIS-06 `GET /ai/reports/{reportId}` 仍未实现**，报告正文目前只能从库里查。
+  本轮范围由用户选定为"LLM 接通 + HIS-06"，HIS-06 尚未开工。
+- 重试退避与熔断（Resilience4j）未引入；成本统计（`ai_usage`）仍属 M3-09。
+
+---
+
 ## 2026-09-21 — M3-07 AI 任务编排 + SSE 流式契约（第 9 个模块 `stock-ai-worker`）
 
 ### 新增
