@@ -97,8 +97,8 @@
     复用 M3-06 已立下的口径，不要另写一份过滤）
   - [ ] **HIS-07** `GET /ai/reports/{reportId}/evidence` 证据数组 + `ai_evidence` 落库
     （M3-07 已在快照里固化 `AiEvidenceCandidate` 全集，报告正文的引用编号 `[1]` 目前**无行可反查**）
-  - [ ] **HIS-08** `PUT /ai/reports/{reportId}/feedback` 创建或替换本人唯一反馈 + `ai_feedback` 落库
-  - [ ] **HIS-09** `DELETE /ai/reports/{reportId}/feedback` 删除本人反馈
+  - [x] **HIS-08** `PUT /ai/reports/{reportId}/feedback` 创建或替换本人唯一反馈 + `ai_feedback` 落库 — 已完成，见下方详情
+  - [x] **HIS-09** `DELETE /ai/reports/{reportId}/feedback` 删除本人反馈 — 已完成，见下方详情
 - [ ] **M3-09** P1 AI 配额与用量统计 — 依赖：M3-07
 - [ ] **M3-10** P0 前端 ai 工作台 + history 接真实 API/SSE — 依赖：M3-08
 - [ ] **M3-11** P1 后台 admin 最小集 — 依赖：M3-09
@@ -1459,6 +1459,7 @@ Redis Stream 队列（`stream:ai:tasks`，消费组 `ai-worker`）与事件流
 - [x] M3-07（2026-09-21）
 - [x] LLM-01（2026-09-22）
 - [x] HIS-06（2026-09-22）
+- [x] HIS-08 / HIS-09（2026-09-22）
 
 ---
 
@@ -1565,3 +1566,44 @@ Redis Stream 队列（`stream:ai:tasks`，消费组 `ai-worker`）与事件流
 
 - HIS-01~HIS-05（会话历史与消息）、HIS-07（证据数组）、HIS-08 / HIS-09（反馈）仍属 M3-08。
 - 前端 `/ai` 工作台与 `/history` 仍是静态原型（M3-10）。
+
+---
+
+## HIS-08 / HIS-09 交付详情
+
+**交付范围**：契约 §13.3 的报告反馈两个端点。`ai_feedback` 表自 V6 建立起"结构就绪、无代码引用"，
+本轮接上应用层；同时把 HIS-06 里"如实为 `null`"的 `feedback` 字段变成真实数据。
+**AI 域的报告生命周期自此完整**：生成 → 落库 → 读回 → 用户评价 → 撤销评价。
+
+| 项 | 内容 |
+| --- | --- |
+| HIS-08 | `PUT /api/v1/ai/reports/{reportId}/feedback`（`USER`）——创建或替换本人唯一反馈 |
+| HIS-09 | `DELETE /api/v1/ai/reports/{reportId}/feedback`（`USER`）——返回 `deleted` |
+| 领域层 | `AiFeedback`（含 `MAX_DETAIL_LENGTH`）、`AiFeedbackType`、`AiFeedbackReasonCode`、`AiFeedbackStore` |
+| 持久化 | `AiFeedbackRow` / `AiFeedbackMapper`（`ON DUPLICATE KEY UPDATE`）/ `MyBatisAiFeedbackStore` |
+| 用例层 | `AiFeedbackService`、`AiFeedbackView`、`InvalidAiFeedbackException`（400 `INVALID_REQUEST`） |
+| 装配 | `BackendConfiguration` 两个新 Bean；**`AiWorkerConfiguration` 刻意不加**——worker 不碰反馈 |
+| 测试 | `AiFeedbackServiceTest` 7 项、`AiReportControllerContractTest` 由 6 增至 10 项 |
+
+### 关键取舍
+
+1. **写路径只有 `upsert` 一个动词，且写完必须回读**。撞 `uk_ai_feedback_report_user` 时数据库
+   **保留原 id 与 `created_at`**，本次的自增 id 被丢弃——把入参当结果返回，调用方拿到的
+   `feedbackId` 会指向不存在的行，而前端接下来正要用它去删。单测专门断言"来自重读"。
+2. **`ON DUPLICATE KEY UPDATE` 而非"先查再插改"**：后者并发下两个请求都判为"不存在"，
+   其中一个撞唯一索引报错，而"同一个人连点两次评价"完全正常。刻意不更新 `created_at`。
+3. **`detail` 上限只定义一次**（`AiFeedback.MAX_DETAIL_LENGTH`，与 `ck_ai_feedback_detail` 的 300 对齐）。
+   三处各写一个 300 必然漂移，漂移的表现是"应用层放过、数据库拒绝"。
+4. **空白裁剪、空串按"未提供"**：不让"没填原因"与"填了空原因"在数据里看起来不同。
+5. **重复删除返回 `deleted=false` 而不是 404**（契约该接口的响应字段就是 `deleted`）。
+6. **归属校验复用 `AiReportQueryService.requireOwned`**：写反馈与读报告必须同一条判据，
+   否则分叉成"读不到的报告却能打分"——不会报错的越权。
+7. **业务码用通用 `INVALID_REQUEST`**，不自造 `AI_FEEDBACK_INVALID`：契约未为反馈定义专属码。
+
+### 验证结果
+
+真实端到端 9 项检查全通过（Docker 全栈 + HIS-06 那份真实报告）：
+初始 `null` → PUT 200（`feedbackId` 为字符串）→ HIS-06 一次带回 → **再次提交 `feedbackId` 不变**
+（证明 upsert 语义）→ DELETE `true` → 再删 `false` → 详情回 `null`；
+非法 `feedbackType` / `reasonCode` / 超长 `detail` 均 400；不存在报告 PUT 与 DELETE 均 404；未登录 401。
+单测：`stock-ai` 102 项、`stock-backend` 37 项全绿。

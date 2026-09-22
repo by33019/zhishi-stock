@@ -5,6 +5,7 @@ import cn.zhishi.stock.ai.application.AiTaskErrorCode;
 import cn.zhishi.stock.ai.application.AiTaskException;
 import cn.zhishi.stock.ai.application.AiTaskQuota;
 import cn.zhishi.stock.ai.application.InvalidAiContextQueryException;
+import cn.zhishi.stock.ai.application.InvalidAiFeedbackException;
 import cn.zhishi.stock.ai.application.InvalidAiTargetException;
 import cn.zhishi.stock.common.api.ApiResponse;
 import cn.zhishi.stock.market.application.InvalidKlineParameterException;
@@ -276,6 +277,25 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(InvalidAiContextQueryException.class)
     public ResponseEntity<ApiResponse<Void>> invalidAiContextQuery(
             InvalidAiContextQueryException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.badRequest().body(ApiResponse.failure(
+                exception.code(),
+                exception.getMessage(),
+                null,
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
+    /**
+     * 反馈请求不合法（契约 §HIS-08）。
+     *
+     * <p>与上面两个 AI 校验异常并列而不是合并成一个基类：它们的业务码不同
+     * （{@code AI_TARGET_INVALID} / {@code INVALID_REQUEST}），而业务码是前端决定
+     * "就地提示什么"的依据。合起来会让前端只能拿到一句通用文案。
+     */
+    @ExceptionHandler(InvalidAiFeedbackException.class)
+    public ResponseEntity<ApiResponse<Void>> invalidAiFeedback(
+            InvalidAiFeedbackException exception,
             HttpServletRequest request) {
         return ResponseEntity.badRequest().body(ApiResponse.failure(
                 exception.code(),

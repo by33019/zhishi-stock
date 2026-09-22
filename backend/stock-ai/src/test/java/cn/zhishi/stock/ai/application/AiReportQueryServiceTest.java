@@ -8,6 +8,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import cn.zhishi.stock.ai.domain.AiFeedback;
+import cn.zhishi.stock.ai.domain.AiFeedbackStore;
+import cn.zhishi.stock.ai.domain.AiFeedbackType;
 import cn.zhishi.stock.ai.domain.AiReport;
 import cn.zhishi.stock.ai.domain.AiReportQuality;
 import cn.zhishi.stock.ai.domain.AiReportStore;
@@ -44,8 +47,10 @@ class AiReportQueryServiceTest {
 
     private final AiReportStore reports = mock(AiReportStore.class);
     private final AiTaskStore tasks = mock(AiTaskStore.class);
+    private final AiFeedbackStore feedbacks = mock(AiFeedbackStore.class);
 
-    private final AiReportQueryService service = new AiReportQueryService(reports, tasks);
+    private final AiReportQueryService service =
+            new AiReportQueryService(reports, tasks, feedbacks);
 
     @Test
     @DisplayName("本人报告：六章节、版本标识与数据截止时间逐项投影，ID 为字符串")
@@ -78,12 +83,28 @@ class AiReportQueryServiceTest {
     }
 
     @Test
-    @DisplayName("反馈恒为 null：当前不存在任何写入路径，这是事实而不是默认值")
-    void feedbackIsAlwaysNullUntilFeedbackExists() {
+    @DisplayName("未评价时 feedback 为 null：区分「还没有人评价」与「评价结果是中性」")
+    void feedbackIsNullWhenNotYetRated() {
         when(reports.find(REPORT_ID)).thenReturn(Optional.of(limitedReport()));
         when(tasks.find(TASK_ID)).thenReturn(Optional.of(task(OWNER)));
 
         assertThat(service.get(REPORT_ID, OWNER).feedback()).isNull();
+    }
+
+    @Test
+    @DisplayName("已评价时报告详情一次带回反馈，不需要前端再发一次请求")
+    void reportDetailCarriesOwnFeedback() {
+        when(reports.find(REPORT_ID)).thenReturn(Optional.of(limitedReport()));
+        when(tasks.find(TASK_ID)).thenReturn(Optional.of(task(OWNER)));
+        when(feedbacks.find(REPORT_ID, OWNER)).thenReturn(Optional.of(new AiFeedback(
+                9001L, REPORT_ID, OWNER, AiFeedbackType.NOT_HELPFUL, null, "结论缺少区间数据", GENERATED, GENERATED)));
+
+        var feedback = service.get(REPORT_ID, OWNER).feedback();
+
+        assertThat(feedback).isNotNull();
+        assertThat(feedback.feedbackId()).isEqualTo("9001");
+        assertThat(feedback.feedbackType()).isEqualTo("NOT_HELPFUL");
+        assertThat(feedback.detail()).isEqualTo("结论缺少区间数据");
     }
 
     @Test

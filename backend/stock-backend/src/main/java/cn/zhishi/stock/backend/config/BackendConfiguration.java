@@ -1,6 +1,7 @@
 package cn.zhishi.stock.backend.config;
 
 import cn.zhishi.stock.ai.application.AiContextPreviewService;
+import cn.zhishi.stock.ai.application.AiFeedbackService;
 import cn.zhishi.stock.ai.application.AiReportQueryService;
 import cn.zhishi.stock.ai.application.AiTaskRequestResolver;
 import cn.zhishi.stock.ai.application.AiTargetHydrator;
@@ -9,6 +10,7 @@ import cn.zhishi.stock.ai.application.AiTaskStreamRelay;
 import cn.zhishi.stock.ai.domain.AiContentHasher;
 import cn.zhishi.stock.ai.domain.AiContextBuilder;
 import cn.zhishi.stock.ai.domain.AiContextSnapshotStore;
+import cn.zhishi.stock.ai.domain.AiFeedbackStore;
 import cn.zhishi.stock.ai.domain.AiMessageStore;
 import cn.zhishi.stock.ai.domain.AiReportStore;
 import cn.zhishi.stock.ai.domain.AiSceneCatalog;
@@ -18,11 +20,13 @@ import cn.zhishi.stock.ai.domain.AiTaskQueue;
 import cn.zhishi.stock.ai.domain.AiTaskStore;
 import cn.zhishi.stock.ai.domain.LlmProviderPort;
 import cn.zhishi.stock.ai.infrastructure.AiContextSnapshotMapper;
+import cn.zhishi.stock.ai.infrastructure.AiFeedbackMapper;
 import cn.zhishi.stock.ai.infrastructure.AiMessageMapper;
 import cn.zhishi.stock.ai.infrastructure.AiReportMapper;
 import cn.zhishi.stock.ai.infrastructure.AiSessionMapper;
 import cn.zhishi.stock.ai.infrastructure.AiTaskMapper;
 import cn.zhishi.stock.ai.infrastructure.MyBatisAiContextSnapshotStore;
+import cn.zhishi.stock.ai.infrastructure.MyBatisAiFeedbackStore;
 import cn.zhishi.stock.ai.infrastructure.MyBatisAiMessageStore;
 import cn.zhishi.stock.ai.infrastructure.MyBatisAiReportStore;
 import cn.zhishi.stock.ai.infrastructure.MyBatisAiSessionStore;
@@ -776,13 +780,44 @@ public class BackendConfiguration {
     }
 
     /**
-     * 报告查询用例（HIS-06）。
+     * 报告反馈仓储（{@code ai_feedback}）。
      *
-     * <p>无状态、无外部调用：只读两张表并做一次归属判断，因此不需要独立的配置项。
+     * <p>只有在线侧需要它：写入发生在用户提交反馈时，而 worker 只跑任务、不碰反馈。
+     * 因此这里声明，{@code AiWorkerConfiguration} 不声明——少一个 Bean 就少一处
+     * "哪个进程需要它"的猜测。
      */
     @Bean
-    AiReportQueryService aiReportQueryService(AiReportStore aiReportStore, AiTaskStore aiTaskStore) {
-        return new AiReportQueryService(aiReportStore, aiTaskStore);
+    AiFeedbackStore aiFeedbackStore(AiFeedbackMapper aiFeedbackMapper, Clock clock) {
+        return new MyBatisAiFeedbackStore(aiFeedbackMapper, clock);
+    }
+
+    /**
+     * 报告查询用例（HIS-06）。
+     *
+     * <p>注入反馈仓储是为了让报告详情一次带回"当前用户反馈"——否则前端拿到报告后
+     * 还要再发一次请求才知道自己评过没有，而那次请求的失败会让"未评价"与"查询失败"
+     * 看起来一样。
+     */
+    @Bean
+    AiReportQueryService aiReportQueryService(
+            AiReportStore aiReportStore, AiTaskStore aiTaskStore, AiFeedbackStore aiFeedbackStore) {
+        return new AiReportQueryService(aiReportStore, aiTaskStore, aiFeedbackStore);
+    }
+
+    /**
+     * 反馈用例（HIS-08 / HIS-09）。
+     *
+     * <p>依赖 {@code AiReportQueryService} 而不是自己再写一份归属判据：能写反馈的前提
+     * 与能读报告的前提必须是同一条，各写一份会分叉成"读不到的报告却能打分"。
+     */
+    @Bean
+    AiFeedbackService aiFeedbackService(
+            AiReportQueryService aiReportQueryService,
+            AiFeedbackStore aiFeedbackStore,
+            LongSupplier databaseIdGenerator,
+            Clock clock) {
+        return new AiFeedbackService(
+                aiReportQueryService, aiFeedbackStore, databaseIdGenerator, clock);
     }
 
     /**

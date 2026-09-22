@@ -2,19 +2,25 @@ package cn.zhishi.stock.backend.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.nullValue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import cn.zhishi.stock.ai.application.AiFeedbackService;
+import cn.zhishi.stock.ai.application.AiFeedbackView;
 import cn.zhishi.stock.ai.application.AiReportDetail;
 import cn.zhishi.stock.ai.application.AiReportQueryService;
 import cn.zhishi.stock.ai.application.AiTaskErrorCode;
 import cn.zhishi.stock.ai.application.AiTaskException;
+import cn.zhishi.stock.ai.application.InvalidAiFeedbackException;
 import cn.zhishi.stock.system.auth.AccessTokenPrincipal;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -25,6 +31,7 @@ import java.time.ZoneId;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
 import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -58,6 +65,7 @@ class AiReportControllerContractTest {
             OffsetDateTime.parse("2026-09-22T15:02:00+08:00");
 
     private final AiReportQueryService reports = mock(AiReportQueryService.class);
+    private final AiFeedbackService feedbacks = mock(AiFeedbackService.class);
 
     @Test
     @DisplayName("HIS-06 返回 200，六章节、版本标识、数据截止时间齐备，ID 为字符串")
@@ -163,6 +171,88 @@ class AiReportControllerContractTest {
                 .andExpect(status().isBadRequest());
     }
 
+    // ---------- HIS-08 / HIS-09 ----------
+
+    @Test
+    @DisplayName("HIS-08 PUT 返回 200 与反馈五字段，feedbackId 为字符串")
+    void savesFeedback() throws Exception {
+        when(feedbacks.save(anyLong(), anyLong(), any(), any(), any())).thenReturn(feedbackView());
+
+        mvc().perform(put("/api/v1/ai/reports/" + REPORT_ID + "/feedback")
+                        .principal(authentication())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"feedbackType\":\"NOT_HELPFUL\",\"reasonCode\":\"CITATION_ERROR\","
+                                + "\"detail\":\"引用编号对不上\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.feedbackId").value("9001"))
+                .andExpect(jsonPath("$.data.feedbackType").value("NOT_HELPFUL"))
+                .andExpect(jsonPath("$.data.reasonCode").value("CITATION_ERROR"))
+                .andExpect(jsonPath("$.data.detail").value("引用编号对不上"))
+                .andExpect(jsonPath("$.data.updatedAt").value("2026-09-22T15:03:00+08:00"));
+
+        // 控制器把 token 里的 userId 与 body 三个字段原样透传，不在这里做任何解析。
+        verify(feedbacks).save(
+                Long.parseLong(REPORT_ID), USER_ID, "NOT_HELPFUL", "CITATION_ERROR", "引用编号对不上");
+    }
+
+    @Test
+    @DisplayName("HIS-08 非法 feedbackType → 400，业务码 INVALID_REQUEST")
+    void rejectsUnknownFeedbackType() throws Exception {
+        when(feedbacks.save(anyLong(), anyLong(), any(), any(), any()))
+                .thenThrow(new InvalidAiFeedbackException("不支持的反馈态度：MAYBE"));
+
+        mvc().perform(put("/api/v1/ai/reports/" + REPORT_ID + "/feedback")
+                        .principal(authentication())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"feedbackType\":\"MAYBE\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+    }
+
+    @Test
+    @DisplayName("HIS-09 删除返回 deleted；本来就没有时为 false 而不是 404")
+    void deletesFeedbackIdempotently() throws Exception {
+        when(feedbacks.delete(anyLong(), anyLong())).thenReturn(false);
+
+        mvc().perform(delete("/api/v1/ai/reports/" + REPORT_ID + "/feedback")
+                        .principal(authentication()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.deleted").value(false));
+    }
+
+    @Test
+    @DisplayName("他人的报告：写反馈与删反馈都返回同一句 404，不泄露报告是否存在")
+    void feedbackOnOthersReportIsNotFound() throws Exception {
+        when(feedbacks.save(anyLong(), anyLong(), any(), any(), any()))
+                .thenThrow(AiTaskException.reportNotFound(Long.parseLong(REPORT_ID)));
+        when(feedbacks.delete(anyLong(), anyLong()))
+                .thenThrow(AiTaskException.reportNotFound(Long.parseLong(REPORT_ID)));
+
+        mvc().perform(put("/api/v1/ai/reports/" + REPORT_ID + "/feedback")
+                        .principal(authentication())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"feedbackType\":\"HELPFUL\"}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("AI_REPORT_NOT_FOUND"));
+
+        mvc().perform(delete("/api/v1/ai/reports/" + REPORT_ID + "/feedback")
+                        .principal(authentication()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("AI_REPORT_NOT_FOUND"));
+    }
+
+    private static AiFeedbackView feedbackView() {
+        return new AiFeedbackView(
+                "9001",
+                "NOT_HELPFUL",
+                "CITATION_ERROR",
+                "引用编号对不上",
+                OffsetDateTime.parse("2026-09-22T15:03:00+08:00"));
+    }
+
     private static String codeOf(String body) {
         return fieldOf(body, "code");
     }
@@ -208,7 +298,7 @@ class AiReportControllerContractTest {
         ObjectMapper mapper = Jackson2ObjectMapperBuilder.json()
                 .featuresToDisable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
                 .build();
-        return MockMvcBuilders.standaloneSetup(new AiReportController(reports, CLOCK))
+        return MockMvcBuilders.standaloneSetup(new AiReportController(reports, feedbacks, CLOCK))
                 .setControllerAdvice(new GlobalExceptionHandler(CLOCK))
                 .setMessageConverters(new MappingJackson2HttpMessageConverter(mapper))
                 .addFilters(new TraceIdFilter())

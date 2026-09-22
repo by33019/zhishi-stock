@@ -23,7 +23,7 @@ import java.time.OffsetDateTime;
  * @param marketDataCutoffAt    行情数据截止时刻。必填——报告必须能回答"数据到哪一刻"
  * @param newsDataCutoffAt      资讯数据截止时刻，无资讯时为 {@code null}
  * @param contentSchemaVersion  输出结构版本，与 {@code promptVersion} 一起让历史报告可解释
- * @param feedback              当前用户对这份报告的反馈；见 {@link #from(AiReport)}
+ * @param feedback              当前用户对这份报告的反馈；未评价时为 {@code null}
  */
 public record AiReportDetail(
         String reportId,
@@ -53,30 +53,20 @@ public record AiReportDetail(
         String providerCode,
         String modelCode,
         OffsetDateTime generatedAt,
-        FeedbackView feedback) {
-
-    /**
-     * 用户反馈视图。
-     *
-     * <p>契约 §HIS-08 的反馈有 {@code feedbackType} / {@code reasonCode} / {@code detail} /
-     * {@code updatedAt} 四个字段。此类型先按该形状定义好，是为了让 M3-08 落地反馈时
-     * **只换数据来源、不改响应契约**——现在补一个"以后再说"的字段名，将来会变成破坏性变更。
-     */
-    public record FeedbackView(
-            String feedbackType, String reasonCode, String detail, OffsetDateTime updatedAt) {
-    }
+        AiFeedbackView feedback) {
 
     /**
      * 由聚合投影。
      *
-     * <h2>{@code feedback} 恒为 {@code null}，这是事实而不是偷懒</h2>
-     * 反馈表 {@code ai_feedback} 属 M3-08，尚无任何写入路径（HIS-08 未实现）。
-     * 也就是说**当前不存在任何一份报告有反馈**，返回 {@code null} 是如实陈述。
+     * <p>{@code feedback} 由调用方传入而不是这里去查：查询反馈需要按
+     * {@code (reportId, userId)} 取，而 {@code AiReport} 里没有 {@code userId}
+     * （报告属于谁由任务表决定）。把那次查询藏进投影方法，会让"投影"这个名字
+     * 掩盖一次数据库访问。
      *
-     * <p>刻意**不**填一个"看起来合理"的默认值（如 {@code feedbackType=NONE}）：
-     * 那会让前端无法区分"还没有人评价"与"评价结果是中性"，而这两者对用户的意义不同。
+     * <p>未评价时是 {@code null} 而不是一个 {@code feedbackType=NONE} 的占位：
+     * 前者让前端能区分"还没有人评价"与"评价结果是中性"，而这两者对用户的意义不同。
      */
-    public static AiReportDetail from(AiReport report) {
+    public static AiReportDetail from(AiReport report, AiFeedbackView feedback) {
         return new AiReportDetail(
                 Long.toString(report.reportId()),
                 Long.toString(report.taskId()),
@@ -98,6 +88,6 @@ public record AiReportDetail(
                 report.providerCode(),
                 report.modelCode(),
                 report.generatedAt(),
-                null);
+                feedback);
     }
 }

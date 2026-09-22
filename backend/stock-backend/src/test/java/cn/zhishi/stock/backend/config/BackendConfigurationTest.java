@@ -14,6 +14,7 @@ import cn.zhishi.stock.ai.domain.AiTaskEventStream;
 import cn.zhishi.stock.ai.domain.AiTaskQueue;
 import cn.zhishi.stock.ai.domain.AiTaskStore;
 import cn.zhishi.stock.ai.infrastructure.AiContextSnapshotMapper;
+import cn.zhishi.stock.ai.infrastructure.AiFeedbackMapper;
 import cn.zhishi.stock.ai.infrastructure.AiMessageMapper;
 import cn.zhishi.stock.ai.infrastructure.AiReportMapper;
 import cn.zhishi.stock.ai.infrastructure.AiSessionMapper;
@@ -71,6 +72,7 @@ class BackendConfigurationTest {
         .withBean(AiSessionMapper.class, () -> mock(AiSessionMapper.class))
         .withBean(AiMessageMapper.class, () -> mock(AiMessageMapper.class))
         .withBean(AiReportMapper.class, () -> mock(AiReportMapper.class))
+        .withBean(AiFeedbackMapper.class, () -> mock(AiFeedbackMapper.class))
         .withBean(AiContextSnapshotMapper.class, () -> mock(AiContextSnapshotMapper.class))
         .withBean(StringRedisTemplate.class, () -> mock(StringRedisTemplate.class))
         .withBean(JdbcTemplate.class, () -> mock(JdbcTemplate.class))
