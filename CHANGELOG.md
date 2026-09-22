@@ -102,6 +102,19 @@ M3-08 的最后一个端点。`ai_evidence` 表自 V6 起结构就绪，但**零
   （`AiWorkspacePage.test.ts` 由 7 增至 **12** 项：编号用 `evidenceNo` 而非下标、
   无链接时不渲染链接、外链带 `noopener noreferrer`、加载失败可重试且不冒充"没有引用"、
   报告确无引用时明确说明、未提交时不请求接口）。
+- **真实端到端验收 14/14 通过**（重建 api / ai-worker / frontend 三个镜像后，
+  打运行中的容器实测）：提交一次真实分析 → 模型生成 → 报告落库 → 证据落库 → 端点回传。
+  实测要点：
+  - 不存在的 `reportId` → `404 AI_REPORT_NOT_FOUND`（**不是空数组**）。
+  - `GET /ai/reports/{id}/evidence` 返回的字段**恰好**是契约的 8 个，
+    内部代理键（`evidenceId` / `reportId` / `contextSnapshotId` / `sourceObjectId` /
+    `contentHash`）一个都没外发。
+  - 报告正文里的引用编号 `[1]` 与证据行的 `evidenceNo=1` **对得上**，
+    且摘要内容与正文一致（`最新价 13.96，涨跌 0.06（0.0043），成交量 105161711 股…`）。
+  - `?evidenceType=quote`（小写）只回 `QUOTE`；`?evidenceType=NEWW` → `400 INVALID_REQUEST`
+    「不支持的证据类型：NEWW」。
+  - 直接查库：`ai_evidence` 1 行，`context_snapshot_id` 为 `NULL`（如设计），
+    `data_time=2026-09-22 15:00:00`（行情截止时刻），`content_hash` 已写。
 
 ### 未覆盖
 
@@ -109,7 +122,8 @@ M3-08 的最后一个端点。`ai_evidence` 表自 V6 起结构就绪，但**零
   但**没有说明它的触发条件**；而"授权受限"在数据模型里已经是**行级**状态
   （`ai_evidence.access_status = RESTRICTED`），HIS-07 靠它逐条表达。
   为它编一个触发条件就是伪造契约。需要时应在契约里补上语义再实现。
-- 浏览器级验收仍未覆盖 `/ai` 的真实提交流程与引用栏渲染。
+- 前端引用栏的**浏览器级**验收（真实点击、真实渲染）仍未做；本轮端到端走的是 HTTP 接口层。
+  引用栏本身由 5 项单测覆盖。
 
 ---
 
