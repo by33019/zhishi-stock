@@ -15,6 +15,12 @@ services:
       retries: 30
     volumes:
       - mysql-data:/var/lib/mysql
+    # 暴露 MySQL 到宿主机，供 Navicat 等本地客户端直连调试。
+    # 刻意绑定 127.0.0.1 而不是 0.0.0.0：容器内 stock-api / stock-job / stock-ai-worker
+    # 都走服务名（mysql:3306）通信，不依赖这个映射；它只为本地调试客户端存在，
+    # 没有理由监听局域网。若确需从其他机器连接，再把 127.0.0.1 改掉。
+    ports:
+      - "127.0.0.1:${MYSQL_PORT:-3306}:3306"
 
   redis:
     image: redis:8.2-alpine

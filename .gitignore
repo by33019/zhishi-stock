@@ -38,3 +38,4 @@ output/
 
 # AI 协作工具的本地记忆与技能缓存（不随仓库分发）
 .workbuddy-ai/
+.workbuddy/
