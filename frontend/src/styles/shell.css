@@ -45,24 +45,17 @@
 .brand__mark {
   width: 38px;
   height: 38px;
-  display: flex;
-  align-items: flex-end;
-  gap: 3px;
-  padding: 8px;
-  border: 1px solid rgba(245, 229, 196, 0.45);
-  border-radius: 50%;
-}
-
-.brand__mark i {
+  /* 图标本身是圆角方形（原图圆角约占边长 22%），用 50% 会把图上的金色圆环切掉。 */
+  border-radius: 9px;
+  /* 侧栏底色与图标底色同为深绿，留一圈极淡的金边把两者分开——
+     沿用原来这个类"金色描边"的视觉语言，而不是新造一种。 */
+  border: 1px solid rgba(245, 229, 196, 0.28);
+  /* 显式声明：宽度含边框，否则 38px + 1px 边框会撑成 40px。 */
+  box-sizing: border-box;
+  object-fit: cover;
   display: block;
-  width: 5px;
-  background: var(--gold);
-  border-radius: 1px 1px 0 0;
+  flex: none;
 }
-
-.brand__mark i:nth-child(1) { height: 9px; }
-.brand__mark i:nth-child(2) { height: 18px; }
-.brand__mark i:nth-child(3) { height: 13px; }
 
 .brand strong {
   display: block;
