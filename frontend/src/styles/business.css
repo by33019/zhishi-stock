@@ -821,6 +821,25 @@
   color: var(--down);
 }
 
+/* 数据缺口提示。用 warn 而不是 error：它描述的是"这次分析会受限"，
+   而不是"操作失败"——两者在界面上的分量不同。 */
+.state-note--warn {
+  color: #9c5b24;
+}
+
+.target-candidates {
+  margin: 6px 0;
+  padding-left: 18px;
+  font-size: var(--text-caption);
+}
+
+.selected-target {
+  margin: 6px 0;
+  color: var(--ink);
+  font-size: var(--text-caption);
+  font-weight: 700;
+}
+
 .history-pager {
   display: flex;
   gap: 8px;

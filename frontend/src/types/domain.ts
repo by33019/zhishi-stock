@@ -863,3 +863,96 @@ export interface AiSessionDeletion {
   deleted: boolean
   purgeAfter: string
 }
+
+// ---------------------------------------------------------------------------
+// AI 研究与任务（契约 §13.1 AI-01 / AI-02 / §13.2 AI-03 / AI-04、§13.3 HIS-06）
+// ---------------------------------------------------------------------------
+
+/**
+ * AI-01 的场景定义。
+ *
+ * 界面上的场景清单、可接受的标的类型、标的数量上下限、问题长度上限**全部来自这里**，
+ * 前端不硬编码——服务端加一个场景，界面自动多一个选项。
+ */
+export interface AiSceneDefinition {
+  scene: AiScene
+  name: string
+  description: string
+  allowedTargetTypes: string[]
+  minTargets: number
+  maxTargets: number
+  defaultRange: { presets: string[]; defaultPreset: string; maxCustomDays: number }
+  questionMaxLength: number
+}
+
+/**
+ * AI-02 的上下文预览。
+ *
+ * @param canGenerate   核心行情是否齐备；为 `false` 时服务端会在创建任务时拒绝，
+ *   界面应据此禁用提交而不是让用户白跑一次
+ * @param dataCategories 实际取到的数据类别与各自的截止时间。**只列取到的**——
+ *   为未接入的类别补一个"看起来合法的截止时间"就是编造
+ * @param limitations   数据缺口。与报告里的 `limitedReason` 同源，提前展示能避免
+ *   "为什么我的报告标着受限"这种事后疑问
+ */
+export interface AiContextPreview {
+  targets: AiContextTarget[]
+  canGenerate: boolean
+  dataCategories: { category: string; dataCutoffAt: string | null }[]
+  newsCount: number
+  limitations: string[]
+}
+
+/** AI-03 的配额视图（契约 §13.5）。 */
+export interface AiTaskQuota {
+  dailyLimit: number
+  usedCount: number
+  remainingCount: number
+  runningCount: number
+  concurrentLimit: number
+  resetsAt: string
+}
+
+/** AI-03 的响应（HTTP 202）。`streamUrl` 是 SSE 入口，本轮界面走轮询，不用它。 */
+export interface AiTaskAccepted {
+  task: AiTaskSummary
+  statusUrl: string
+  streamUrl: string
+  quota: AiTaskQuota
+}
+
+/**
+ * HIS-06 的报告正文。
+ *
+ * 契约 §HIS-05 那两条给不出的字段（`contentFormat` / `status`）在这里同样不存在，
+ * 原因一致：表里没有那两列，服务端刻意不编造。
+ */
+export interface AiReportDetail {
+  reportId: string
+  taskId: string
+  sessionId: string
+  coreConclusion: string
+  quoteEvidence: string
+  comparisonAnalysis: string | null
+  eventClues: string | null
+  riskAndUncertainty: string
+  disclaimer: string
+  renderedMarkdown: string
+  qualityStatus: string
+  isLimited: boolean
+  limitedReason: string | null
+  marketDataCutoffAt: string
+  newsDataCutoffAt: string | null
+  contentSchemaVersion: string
+  promptVersion: string
+  providerCode: string
+  modelCode: string
+  generatedAt: string
+  feedback: {
+    feedbackId: string
+    feedbackType: string
+    reasonCode: string | null
+    detail: string | null
+    updatedAt: string
+  } | null
+}

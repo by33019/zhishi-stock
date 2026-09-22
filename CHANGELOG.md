@@ -23,6 +23,67 @@
 
 ---
 
+## 2026-09-22 — M3-10（续）：AI 研究工作台接真实接口
+
+`/ai` 此前是纯静态原型：写死的场景下拉、写死的标的「浦发银行 SH.600000」、写死的
+「今日剩余 18 次分析」、写死的"已纳入实时行情与授权资讯"，以及一个 180 毫秒后塞进一份
+**编造报告**的 `generateReport()`。现在改为真实流程：**选场景 → 检索标的 → 预览数据 →
+提交 → 轮询 → 渲染报告**。
+
+### 新增
+
+- `services/aiApi.ts`：AI-01 `getScenes`、AI-02 `previewContext`、AI-03 `createTask`、
+  AI-04 `getTask`、HIS-06 `getReport`。
+- `types/domain.ts` 新增 `AiSceneDefinition` / `AiContextPreview` / `AiTaskQuota` /
+  `AiTaskAccepted` / `AiReportDetail`。
+- `AiWorkspacePage.test.ts` 由 1 项（断言原型行为）重写为 **7** 项；
+  `business.css` 新增 `.target-candidates` / `.selected-target` / `.state-note--warn`。
+
+### 本轮范围与边界（都在界面上有交代，不留"点了没反应"的入口）
+
+| 边界 | 处置 |
+| --- | --- |
+| **走轮询而非 SSE** | AI-04 已能表达"排队中 / 运行中 / 已完成"；SSE 要额外维护断线重连与 `Last-Event-ID` 续传，属独立增量。轮询有 180 秒墙钟上限，不会一直转圈 |
+| **只支持单标的场景** | 证券走 STK-01 检索；市场用契约文档写明的对外标识 `CN`。板块与多标的对比需要各自的检索与多选交互，**界面直接说明并不给提交入口** |
+| 取消 / 重试 / 追问（AI-06/07/08） | 未接入 |
+| 来源引用（HIS-07） | 引用区**如实说明尚未交付**，并删掉原型里那份写死的 evidence 数组——一份看起来可靠的来源列表比留空更糟 |
+
+### 关键设计取舍
+
+1. **配额只来自 AI-03 的响应**。原型那句"今日剩余 18 次分析"没有任何来源；提交前没有
+   权威口径就不显示，提交后用服务端返回的 `remainingCount / dailyLimit`。
+2. **`limitations` 必须提前展示**。它与报告里的 `limitedReason` 同源——先说清楚
+   "这次分析会因为缺资讯而受限"，比事后在报告上看到一个 LIMITED 标记友好得多。
+3. **`canGenerate=false` 时禁用提交**：服务端本来就会拒绝，界面据此提前拦下，
+   不让用户白跑一次。
+4. **核心行情缺失与"数据缺口"用不同样式**：前者是"不能做"，后者是"能做但受限"，
+   在界面上的分量不同。
+5. **`Idempotency-Key` 由页面生成**：键的语义是"一次用户意图"，只有页面知道
+   "重试复用、换目标换新键"。
+
+### 测试查出的两个真实缺陷（都已修）
+
+1. **忘了在挂载时加载场景**：`useRemoteData` 只提供 `reload`、不会自动执行，
+   漏掉 `onMounted(reloadScenes)` 会让页面永远停在"正在加载可用场景…"。
+   界面上表现为空白页，而单元测试直接报出 `getScenes` 调用 0 次。
+2. **`SecuritySummary` 的字段名猜错**：真实字段是 `securityCode` / `securityName`
+   （不是 `code` / `name`），`SecuritySearchResult` 也只有 `items`。
+   类型检查拦住了。
+
+### 验证
+
+- `npm run typecheck` 0 错误；`npm run build` 成功（`AiWorkspacePage` 8.07 → **9.85 kB**）；
+  前端 **21 文件 / 167 项**测试全绿（新增 6 项：场景来自 AI-01、预览与缺口展示、
+  提交轮询到完成并渲染六章节、`canGenerate=false` 禁用提交、不支持场景不给入口、
+  提交失败不显示编造报告、引用区如实说明 HIS-07）。
+
+### 未覆盖
+
+- **浏览器级验收尚未覆盖 `/ai` 的真实提交流程**（单元测试覆盖了流程，但没有真实浏览器跑）。
+  跑一次要等模型真实生成（历史实测约 90 秒），且会消耗当日额度。
+
+---
+
 ## 2026-09-22 — M3-10（续）：`/history` 接入改名、收藏与删除
 
 后端 HIS-03 / HIS-04 就绪后，把 `/history` 详情区的三个写操作接上。
