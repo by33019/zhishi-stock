@@ -1,6 +1,7 @@
 package cn.zhishi.stock.backend.config;
 
 import cn.zhishi.stock.ai.application.AiContextPreviewService;
+import cn.zhishi.stock.ai.application.AiReportQueryService;
 import cn.zhishi.stock.ai.application.AiTaskRequestResolver;
 import cn.zhishi.stock.ai.application.AiTargetHydrator;
 import cn.zhishi.stock.ai.application.AiTaskService;
@@ -772,6 +773,16 @@ public class BackendConfiguration {
             thread.setDaemon(true);
             return thread;
         });
+    }
+
+    /**
+     * 报告查询用例（HIS-06）。
+     *
+     * <p>无状态、无外部调用：只读两张表并做一次归属判断，因此不需要独立的配置项。
+     */
+    @Bean
+    AiReportQueryService aiReportQueryService(AiReportStore aiReportStore, AiTaskStore aiTaskStore) {
+        return new AiReportQueryService(aiReportStore, aiTaskStore);
     }
 
     /**

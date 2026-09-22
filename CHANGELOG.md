@@ -23,6 +23,62 @@
 
 ---
 
+## 2026-09-22 — HIS-06 报告读接口（AI 域「生成 → 落库 → 读回」闭环完成）
+
+### 新增
+
+- **HIS-06 `GET /api/v1/ai/reports/{reportId}`**（`USER`）：返回本人结构化最终报告
+  —— 六章节正文 + `renderedMarkdown`、`qualityStatus` / `isLimited` / `limitedReason`、
+  行情与资讯数据截止时间、`promptVersion` / `contentSchemaVersion` / `providerCode` / `modelCode`、
+  `generatedAt`，以及当前用户反馈字段。
+- `stock-ai/application/AiReportDetail`：HIS-06 响应体。六章节**平铺**且与 `renderedMarkdown`
+  同时返回——前者是事实，后者是渲染结果，前端按章节渲染、导出按 Markdown 渲染，
+  两条路径都需要；只给其中一个会逼调用方自己拼另一半，而自己拼的那份顺序必然与后端分叉。
+- `stock-ai/application/AiReportQueryService`：查询用例 + 归属校验。
+- `stock-backend/web/AiReportController`：单独一个控制器，而不是并进 `AiTaskController`。
+- 测试：`AiReportQueryServiceTest` 6 项、`AiReportControllerContractTest` 6 项。
+
+### 修复
+
+- **`AiReportDetail.limited` 的 JSON 名与契约不一致**：record 的 JSON 名取自**组件名**，
+  不像普通 bean 那样会把 `isXxx()` 的 `is` 前缀剥掉，因此不处理时响应里是 `limited`，
+  而契约 §HIS-06 写的是 `isLimited`——前端按契约取值会永远拿到 `undefined`。
+  已加 `@JsonProperty("isLimited")` 显式对齐（同 M2-01 的 `MarketStatus` 对 `isTradingDay` 的处置）。
+  **这条是契约测试查出来的**，不是事后 review 发现的。
+
+### 关键设计取舍
+
+- **三种"拿不到"共用同一个 404**：报告不存在、报告属于别人、任务失败因而没有报告
+  （契约 §HIS-06 明写"失败任务不存在报告资源"）——三者返回同一句 `AI_REPORT_NOT_FOUND`。
+  可区分它们就等于提供了一个探测他人报告 ID 是否有效的接口（契约 §23.1）。
+  测试断言的不是"抛了异常"，而是**同一 ID 下两种情形的业务码与文案逐字相同**。
+- **错误文案回显 reportId 不构成泄漏**：文案里会带上调用方请求的那个 ID，
+  因此不同 ID 的"不存在"文案天然不同——ID 本来就是调用方自己传的。
+  真正的泄漏只会是"存在但无权"与"不存在"在**同一 ID** 下可区分。
+- **`feedback` 恒为 `null` 是事实而不是偷懒**：反馈表 `ai_feedback` 属 M3-08，
+  尚无任何写入路径，即当前不存在任何一份报告有反馈。刻意**不**填
+  `feedbackType=NONE` 之类的默认值——那会让前端无法区分"还没有人评价"与"评价结果是中性"。
+  类型已按契约 §HIS-08 的四字段形状（`feedbackType` / `reasonCode` / `detail` / `updatedAt`）
+  定义好，M3-08 落地时**只换数据来源、不改响应契约**。
+- **不需要 `Idempotency-Key`**：纯读接口重复请求本就应返回同样结果，不存在重复消耗。
+  契约只给写接口要求幂等键，这里是照它执行而不是顺手加上。
+- **归属校验走任务表**：`ai_report` 里没有 `user_id`，报告属于谁由
+  `ai_report.task_id → ai_task.user_id` 决定。把 `user_id` 冗余进报告表会多出第二份
+  "谁是主人"的定义，而两份定义分叉时泄露的是别人的研究结论。
+
+### 验证
+
+- 全量后端测试套件通过；新增 12 项测试全绿，`BackendConfigurationTest`（新增 Bean 的装配断言）
+  无回归。
+
+### 不在本轮范围
+
+- HIS-01~HIS-05（会话历史与消息）、HIS-07（证据数组）、HIS-08 / HIS-09（反馈增删）
+  仍属 M3-08，尚未开工。
+- 前端 `/ai` 工作台与 `/history` 仍是静态原型（M3-10）。
+
+---
+
 ## 2026-09-22 — 接入真实大模型（通义 DashScope）：LlmProviderPort 有了第二个实现
 
 ### 新增

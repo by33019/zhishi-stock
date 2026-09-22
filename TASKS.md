@@ -85,10 +85,32 @@
 - [x] **M3-06** P0 AI Provider 抽象 + 确定性模拟实现 — 已完成，见下方详情
 - [x] **M3-07** P0 AI 任务编排 + SSE 流式契约（V6 表） — 已完成，见下方详情
 - [ ] **M3-08** P0 AI 报告/证据/反馈持久化 — 依赖：M3-07
+  > 契约 §13.3 定义的是 **HIS-01~HIS-09 共 9 个端点**，此前任务清单只有一句
+  > "AI 报告/证据/反馈持久化"，看不出这 9 个端点分别是什么。范围映射只存在于
+  > spec 附录里，按"小任务"估工必然中途发现做不完。故在此显式列出。
+  - [x] **HIS-06** `GET /ai/reports/{reportId}` 报告读接口 — 已完成，见下方详情
+  - [ ] **HIS-01** `GET /ai/sessions` 会话历史分页（`scene` / `keyword` / `favorite` / 时间范围）
+  - [ ] **HIS-02** `GET /ai/sessions/{sessionId}` 会话详情
+  - [ ] **HIS-03** `PATCH /ai/sessions/{sessionId}` 重命名 / 收藏（需 `If-Match`，标题 1~60 字符）
+  - [ ] **HIS-04** `DELETE /ai/sessions/{sessionId}` 软删（需 `If-Match`，默认 30 天后物理清理）
+  - [ ] **HIS-05** `GET /ai/sessions/{sessionId}/messages` 消息分页（**不得返回 `SYSTEM` 内部 Prompt**，
+    复用 M3-06 已立下的口径，不要另写一份过滤）
+  - [ ] **HIS-07** `GET /ai/reports/{reportId}/evidence` 证据数组 + `ai_evidence` 落库
+    （M3-07 已在快照里固化 `AiEvidenceCandidate` 全集，报告正文的引用编号 `[1]` 目前**无行可反查**）
+  - [ ] **HIS-08** `PUT /ai/reports/{reportId}/feedback` 创建或替换本人唯一反馈 + `ai_feedback` 落库
+  - [ ] **HIS-09** `DELETE /ai/reports/{reportId}/feedback` 删除本人反馈
 - [ ] **M3-09** P1 AI 配额与用量统计 — 依赖：M3-07
 - [ ] **M3-10** P0 前端 ai 工作台 + history 接真实 API/SSE — 依赖：M3-08
 - [ ] **M3-11** P1 后台 admin 最小集 — 依赖：M3-09
 - [ ] **M3-12** P1 热点榜单 Excel 导出 — 依赖：M2-06
+
+## M3 之外：真实 LLM Provider 接入
+
+- [x] **LLM-01** P0 `LlmProviderPort` 的真实实现（OpenAI 兼容协议 / 通义 DashScope）— 已完成，见下方详情
+  - 这是路线图「阻塞项」里"真实行情/资讯/LLM Provider 未就位"三件中的一件；
+    与 M2-* 的模拟 Provider 不同，它**必须先于**前端 AI 工作台（M3-10）落地——
+    否则 M3-10 接上的是一个只会产出占位正文的接口。
+  - 仍待用户确认：AI 输出的合规口径（是否对外发布）、真实行情源与资讯源（另两件阻塞项）。
 
 ---
 
@@ -1435,3 +1457,111 @@ Redis Stream 队列（`stream:ai:tasks`，消费组 `ai-worker`）与事件流
 - [x] M3-05（2026-09-20）
 - [x] M3-06（2026-09-20）
 - [x] M3-07（2026-09-21）
+- [x] LLM-01（2026-09-22）
+- [x] HIS-06（2026-09-22）
+
+---
+
+## LLM-01 交付详情
+
+**交付范围**：`LlmProviderPort` 的真实实现（架构 §11.3：「由 `stock-integration` 实现，可替换供应商」）。
+
+| 项 | 内容 |
+| --- | --- |
+| 实现类 | `stock-integration/ai/OpenAiCompatibleLlmProvider`——按 **OpenAI 协议**而不是按供应商实现；换供应商通常只改 `base-url` + `model-code` 两个配置项 |
+| HTTP 客户端 | JDK 自带 `HttpClient`，**零新增 HTTP 依赖**（架构 §12 提到的 WebClient / Resilience4j 仍未引入） |
+| 装配 | `LlmProviderFactory` 唯一装配点，`stock-backend` 与 `stock-ai-worker` 共用；分开写两份会让两个进程选了不同实现 |
+| 配置 | `stock.ai.llm-mode` / `base-url` / `api-key` / `llm-timeout-seconds`（api 与 worker 两侧）+ `compose.yaml` 共享环境锚点的 8 个 `AI_*` 变量 |
+| 章节切分 | `stock-ai/domain/AiSectionMarker`（标记格式唯一定义处）+ `AiSectionSplitter`（有状态流式切分）；Prompt 同步升到 `p2` |
+| 测试 | `AiSectionSplitterTest` 9 项（含逐字符喂入覆盖所有分片边界） |
+
+### 关键取舍
+
+1. **只取 `delta.content`**。实测 `qwen3.8-max-0902` 是**推理模型**，delta 有 `content` 与
+   `reasoning_content` 两条通道且文本完全不同；混入思维链会让思维链里随机的 `[数字]`
+   被定稿校验器判成越界引用、整份输出被拒，而正文本身合规——这类失败**只在偶发任务上出现**。
+2. **`llm-mode` 显式开关、缺省 `SIMULATED`**。CI 无密钥必须能跑完测试；而显式要求
+   `OPENAI_COMPATIBLE` 却缺密钥时**启动即失败**，不静默回落（回落会产出带着真实证据编号、
+   读起来与真报告无异的占位文本）。
+3. **`task-deadline-seconds` 60 → 180**。实测真实推理模型从建任务到首段耗时约 **88 秒**，
+   60 秒会把正常任务判 `TIMED_OUT`。必须大于 `llm-timeout-seconds`（120）。
+   该值由在线侧建任务时写进 `ai_task.deadline_at`，worker 只做比较
+   （`BackendConfiguration` 是唯一读取处，`AiWorkerConfiguration` 并不读它）。
+4. **`max_tokens` 被推理过程耗尽是一个真实故障模式**：适配器在"一个片段都没切出来且
+   思维链非空"时抛 `AI_OUTPUT_TRUNCATED`，与"模型没输出标记"（`AI_SECTION_MARKERS_MISSING`）
+   分开报——前者调大 token 才有用，后者要改 Prompt 或换模型。
+
+### 验证结果
+
+- 10 模块 `mvn clean compile` 全绿；`stock-ai` 测试 159 → 168，market 156 / news 103 无回归。
+- **真实端到端**（Docker 全栈 + 真实通义模型，STOCK 场景 / `sim-600519`）：
+  预览 `canGenerate=true` 且如实报出"没有可用资讯，报告将为受限分析"；
+  任务 `QUEUED → RUNNING → COMPLETED`，`attempts=1`、无错误；
+  `ai_report` 六章节全部有内容（核心 200 / 量价 170 / 对比 75 / 资讯 67 / 风险 260 /
+  免责 53 字符，markdown 888）；`provider_code=DASHSCOPE`、`model_code=qwen3.8-max-0902`、
+  `prompt_version=p2`、`market_data_cutoff_at=2026-09-22 15:00:00`、`quality_status=LIMITED`；
+  **思维链未泄漏**（正文对 7 个特征串零命中）；引用编号全部落在候选集合内；
+  落库链路完整（`ai_context_snapshot` 1 / `ai_task_target` 1 / `ai_message` 2 / Redis 事件流 162 条）。
+- 模型表现出正确的克制：正文写出"涨跌幅字段为 0.0043、换手率为 0.02，**材料未说明其
+  百分比/比例口径，不能擅自换算或推断**"，并把"模拟证券"属性列为不确定性来源。
+
+### 顺带修复（`backend/Dockerfile`）
+
+镜像构建此前因已知环境故障（容器网络约 3% 偶发中断）反复失败。两个可根治的放大器：
+
+1. `-DskipTests` 仍会**解析并下载**整个 test 作用域（spring-boot-test / junit / mockito /
+   assertj / testcontainers / byte-buddy 9MB…），运行时镜像一个都用不到 → 改
+   `-Dmaven.test.skip=true`。
+2. 三个镜像各自跑一次完整 `mvn package`、各自下载整棵依赖树，等于把失败概率放大三倍 →
+   加 BuildKit 缓存挂载 `--mount=type=cache,target=/root/.m2,sharing=locked`
+   （`sharing=locked` 必需：并发写同一 local repo 会留下半截构件，那种报错与网络中断难以区分）。
+
+实测：改造前 6 分钟失败，改造后 **3 分 49 秒成功**；失败的下载不进构建层但进缓存挂载，
+因此重试是**增量**的，与前端 npm 的做法一致。
+
+### 不在本轮范围
+
+- 重试退避与熔断（Resilience4j）未引入；成本统计（`ai_usage`）属 M3-09。
+
+---
+
+## HIS-06 交付详情
+
+**交付范围**：契约 §13.3 的 `GET /api/v1/ai/reports/{reportId}`（`USER`）。AI 域自此形成
+「生成 → 落库 → 读回」的完整闭环——此前 `ai_report` 有真实行，但**没有任何接口能把正文读出来**。
+
+| 项 | 内容 |
+| --- | --- |
+| 接口 | `GET /api/v1/ai/reports/{reportId}`（`USER`，**不需要** `Idempotency-Key`——纯读接口） |
+| 响应字段 | 六章节正文 + `renderedMarkdown`、`qualityStatus` / `isLimited` / `limitedReason`、`marketDataCutoffAt` / `newsDataCutoffAt`、`contentSchemaVersion` / `promptVersion` / `providerCode` / `modelCode`、`generatedAt`、`feedback` |
+| 用例层 | `AiReportQueryService.get(reportId, userId)`——归属校验走 `ai_report.task_id → ai_task.user_id` |
+| Web 层 | `AiReportController`（单独控制器，为 M3-08 的 HIS-07/08/09 预留位置） |
+| 业务码 | 新增 `REPORT_NOT_FOUND`（`AI_REPORT_NOT_FOUND`，404）；`GlobalExceptionHandler` 的通用 `AiTaskException` 处理器自动覆盖，无需改 handler |
+| 测试 | `AiReportQueryServiceTest` 6 项、`AiReportControllerContractTest` 6 项 |
+
+### 关键取舍
+
+1. **三种"拿不到"共用同一个 404**：不存在 / 属于别人 / 任务失败因而无报告
+   （契约 §HIS-06 明写"失败任务不存在报告资源"）。可区分它们就等于提供了探测他人
+   报告 ID 的接口（契约 §23.1）。测试断言**同一 ID 下两种情形的业务码与文案逐字相同**。
+2. **错误文案回显 `reportId` 不构成泄漏**：文案会带上调用方请求的那个 ID，因此不同 ID 的
+   "不存在"文案天然不同——ID 本就是调用方自己传的。真正的泄漏只会是**同一 ID** 下
+   "存在但无权"与"不存在"可区分。
+3. **`feedback` 恒为 `null` 是事实**：`ai_feedback` 属 M3-08，尚无写入路径，即当前不存在
+   任何有反馈的报告。刻意不填 `feedbackType=NONE` 之类的默认值——那会让前端无法区分
+   "还没有人评价"与"评价结果是中性"。类型已按契约 §HIS-08 的四字段形状定义好，
+   M3-08 落地时只换数据来源、不改响应契约。
+4. **归属校验不冗余 `user_id`**：把 `user_id` 冗余进 `ai_report` 会多出第二份"谁是主人"的
+   定义，两份分叉时泄露的是别人的研究结论。
+
+### 修复
+
+- **`AiReportDetail.limited` 的 JSON 名与契约不一致**：record 的 JSON 名取自**组件名**，
+  不像普通 bean 那样剥掉 `isXxx()` 的 `is` 前缀，因此响应里是 `limited`，而契约 §HIS-06
+  写的是 `isLimited`——前端按契约取值会永远拿到 `undefined`。已加 `@JsonProperty("isLimited")`
+  对齐（同 M2-01 的 `MarketStatus` 对 `isTradingDay` 的处置）。**这条是契约测试查出来的。**
+
+### 不在本轮范围
+
+- HIS-01~HIS-05（会话历史与消息）、HIS-07（证据数组）、HIS-08 / HIS-09（反馈）仍属 M3-08。
+- 前端 `/ai` 工作台与 `/history` 仍是静态原型（M3-10）。

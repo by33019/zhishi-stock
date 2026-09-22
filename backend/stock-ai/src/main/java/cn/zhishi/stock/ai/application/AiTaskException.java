@@ -27,4 +27,14 @@ public class AiTaskException extends RuntimeException {
     public static AiTaskException sessionNotFound(long sessionId) {
         return new AiTaskException(AiTaskErrorCode.SESSION_NOT_FOUND, "AI 会话不存在：" + sessionId);
     }
+
+    /**
+     * 报告不存在、不属于当前用户，或该任务失败因而没有报告资源。
+     *
+     * <p>三种情况共用同一句话与同一个业务码：只要让"存在但无权查看"与"不存在"
+     * 在响应上可区分，就等于提供了一个探测他人报告 ID 是否有效的接口（契约 §23.1）。
+     */
+    public static AiTaskException reportNotFound(long reportId) {
+        return new AiTaskException(AiTaskErrorCode.REPORT_NOT_FOUND, "AI 报告不存在：" + reportId);
+    }
 }

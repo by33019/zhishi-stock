@@ -29,6 +29,14 @@ public enum AiTaskErrorCode {
     CORE_DATA_MISSING("AI_CORE_DATA_MISSING", 503),
     /** 会话不存在，或不属于当前用户。 */
     SESSION_NOT_FOUND("AI_SESSION_NOT_FOUND", 404),
+    /**
+     * 报告不存在，或不属于当前用户。
+     *
+     * <p>也与"任务失败因此没有报告资源"共用同一码：契约 §HIS-06 明写"失败任务不存在报告资源"。
+     * 为失败任务单独给一个码，等于告诉调用方"这个任务存在但失败了"——
+     * 而调用方本来只需知道"拿不到报告"。
+     */
+    REPORT_NOT_FOUND("AI_REPORT_NOT_FOUND", 404),
     /** 会话已不是 {@code ACTIVE}（追问要求活动会话）。 */
     SESSION_READ_ONLY("AI_SESSION_READ_ONLY", 409);
 
