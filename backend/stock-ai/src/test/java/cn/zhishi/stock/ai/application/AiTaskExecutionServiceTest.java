@@ -729,6 +729,18 @@ class AiTaskExecutionServiceTest {
         public int countBySession(long sessionId) {
             return rows.size();
         }
+
+        /* HIS-05 的可见消息查询本类用不到。刻意抛异常而不是返回空列表——
+         * 空列表可能让一个本该失败的断言因为"没有消息"而通过。 */
+        @Override
+        public List<AiMessage> listVisible(long sessionId, int offset, int limit) {
+            throw new UnsupportedOperationException("本测试不覆盖会话消息查询");
+        }
+
+        @Override
+        public int countVisible(long sessionId) {
+            throw new UnsupportedOperationException("本测试不覆盖会话消息查询");
+        }
     }
 
     private static final class InMemoryReportStore implements AiReportStore {

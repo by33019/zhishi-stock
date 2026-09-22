@@ -1,10 +1,13 @@
 package cn.zhishi.stock.ai.infrastructure;
 
 import cn.zhishi.stock.ai.domain.AiSession;
+import cn.zhishi.stock.ai.domain.AiSessionQuery;
 import cn.zhishi.stock.ai.domain.AiSessionStore;
+import cn.zhishi.stock.ai.domain.AiSessionSummary;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 
 /** {@link AiSessionStore} 的 MyBatis 实现。 */
@@ -55,6 +58,59 @@ public class MyBatisAiSessionStore implements AiSessionStore {
     @Override
     public void touch(long sessionId, long lastTaskId, OffsetDateTime at) {
         mapper.touch(sessionId, lastTaskId, toLocalDateTime(at));
+    }
+
+    @Override
+    public List<AiSessionSummary> listByUser(
+            long userId, AiSessionQuery query, int offset, int limit) {
+        return mapper
+                .listByUser(
+                        userId,
+                        // 枚举以名字进库（s.scene 是 varchar），传 name 而不是枚举本身，
+                        // 免得依赖 MyBatis 的枚举类型处理器去猜。
+                        query.scene() == null ? null : query.scene().name(),
+                        query.keyword(),
+                        query.favorite(),
+                        toLocalDateTime(query.startAt()),
+                        toLocalDateTime(query.endAt()),
+                        offset,
+                        limit)
+                .stream()
+                .map(this::toSummary)
+                .toList();
+    }
+
+    @Override
+    public int countByUser(long userId, AiSessionQuery query) {
+        return mapper.countByUser(
+                userId,
+                query.scene() == null ? null : query.scene().name(),
+                query.keyword(),
+                query.favorite(),
+                toLocalDateTime(query.startAt()),
+                toLocalDateTime(query.endAt()));
+    }
+
+    /**
+     * 投影成领域类型。
+     *
+     * <p>刻意是**实例**方法：它要用 {@code clock} 的时区把 {@code datetime} 换算成带偏移的时间。
+     * 写成静态方法就得另找一个时区来源（比如硬编码 {@code Asia/Shanghai}），
+     * 那会给"时区"造出第二处定义——而两处一旦分叉，同一行数据的两个时间列会用不同时区换算。
+     */
+    private AiSessionSummary toSummary(AiSessionSummaryRow row) {
+        return new AiSessionSummary(
+                row.sessionId(),
+                row.userId(),
+                row.scene(),
+                row.title(),
+                row.status(),
+                row.favorite(),
+                row.lastTaskId(),
+                row.lastTaskStatus(),
+                toOffsetDateTime(row.lastActivityAt()),
+                toOffsetDateTime(row.createdAt()),
+                row.version());
     }
 
     private OffsetDateTime toOffsetDateTime(LocalDateTime value) {

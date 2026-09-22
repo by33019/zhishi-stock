@@ -23,6 +23,80 @@
 
 ---
 
+## 2026-09-22 — HIS-01 / HIS-05 会话历史（读取路径）
+
+### 新增
+
+- **HIS-01 `GET /api/v1/ai/sessions`**（`USER`）：本人分析历史分页列表，支持
+  `scene` / `keyword` / `favorite` / `startAt` / `endAt` 与分页；按最后活动时间倒序。
+  每项含 `lastTask`（最近任务的 `taskId` + `status`）。
+- **HIS-05 `GET /api/v1/ai/sessions/{sessionId}/messages`**（`USER`）：会话消息分页，
+  按 `sequenceNo` 升序，**不含 `SYSTEM` 内部 Prompt**。
+- `stock-ai/domain`：`AiSessionQuery`（查询条件）、`AiSessionSummary`（列表投影）。
+- `stock-ai/infrastructure`：`AiSessionSummaryRow` + 两个 Mapper 的分页查询、
+  两个 Store 的对应实现。
+- `stock-ai/application`：`AiSessionSummaryView`、`AiMessageView`、`AiHistoryService`、
+  `InvalidAiHistoryQueryException`（400 `INVALID_REQUEST`）。
+- `stock-backend/web/AiSessionController`；`GlobalExceptionHandler` 新增
+  `InvalidAiHistoryQueryException` 处理器。
+- 测试：`AiHistoryServiceTest` 9 项、`AiSessionControllerContractTest` 8 项。
+
+### 变更
+
+- `AiSessionStore` / `AiMessageStore` 各长出一组读取方法。**这是 M3-06 时刻意押后的**：
+  当时 `AiSessionStore` 的注释写着"分页与筛选等到 M3-08 再加，提前长出来会被一个
+  还没定的需求牵着走"，本轮注释一并更新——契约 §HIS-01 的筛选参数与排序口径已冻结。
+  HIS-03 / HIS-04 需要的 `If-Match` 版本推进**仍然没有**：那是写路径的并发控制，
+  与读取路径的筛选不是同一件事。
+- 三处测试内的手写内存桩补上新方法，**实现为抛 `UnsupportedOperationException`**
+  而不是返回空集合：返回空可能让一个本该失败的断言因"列表为空"而通过。
+
+### 关键设计取舍
+
+1. **`lastTask.status` 用 `LEFT JOIN ai_task` 取，而不是逐行查**。一页 20 条就是 20 次
+   查询（N+1），而列表页是刷新最频繁的页面。`LEFT JOIN` 同时保证"从未跑过任务"的
+   会话仍在结果里，且此时 `lastTask` 为 `null`——前端据此渲染"还没有分析"，
+   而不是渲染成一个"状态未知"的空对象。
+2. **`isFavorite` 显式 `@JsonProperty` 对齐**。契约写 `isFavorite`、Java 访问器是
+   `favorite()`，而 record 的 JSON 名取自**组件名**。HIS-06 的 `isLimited` 已经栽过一次，
+   这次在契约测试里钉住：断言 `isFavorite` 存在**且 `favorite` 不存在**。
+3. **`SYSTEM` 的排除放在 SQL 里**，而不是取回来再在应用层过滤。后者会让"这一页取 20 条、
+   过滤后返回 17 条"发生，而分页字段仍按 20 算——总数与页内容不一致且不报错，
+   只表现为最后几页看起来少了东西。计数与列表**共用同一条 WHERE**。
+4. **契约 §HIS-05 的 `contentFormat` 与 `status` 本实现给不出，且刻意不给**：
+   `ai_message` 表没有这两列。能按角色"推"出来（`ASSISTANT` 的正文由
+   `AiReportText.renderMarkdown` 写入、`USER` 的是原始提问），但那条规则的定义在**写入侧**，
+   在读取侧再推一遍就是同一事实的第二处定义——写入侧将来改格式时读取侧会静默说错。
+   因此这两个字段**不出现**在响应里（不是返回 `null`）。已记入已知问题。
+5. **时间参数收成 `String` 由用例层解析**，不靠 Spring 类型转换：转换失败会被 Spring
+   转成 `MethodArgumentTypeMismatchException`，把"时间格式不对"混同成"参数类型错误"。
+   空串按"未提供"处理——查询串里经常出现 `?startAt=`（表单未填时前端仍会拼上这个键）。
+6. **软删会话按"不存在"处理**：列表里看不到、详情却拿得到，等于把删除做成了一扇后门。
+   三种"拿不到"（不存在 / 属于别人 / 已软删）返回同一句 `AI_SESSION_NOT_FOUND`。
+
+### 验证
+
+- `stock-ai` **191 项**、`stock-backend` **45 项**全绿（含 `BackendConfigurationTest`）。
+- **真实端到端**（Docker 全栈 + 前几轮真实 AI 任务留下的 4 个会话）：
+  - HIS-01 返回 200，`total=4`，分页字段齐备；每项 `lastTask` 带真实 `taskId` 与 `COMPLETED`；
+    **响应含 `isFavorite` 且不含 `favorite`**（字段名核对通过）；
+  - 5 种非法参数（页码 0 / size 超上限 / 未知场景 / 页码越界 / 时间格式非法）全部 400；
+  - **筛选器确实生效**（带对照组）：`keyword=并发` 命中 2 条、`keyword=端到端` 命中 1 条、
+    `keyword=不存在的关键字zzz` 命中 0 条；`scene=STOCK` 为 4 而 `MARKET` / `SECTOR` 均为 0；
+  - HIS-05 返回 200、2 条消息（USER 提问 22 字符 + ASSISTANT 报告 888 字符、
+    `dataCutoffAt` 来自真实行情批次）；**角色集合只有 USER / ASSISTANT，无 SYSTEM**；
+    `contentFormat` / `status` 确认未出现；
+  - 不存在的会话 → 404 `AI_SESSION_NOT_FOUND`；页码越界 → 400；两个端点未登录均 401。
+
+### 不在本轮范围
+
+- **HIS-02**（会话详情）、**HIS-03**（改名 / 收藏，需 `If-Match`）、**HIS-04**（软删，
+  需 `If-Match` + `purgeAfter`）仍属 M3-08。三者都在写路径或需要聚合目标/报告摘要。
+- **HIS-07**（证据数组 + `ai_evidence` 落库）需改动 `AiTaskExecutionService`
+  （报告定稿链路），属高回归风险改动，单独排期。
+
+---
+
 ## 2026-09-22 — HIS-08 / HIS-09 报告反馈（`ai_feedback` 首次被代码引用）
 
 ### 新增

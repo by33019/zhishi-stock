@@ -1,5 +1,7 @@
 package cn.zhishi.stock.ai.domain;
 
+import java.util.List;
+
 /**
  * 会话消息仓储（{@code ai_message}）。
  *
@@ -17,6 +19,17 @@ public interface AiMessageStore {
 
     void insert(AiMessage message);
 
-    /** 某会话的消息条数。 */
+    /** 某会话的消息总条数（含 {@code SYSTEM} 行）。 */
     int countBySession(long sessionId);
+
+    /**
+     * 对外可见的消息（契约 §HIS-05），按 {@code sequenceNo} 升序。
+     *
+     * <p>"可见"= 排除 {@code SYSTEM} 行：那些是内部 Prompt，契约明确不对外返回。
+     * 排除发生在 SQL 里而不是这里过滤，理由见 {@code AiMessageMapper.VISIBLE_WHERE}。
+     */
+    List<AiMessage> listVisible(long sessionId, int offset, int limit);
+
+    /** 与 {@link #listVisible} 同条件的条数，供分页字段使用。 */
+    int countVisible(long sessionId);
 }

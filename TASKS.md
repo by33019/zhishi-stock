@@ -89,12 +89,11 @@
   > "AI 报告/证据/反馈持久化"，看不出这 9 个端点分别是什么。范围映射只存在于
   > spec 附录里，按"小任务"估工必然中途发现做不完。故在此显式列出。
   - [x] **HIS-06** `GET /ai/reports/{reportId}` 报告读接口 — 已完成，见下方详情
-  - [ ] **HIS-01** `GET /ai/sessions` 会话历史分页（`scene` / `keyword` / `favorite` / 时间范围）
+  - [x] **HIS-01** `GET /ai/sessions` 会话历史分页（`scene` / `keyword` / `favorite` / 时间范围）— 已完成，见下方详情
   - [ ] **HIS-02** `GET /ai/sessions/{sessionId}` 会话详情
   - [ ] **HIS-03** `PATCH /ai/sessions/{sessionId}` 重命名 / 收藏（需 `If-Match`，标题 1~60 字符）
   - [ ] **HIS-04** `DELETE /ai/sessions/{sessionId}` 软删（需 `If-Match`，默认 30 天后物理清理）
-  - [ ] **HIS-05** `GET /ai/sessions/{sessionId}/messages` 消息分页（**不得返回 `SYSTEM` 内部 Prompt**，
-    复用 M3-06 已立下的口径，不要另写一份过滤）
+  - [x] **HIS-05** `GET /ai/sessions/{sessionId}/messages` 消息分页（**不得返回 `SYSTEM` 内部 Prompt**）— 已完成，见下方详情
   - [ ] **HIS-07** `GET /ai/reports/{reportId}/evidence` 证据数组 + `ai_evidence` 落库
     （M3-07 已在快照里固化 `AiEvidenceCandidate` 全集，报告正文的引用编号 `[1]` 目前**无行可反查**）
   - [x] **HIS-08** `PUT /ai/reports/{reportId}/feedback` 创建或替换本人唯一反馈 + `ai_feedback` 落库 — 已完成，见下方详情
@@ -1460,6 +1459,7 @@ Redis Stream 队列（`stream:ai:tasks`，消费组 `ai-worker`）与事件流
 - [x] LLM-01（2026-09-22）
 - [x] HIS-06（2026-09-22）
 - [x] HIS-08 / HIS-09（2026-09-22）
+- [x] HIS-01 / HIS-05（2026-09-22）
 
 ---
 
@@ -1607,3 +1607,42 @@ Redis Stream 队列（`stream:ai:tasks`，消费组 `ai-worker`）与事件流
 （证明 upsert 语义）→ DELETE `true` → 再删 `false` → 详情回 `null`；
 非法 `feedbackType` / `reasonCode` / 超长 `detail` 均 400；不存在报告 PUT 与 DELETE 均 404；未登录 401。
 单测：`stock-ai` 102 项、`stock-backend` 37 项全绿。
+
+---
+
+## HIS-01 / HIS-05 交付详情
+
+**交付范围**：契约 §13.3 的会话历史**读取路径**两个端点。`ai_session` 此前只有
+"建、取、更新最后活动时间"三个写方法（M3-06 刻意押后了分页与筛选），本轮补上查询侧。
+
+| 项 | 内容 |
+| --- | --- |
+| HIS-01 | `GET /api/v1/ai/sessions`（`USER`）——分页列表，`scene` / `keyword` / `favorite` / `startAt` / `endAt`，按最后活动时间倒序 |
+| HIS-05 | `GET /api/v1/ai/sessions/{sessionId}/messages`（`USER`）——按 `sequenceNo` 升序，**排除 `SYSTEM`** |
+| 领域层 | `AiSessionQuery`、`AiSessionSummary` |
+| 持久化 | `AiSessionSummaryRow`；两个 Mapper 的分页查询与两个 Store 的实现 |
+| 用例层 | `AiHistoryService`、`AiSessionSummaryView`、`AiMessageView`、`InvalidAiHistoryQueryException` |
+| 装配 | `BackendConfiguration` 一个 Bean；`AiWorkerConfiguration` 不需要（worker 不读历史） |
+| 测试 | `AiHistoryServiceTest` 9 项、`AiSessionControllerContractTest` 8 项 |
+
+### 关键取舍
+
+1. **`lastTask.status` 用 `LEFT JOIN ai_task`**：逐行查是 N+1（一页 20 条 = 20 次查询），
+   而列表页刷新最频繁。`LEFT JOIN` 同时保证从未跑过任务的会话仍在结果里，`lastTask` 为 `null`。
+2. **`isFavorite` 显式 `@JsonProperty`**：record 的 JSON 名取自组件名，契约写 `isFavorite`、
+   Java 是 `favorite()`。契约测试断言 `isFavorite` 存在**且 `favorite` 不存在**。
+3. **`SYSTEM` 排除在 SQL 里**，计数与列表共用同一条 `WHERE`；应用层过滤会让
+   "取 20 条返回 17 条"而分页字段仍按 20 算。
+4. **`contentFormat` / `status` 刻意不给**：`ai_message` 没有这两列。能按角色推出，
+   但那条规则的定义在写入侧，读取侧再推一遍是同一事实的第二处定义。**不出现**而非返回 null。
+5. **时间参数收 String 由用例层解析**；空串按"未提供"（表单未填时前端仍会拼 `?startAt=`）。
+6. **软删会话按"不存在"处理**：三种"拿不到"共用 `AI_SESSION_NOT_FOUND`。
+
+### 验证结果
+
+真实端到端全通过（4 个真实会话）：
+列表 200 且分页字段齐备、每项 `lastTask` 带真实任务状态、字段名为 `isFavorite`；
+5 种非法参数全部 400；**筛选器带对照组的验证**——`keyword=并发` 命中 2 条、
+`keyword=端到端` 命中 1 条、不存在关键字命中 0 条，`scene=STOCK`=4 而 `MARKET`/`SECTOR`=0；
+消息 200 且**角色集合只有 USER / ASSISTANT**；不存在会话 404；未登录 401。
+单测：`stock-ai` 191 项、`stock-backend` 45 项全绿。

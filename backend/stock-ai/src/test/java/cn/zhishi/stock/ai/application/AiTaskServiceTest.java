@@ -23,7 +23,9 @@ import cn.zhishi.stock.ai.domain.AiReportStore;
 import cn.zhishi.stock.ai.domain.AiScene;
 import cn.zhishi.stock.ai.domain.AiSceneCatalog;
 import cn.zhishi.stock.ai.domain.AiSession;
+import cn.zhishi.stock.ai.domain.AiSessionQuery;
 import cn.zhishi.stock.ai.domain.AiSessionStore;
+import cn.zhishi.stock.ai.domain.AiSessionSummary;
 import cn.zhishi.stock.ai.domain.AiTask;
 import cn.zhishi.stock.ai.domain.AiTaskQueue;
 import cn.zhishi.stock.ai.domain.AiTaskQueueMessage;
@@ -876,12 +878,27 @@ class AiTaskServiceTest {
                     session.version() + 1, session.createdAt()));
         }
 
-        void forceStatus(long sessionId, String status) {
-            AiSession session = byId.get(sessionId);
+        void forceStatus(long sessionId, String status) {            AiSession session = byId.get(sessionId);
             byId.put(sessionId, new AiSession(
                     session.sessionId(), session.userId(), session.scene(), session.title(),
                     status, session.favorite(), session.lastTaskId(), session.lastActivityAt(),
                     session.version() + 1, session.createdAt()));
+        }
+
+        /*
+         * HIS-01 的列表能力本类用不到。刻意**抛异常**而不是返回空列表：
+         * 将来若有人在这里的用例里误调到它，会立刻失败；返回空列表则可能让
+         * 一个本该失败的断言"因为列表为空"而通过。
+         */
+        @Override
+        public List<AiSessionSummary> listByUser(
+                long userId, AiSessionQuery query, int offset, int limit) {
+            throw new UnsupportedOperationException("本测试不覆盖会话历史列表");
+        }
+
+        @Override
+        public int countByUser(long userId, AiSessionQuery query) {
+            throw new UnsupportedOperationException("本测试不覆盖会话历史列表");
         }
     }
 
@@ -902,6 +919,17 @@ class AiTaskServiceTest {
         @Override
         public int countBySession(long sessionId) {
             return (int) rows.stream().filter(row -> row.sessionId() == sessionId).count();
+        }
+
+        /* HIS-05 的可见消息查询本类用不到，见上面 InMemorySessionStore 的说明。 */
+        @Override
+        public List<AiMessage> listVisible(long sessionId, int offset, int limit) {
+            throw new UnsupportedOperationException("本测试不覆盖会话消息查询");
+        }
+
+        @Override
+        public int countVisible(long sessionId) {
+            throw new UnsupportedOperationException("本测试不覆盖会话消息查询");
         }
     }
 

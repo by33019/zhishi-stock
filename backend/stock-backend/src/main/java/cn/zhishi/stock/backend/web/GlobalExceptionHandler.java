@@ -6,6 +6,7 @@ import cn.zhishi.stock.ai.application.AiTaskException;
 import cn.zhishi.stock.ai.application.AiTaskQuota;
 import cn.zhishi.stock.ai.application.InvalidAiContextQueryException;
 import cn.zhishi.stock.ai.application.InvalidAiFeedbackException;
+import cn.zhishi.stock.ai.application.InvalidAiHistoryQueryException;
 import cn.zhishi.stock.ai.application.InvalidAiTargetException;
 import cn.zhishi.stock.common.api.ApiResponse;
 import cn.zhishi.stock.market.application.InvalidKlineParameterException;
@@ -296,6 +297,19 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(InvalidAiFeedbackException.class)
     public ResponseEntity<ApiResponse<Void>> invalidAiFeedback(
             InvalidAiFeedbackException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.badRequest().body(ApiResponse.failure(
+                exception.code(),
+                exception.getMessage(),
+                null,
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
+    /** 会话历史查询参数不合法（契约 §HIS-01 / §HIS-05）：页码越界、时间格式、场景码未知。 */
+    @ExceptionHandler(InvalidAiHistoryQueryException.class)
+    public ResponseEntity<ApiResponse<Void>> invalidAiHistoryQuery(
+            InvalidAiHistoryQueryException exception,
             HttpServletRequest request) {
         return ResponseEntity.badRequest().body(ApiResponse.failure(
                 exception.code(),

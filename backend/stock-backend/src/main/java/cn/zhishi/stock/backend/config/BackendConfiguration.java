@@ -2,6 +2,7 @@ package cn.zhishi.stock.backend.config;
 
 import cn.zhishi.stock.ai.application.AiContextPreviewService;
 import cn.zhishi.stock.ai.application.AiFeedbackService;
+import cn.zhishi.stock.ai.application.AiHistoryService;
 import cn.zhishi.stock.ai.application.AiReportQueryService;
 import cn.zhishi.stock.ai.application.AiTaskRequestResolver;
 import cn.zhishi.stock.ai.application.AiTargetHydrator;
@@ -802,6 +803,16 @@ public class BackendConfiguration {
     AiReportQueryService aiReportQueryService(
             AiReportStore aiReportStore, AiTaskStore aiTaskStore, AiFeedbackStore aiFeedbackStore) {
         return new AiReportQueryService(aiReportStore, aiTaskStore, aiFeedbackStore);
+    }
+
+    /**
+     * 会话历史用例（HIS-01 列表 / HIS-05 消息）。
+     *
+     * <p>只依赖两个仓储，无外部调用、无配置项。
+     */
+    @Bean
+    AiHistoryService aiHistoryService(AiSessionStore aiSessionStore, AiMessageStore aiMessageStore) {
+        return new AiHistoryService(aiSessionStore, aiMessageStore);
     }
 
     /**
