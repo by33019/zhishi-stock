@@ -6,7 +6,9 @@ import cn.zhishi.stock.ai.domain.AiContextBuilder;
 import cn.zhishi.stock.ai.domain.AiContextSnapshotStore;
 import cn.zhishi.stock.ai.domain.AiContextType;
 import cn.zhishi.stock.ai.domain.AiDataCutoff;
+import cn.zhishi.stock.ai.domain.AiEvidence;
 import cn.zhishi.stock.ai.domain.AiEvidenceCandidate;
+import cn.zhishi.stock.ai.domain.AiEvidenceStore;
 import cn.zhishi.stock.ai.domain.AiMessage;
 import cn.zhishi.stock.ai.domain.AiMessageRole;
 import cn.zhishi.stock.ai.domain.AiMessageStore;
@@ -32,6 +34,7 @@ import cn.zhishi.stock.ai.domain.LlmRequest;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
@@ -86,6 +89,7 @@ public class AiTaskExecutionService {
     private final AiContextSnapshotStore snapshots;
     private final AiMessageStore messages;
     private final AiReportStore reports;
+    private final AiEvidenceStore evidences;
     private final AiTaskEventStream events;
     private final AiTaskQueue queue;
     private final AiContextBuilder contextBuilder;
@@ -103,6 +107,7 @@ public class AiTaskExecutionService {
             AiContextSnapshotStore snapshots,
             AiMessageStore messages,
             AiReportStore reports,
+            AiEvidenceStore evidences,
             AiTaskEventStream events,
             AiTaskQueue queue,
             AiContextBuilder contextBuilder,
@@ -118,6 +123,7 @@ public class AiTaskExecutionService {
         this.snapshots = snapshots;
         this.messages = messages;
         this.reports = reports;
+        this.evidences = evidences;
         this.events = events;
         this.queue = queue;
         this.contextBuilder = contextBuilder;
@@ -328,6 +334,7 @@ public class AiTaskExecutionService {
         }
         AiReport report = composeReport(task, completion, context, reportId, assistantMessageId, now);
         reports.insert(report);
+        persistEvidence(report, context, now);
 
         AiTask completed = task.complete(now);
         if (tasks.save(completed).isEmpty()) {
@@ -416,6 +423,41 @@ public class AiTaskExecutionService {
                     .append(nullToEmpty(completion.textOf(section))).append('\u0000');
         }
         return hasher.hashOfText(source.toString());
+    }
+
+    /**
+     * 把这次分析固化的证据候选落成 {@code ai_evidence} 行（HIS-07）。
+     *
+     * <p>时机在报告写入**之后**、任务状态推进**之前**：证据是定稿的一部分，
+     * 与报告同生。放在报告之后是因为 {@code ai_evidence.report_id} 是外键，
+     * 而 {@code reportId} 此刻才拿到。
+     *
+     * <h2>为什么不在这里做去重或"补充"</h2>
+     * 候选集合就是这次分析的全部事实来源，报告正文里出现的引用编号也只落在这个集合内
+     * （{@code finishCompleted} 之前的校验已经保证）。所以这里只做<b>搬运</b>：
+     * 候选有几条就写几行，不挑不拣。任何"补一条"的动作都会让证据表与正文引用对不上号。
+     *
+     * <h2>幂等</h2>
+     * 由 {@code uk_ai_report_no} 兜底。恢复扫描若把已定稿的任务再跑一遍，会先在
+     * {@code ai_report} 的唯一索引上失败，走不到这里；万一走到了，这里的唯一索引
+     * 会让它显式报错而不是静默翻倍——这是想要的。
+     */
+    private void persistEvidence(AiReport report, AiContextBuildResult context, OffsetDateTime now) {
+        List<AiEvidenceCandidate> candidates = context.evidenceCandidates();
+        if (candidates.isEmpty()) {
+            // 没有候选就是没有来源：写不出一条证据行，也不该编一条。
+            return;
+        }
+        // 显式排序而不是"相信上游是升序的"：AiEvidenceStore 的写入契约要求升序，
+        // 而这条要求不该由一个没有测试守着的前提来满足。排序让 ID 分配也变得确定性。
+        List<AiEvidenceCandidate> ordered =
+                candidates.stream().sorted(Comparator.comparingInt(AiEvidenceCandidate::evidenceNo)).toList();
+        List<AiEvidence> rows = new ArrayList<>(ordered.size());
+        for (AiEvidenceCandidate candidate : ordered) {
+            rows.add(AiEvidence.fromCandidate(
+                    idGenerator.getAsLong(), report.reportId(), candidate, now));
+        }
+        evidences.insertAll(rows);
     }
 
     // ---------- 终态 ----------

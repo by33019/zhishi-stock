@@ -4,12 +4,20 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import PageHeader from '@/components/PageHeader.vue'
 import { useRemoteData } from '@/composables/useRemoteData'
-import { createTask, getReport, getScenes, getTask, previewContext } from '@/services/aiApi'
+import {
+  createTask,
+  getReport,
+  getReportEvidence,
+  getScenes,
+  getTask,
+  previewContext,
+} from '@/services/aiApi'
 import { searchSecurities } from '@/services/securityApi'
 import type {
   AiContextPreview,
   AiContextTarget,
   AiReportDetail,
+  AiReportEvidence,
   AiScene,
   AiTaskQuota,
   AiTaskSummary,
@@ -17,7 +25,7 @@ import type {
 import { formatDateTime } from '@/utils/format'
 
 /**
- * AI 研究工作台（契约 AI-01 / AI-02 / AI-03 / AI-04 + HIS-06）。
+ * AI 研究工作台（契约 AI-01 / AI-02 / AI-03 / AI-04 + HIS-06 + HIS-07）。
  *
  * 这一页此前是纯静态原型：写死的场景下拉、写死的标的「浦发银行 SH.600000」、
  * 写死的「今日剩余 18 次分析」、写死的"已纳入实时行情与授权资讯"，
@@ -30,7 +38,7 @@ import { formatDateTime } from '@/utils/format'
  *   不是同一件事，留作独立增量。
  * - **只支持单标的场景**：证券走 STK-01 检索；市场用契约文档写明的对外标识 `CN`。
  *   板块与多标的对比需要各自的检索与多选交互，**界面直接说明并不给提交入口**。
- * - 取消 / 重试 / 追问（AI-06 / AI-07 / AI-08）与来源引用（HIS-07）未接入。
+ * - 取消 / 重试 / 追问（AI-06 / AI-07 / AI-08）未接入。
  */
 
 const { data: scenes, error: scenesError, reload: reloadScenes } = useRemoteData(getScenes)
@@ -221,6 +229,78 @@ const running = computed(() => Boolean(task.value) && !TERMINAL.has(task.value!.
 const qualityLabel = computed(() =>
   report.value?.qualityStatus === 'LIMITED' ? '受限分析' : '证据完整',
 )
+
+// ---------- 来源引用（HIS-07）----------
+
+const evidences = ref<AiReportEvidence[]>([])
+const evidenceError = ref('')
+const loadingEvidence = ref(false)
+
+/**
+ * 请求序号：用来丢弃**迟到的响应**。
+ *
+ * 用户可能在等引用列表时又提交了一次分析（或点了重试），旧请求回来时
+ * 页面已经属于另一份报告了。不做这个判断的话，旧响应会覆盖新数据，
+ * 而界面上表现成"引用列表和报告对不上"——这种错配不会报错，只会让人看不懂。
+ */
+let evidenceRequest = 0
+
+async function loadEvidence(reportId: string) {
+  const token = ++evidenceRequest
+  loadingEvidence.value = true
+  evidenceError.value = ''
+  try {
+    const loaded = await getReportEvidence(reportId)
+    if (token !== evidenceRequest) return
+    evidences.value = loaded
+  } catch (cause) {
+    if (token !== evidenceRequest) return
+    evidences.value = []
+    const failure = cause as { message?: string; traceId?: string }
+    evidenceError.value = failure.message ?? '来源引用加载失败。'
+  } finally {
+    if (token === evidenceRequest) loadingEvidence.value = false
+  }
+}
+
+/**
+ * 报告一就位就去取引用，报告被清空（重新提交）时一起清掉。
+ *
+ * 挂在 `reportId` 而不是 `report` 上：后者是对象，引用栏只需要知道"是哪份报告"。
+ */
+watch(
+  () => report.value?.reportId,
+  (reportId) => {
+    evidences.value = []
+    evidenceError.value = ''
+    if (reportId) void loadEvidence(reportId)
+  },
+)
+
+/** 类型与访问状态都是后端枚举，这里只做展示映射；未知取值原样显示而不是吞掉。 */
+const EVIDENCE_TYPE_LABELS: Record<string, string> = {
+  QUOTE: '行情',
+  KLINE: 'K线',
+  NEWS: '资讯',
+  ANNOUNCEMENT: '公告',
+  BUSINESS: '经营',
+  SECTOR: '板块',
+  RULE: '规则',
+}
+
+const ACCESS_LABELS: Record<string, string> = {
+  AVAILABLE: '来源可见',
+  UNAVAILABLE: '原文已下线',
+  RESTRICTED: '授权受限，仅摘要',
+}
+
+function evidenceTypeLabel(type: string) {
+  return EVIDENCE_TYPE_LABELS[type] ?? type
+}
+
+function accessLabel(status: string) {
+  return ACCESS_LABELS[status] ?? status
+}
 
 /** 章节顺序由后端的 `AiReportSection.inOrder()` 决定，前端不重排。 */
 const sections = computed(() => {
@@ -427,15 +507,63 @@ const sections = computed(() => {
       </main>
 
       <aside class="evidence-drawer">
-        <header><span>来源引用</span><b>0</b></header>
+        <header><span>来源引用</span><b>{{ evidences.length }}</b></header>
+
         <!--
-          引用的读接口（HIS-07）尚未实现：报告正文里的 [n] 编号在库里暂时**没有行可反查**。
-          原型这里渲染的是一份写死的 evidence 数组，删掉它而不是留着——
-          一份看起来可靠的来源列表比留空更糟。
+          四种状态必须分开表达：加载失败（可重试）、还没有报告、加载中、报告没有引用。
+          合并任意两个都会让用户把"读不到"当成"没有"——而这两者的处置完全不同。
         -->
-        <div class="evidence-empty">
-          <p>来源引用将在 HIS-07 交付后列在这里。当前报告正文中的 [n] 编号尚无接口可反查。</p>
+        <p v-if="evidenceError" class="state-note state-note--error">
+          {{ evidenceError }}
+          <button
+            v-if="report"
+            class="link-button"
+            type="button"
+            @click="loadEvidence(report.reportId)"
+          >
+            重试
+          </button>
+        </p>
+        <p v-else-if="!report" class="state-note">报告生成后，这里会列出它引用的来源。</p>
+        <p v-else-if="loadingEvidence" class="state-note">正在加载来源引用…</p>
+        <div v-else-if="evidences.length === 0" class="evidence-empty">
+          <p>这份报告没有引用任何来源。</p>
         </div>
+
+        <ul v-else class="evidence-list">
+          <!--
+            按 `evidenceNo` 渲染而不是数组下标：正文里的 [n] 就是这个编号。
+            用下标会让"服务端少返回一条"表现成编号整体错位，而错位不会报错。
+          -->
+          <li v-for="item in evidences" :key="item.evidenceNo">
+            <div class="evidence-head">
+              <span class="evidence-no">[{{ item.evidenceNo }}]</span>
+              <span class="evidence-type">{{ evidenceTypeLabel(item.evidenceType) }}</span>
+            </div>
+            <p class="evidence-title">{{ item.sourceTitle }}</p>
+            <p class="evidence-summary">{{ item.evidenceSummary }}</p>
+            <p class="evidence-meta">
+              {{ accessLabel(item.accessStatus) }}
+              <template v-if="item.sourcePublishedAt">
+                · 发布 {{ formatDateTime(item.sourcePublishedAt) }}
+              </template>
+              <template v-if="item.dataTime"> · 数据 {{ formatDateTime(item.dataTime) }}</template>
+            </p>
+            <!--
+              没有 sourceUrl 就不给链接：授权受限与协议不合规都已由服务端判过，
+              前端不再猜是哪一种。`noopener noreferrer` 是契约 §24 的硬要求。
+            -->
+            <a
+              v-if="item.sourceUrl"
+              class="evidence-link"
+              :href="item.sourceUrl"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              查看原文
+            </a>
+          </li>
+        </ul>
       </aside>
     </section>
   </div>

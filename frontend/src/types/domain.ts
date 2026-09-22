@@ -956,3 +956,28 @@ export interface AiReportDetail {
     updatedAt: string
   } | null
 }
+
+/**
+ * HIS-07 的一条来源引用。
+ *
+ * `evidenceNo` 就是报告正文里 `[n]` 的那个编号——正文与引用栏靠它对齐，
+ * 所以引用栏不能按数组下标渲染（服务端按 `evidenceNo` 升序返回，但依赖这个顺序
+ * 会让"少了一条"变成"编号整体错位"，而错位不会报错）。
+ *
+ * `sourceUrl` 为 null 有两种来源：授权受限（`accessStatus=RESTRICTED`），
+ * 或链接不在协议白名单内。**两者对界面是同一件事**：没有可点的原文。
+ * 界面不该去猜是哪种——服务端已经做了那个判断。
+ *
+ * 契约 §HIS-07 只给了 8 个字段：`evidenceId` / `reportId` / `contextSnapshotId` /
+ * `sourceObjectId` / `contentHash` 是内部字段，不出现在响应里。
+ */
+export interface AiReportEvidence {
+  evidenceNo: number
+  evidenceType: string
+  sourceTitle: string
+  sourceUrl: string | null
+  evidenceSummary: string
+  sourcePublishedAt: string | null
+  dataTime: string | null
+  accessStatus: string
+}

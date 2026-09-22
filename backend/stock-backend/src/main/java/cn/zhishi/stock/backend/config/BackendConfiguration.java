@@ -11,6 +11,7 @@ import cn.zhishi.stock.ai.application.AiTaskStreamRelay;
 import cn.zhishi.stock.ai.domain.AiContentHasher;
 import cn.zhishi.stock.ai.domain.AiContextBuilder;
 import cn.zhishi.stock.ai.domain.AiContextSnapshotStore;
+import cn.zhishi.stock.ai.domain.AiEvidenceStore;
 import cn.zhishi.stock.ai.domain.AiFeedbackStore;
 import cn.zhishi.stock.ai.domain.AiMessageStore;
 import cn.zhishi.stock.ai.domain.AiReportStore;
@@ -21,12 +22,14 @@ import cn.zhishi.stock.ai.domain.AiTaskQueue;
 import cn.zhishi.stock.ai.domain.AiTaskStore;
 import cn.zhishi.stock.ai.domain.LlmProviderPort;
 import cn.zhishi.stock.ai.infrastructure.AiContextSnapshotMapper;
+import cn.zhishi.stock.ai.infrastructure.AiEvidenceMapper;
 import cn.zhishi.stock.ai.infrastructure.AiFeedbackMapper;
 import cn.zhishi.stock.ai.infrastructure.AiMessageMapper;
 import cn.zhishi.stock.ai.infrastructure.AiReportMapper;
 import cn.zhishi.stock.ai.infrastructure.AiSessionMapper;
 import cn.zhishi.stock.ai.infrastructure.AiTaskMapper;
 import cn.zhishi.stock.ai.infrastructure.MyBatisAiContextSnapshotStore;
+import cn.zhishi.stock.ai.infrastructure.MyBatisAiEvidenceStore;
 import cn.zhishi.stock.ai.infrastructure.MyBatisAiFeedbackStore;
 import cn.zhishi.stock.ai.infrastructure.MyBatisAiMessageStore;
 import cn.zhishi.stock.ai.infrastructure.MyBatisAiReportStore;
@@ -699,6 +702,18 @@ public class BackendConfiguration {
     }
 
     /**
+     * 报告来源证据（{@code ai_evidence}）。
+     *
+     * <p>Web 侧**只读不写**：证据在 worker 定稿时写入，这里只服务 HIS-07。
+     * 与 worker 各持一份实例是必然的（两个进程），所以 {@code insertAll} 在这边
+     * 没有调用方——不给它另一个"只读"接口，那会让仓储出现两种形状。
+     */
+    @Bean
+    AiEvidenceStore aiEvidenceStore(AiEvidenceMapper mapper, Clock clock) {
+        return new MyBatisAiEvidenceStore(mapper, clock);
+    }
+
+    /**
      * 上下文快照存储。
      *
      * <p>依赖 {@code ObjectMapper} 把 {@code context_data} 序列化成 JSON 列——
@@ -793,16 +808,24 @@ public class BackendConfiguration {
     }
 
     /**
-     * 报告查询用例（HIS-06）。
+     * 报告查询用例（HIS-06 报告 / HIS-07 来源引用）。
      *
      * <p>注入反馈仓储是为了让报告详情一次带回"当前用户反馈"——否则前端拿到报告后
      * 还要再发一次请求才知道自己评过没有，而那次请求的失败会让"未评价"与"查询失败"
      * 看起来一样。
+     *
+     * <p>注入证据仓储是为了 HIS-07 复用同一条归属判据：证据挂在报告下，
+     * 让两个用例共用 {@code requireOwned} 才能保证"读得到报告"与"读得到它的来源"
+     * 是同一个判断。
      */
     @Bean
     AiReportQueryService aiReportQueryService(
-            AiReportStore aiReportStore, AiTaskStore aiTaskStore, AiFeedbackStore aiFeedbackStore) {
-        return new AiReportQueryService(aiReportStore, aiTaskStore, aiFeedbackStore);
+            AiReportStore aiReportStore,
+            AiTaskStore aiTaskStore,
+            AiFeedbackStore aiFeedbackStore,
+            AiEvidenceStore aiEvidenceStore) {
+        return new AiReportQueryService(
+                aiReportStore, aiTaskStore, aiFeedbackStore, aiEvidenceStore);
     }
 
     /**

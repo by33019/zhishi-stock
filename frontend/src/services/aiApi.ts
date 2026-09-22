@@ -3,6 +3,7 @@ import type {
   AiContextPreview,
   AiContextTarget,
   AiReportDetail,
+  AiReportEvidence,
   AiScene,
   AiSceneDefinition,
   AiTaskAccepted,
@@ -71,4 +72,20 @@ export function getTask(taskId: string) {
  */
 export function getReport(reportId: string) {
   return apiRequest<AiReportDetail>(`/ai/reports/${encodeURIComponent(reportId)}`)
+}
+
+/**
+ * HIS-07：取报告引用的来源。
+ *
+ * 与 HIS-06 分开取的理由与上面相反：来源是引用栏才需要的东西，
+ * 而引用栏**不是一打开报告就要看的**（用户先读结论，需要核对时才展开）。
+ * 合进报告详情会让每次都多付一次查询，且报告详情的响应体随引用数增长。
+ *
+ * 与报告正文里的 `[n]` 配合使用：`evidenceNo` 就是正文里的那个编号。
+ */
+export function getReportEvidence(reportId: string, evidenceType?: string) {
+  const search = evidenceType ? `?evidenceType=${encodeURIComponent(evidenceType)}` : ''
+  return apiRequest<AiReportEvidence[]>(
+    `/ai/reports/${encodeURIComponent(reportId)}/evidence${search}`,
+  )
 }

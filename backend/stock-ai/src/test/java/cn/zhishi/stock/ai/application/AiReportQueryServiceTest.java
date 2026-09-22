@@ -8,6 +8,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import cn.zhishi.stock.ai.domain.AiEvidence;
+import cn.zhishi.stock.ai.domain.AiEvidenceAccessStatus;
+import cn.zhishi.stock.ai.domain.AiEvidenceStore;
+import cn.zhishi.stock.ai.domain.AiEvidenceType;
 import cn.zhishi.stock.ai.domain.AiFeedback;
 import cn.zhishi.stock.ai.domain.AiFeedbackStore;
 import cn.zhishi.stock.ai.domain.AiFeedbackType;
@@ -25,12 +29,17 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * HIS-06 报告查询的业务规则。
+ * HIS-06 报告查询与 HIS-07 来源引用的业务规则。
  *
  * <h2>这里钉的是"三种拿不到必须长一样"</h2>
  * 报告不存在、报告属于别人、任务行缺失 —— 三者必须返回**逐字节相同**的业务码与文案。
  * 只要它们可区分，就等于向任何登录用户提供了一个探测他人报告 ID 是否存在的接口
  * （契约 §23.1）。因此断言的不是"抛了异常"，而是"三种情况的码与文案完全相等"。
+ *
+ * <h2>HIS-07 的两条出口规则</h2>
+ * 一是授权受限（{@code RESTRICTED}）不给原文地址、但摘要必须留；
+ * 二是非白名单协议的链接不外发、而访问状态不因此改变。
+ * 两条都是"少给一个字段"，很容易在重构里被抹平成"原样透传"——所以各有一个用例钉住。
  */
 class AiReportQueryServiceTest {
 
@@ -48,9 +57,10 @@ class AiReportQueryServiceTest {
     private final AiReportStore reports = mock(AiReportStore.class);
     private final AiTaskStore tasks = mock(AiTaskStore.class);
     private final AiFeedbackStore feedbacks = mock(AiFeedbackStore.class);
+    private final AiEvidenceStore evidences = mock(AiEvidenceStore.class);
 
     private final AiReportQueryService service =
-            new AiReportQueryService(reports, tasks, feedbacks);
+            new AiReportQueryService(reports, tasks, feedbacks, evidences);
 
     @Test
     @DisplayName("本人报告：六章节、版本标识与数据截止时间逐项投影，ID 为字符串")
@@ -159,6 +169,139 @@ class AiReportQueryServiceTest {
         assertThat(detail.limitedReason()).isNull();
         assertThat(detail.qualityStatus()).isEqualTo("VALID");
         assertThat(detail.newsDataCutoffAt()).isEqualTo(CUTOFF);
+    }
+
+    // ---------- HIS-07 来源引用 ----------
+
+    @Test
+    @DisplayName("来源引用：契约的 8 个字段逐项投影，内部代理键与哈希不外发")
+    void returnsOwnEvidence() {
+        when(reports.find(REPORT_ID)).thenReturn(Optional.of(validReport()));
+        when(tasks.find(TASK_ID)).thenReturn(Optional.of(task(OWNER)));
+        when(evidences.listByReport(REPORT_ID)).thenReturn(List.of(
+                evidence(1, AiEvidenceType.QUOTE, null, AiEvidenceAccessStatus.AVAILABLE),
+                evidence(2, AiEvidenceType.NEWS, "https://news.example.com/a", AiEvidenceAccessStatus.AVAILABLE)));
+
+        List<AiEvidenceView> views = service.listEvidence(REPORT_ID, OWNER, null);
+
+        assertThat(views).hasSize(2);
+        AiEvidenceView quote = views.get(0);
+        assertThat(quote.evidenceNo()).isEqualTo(1);
+        assertThat(quote.evidenceType()).isEqualTo("QUOTE");
+        assertThat(quote.sourceTitle()).isEqualTo("来源标题1");
+        assertThat(quote.sourceUrl()).isNull();
+        assertThat(quote.evidenceSummary()).isEqualTo("来源摘要1");
+        assertThat(quote.sourcePublishedAt()).isEqualTo(CUTOFF);
+        assertThat(quote.dataTime()).isEqualTo(CUTOFF);
+        assertThat(quote.accessStatus()).isEqualTo("AVAILABLE");
+        assertThat(views.get(1).sourceUrl())
+                .describedAs("https 在白名单内，应当原样给出")
+                .isEqualTo("https://news.example.com/a");
+    }
+
+    @Test
+    @DisplayName("授权受限：保留摘要但**不给原文地址**（RESTRICTED 的定义）")
+    void restrictedEvidenceHidesUrlButKeepsSummary() {
+        when(reports.find(REPORT_ID)).thenReturn(Optional.of(validReport()));
+        when(tasks.find(TASK_ID)).thenReturn(Optional.of(task(OWNER)));
+        when(evidences.listByReport(REPORT_ID)).thenReturn(List.of(
+                evidence(1, AiEvidenceType.NEWS, "https://paid.example.com/a", AiEvidenceAccessStatus.RESTRICTED)));
+
+        AiEvidenceView view = service.listEvidence(REPORT_ID, OWNER, null).get(0);
+
+        assertThat(view.sourceUrl()).isNull();
+        assertThat(view.evidenceSummary())
+                .describedAs("受限不等于没有证据：摘要必须还在")
+                .isEqualTo("来源摘要1");
+        assertThat(view.accessStatus()).isEqualTo("RESTRICTED");
+    }
+
+    @Test
+    @DisplayName("非白名单协议的链接一律不外发，但状态仍是 AVAILABLE")
+    void nonWhitelistedSchemeIsNotExposed() {
+        when(reports.find(REPORT_ID)).thenReturn(Optional.of(validReport()));
+        when(tasks.find(TASK_ID)).thenReturn(Optional.of(task(OWNER)));
+        when(evidences.listByReport(REPORT_ID)).thenReturn(List.of(
+                evidence(1, AiEvidenceType.NEWS, "http://news.example.com/a", AiEvidenceAccessStatus.AVAILABLE),
+                evidence(2, AiEvidenceType.NEWS, "javascript:alert(1)", AiEvidenceAccessStatus.AVAILABLE)));
+
+        List<AiEvidenceView> views = service.listEvidence(REPORT_ID, OWNER, null);
+
+        assertThat(views).extracting(AiEvidenceView::sourceUrl).containsOnlyNulls();
+        assertThat(views).extracting(AiEvidenceView::accessStatus)
+                .describedAs("链接被拦下不代表来源失效，状态不能跟着改")
+                .containsOnly("AVAILABLE");
+    }
+
+    @Test
+    @DisplayName("按类型过滤：大小写不敏感，其它类型不出现")
+    void filtersByEvidenceType() {
+        when(reports.find(REPORT_ID)).thenReturn(Optional.of(validReport()));
+        when(tasks.find(TASK_ID)).thenReturn(Optional.of(task(OWNER)));
+        when(evidences.listByReport(REPORT_ID)).thenReturn(List.of(
+                evidence(1, AiEvidenceType.QUOTE, null, AiEvidenceAccessStatus.AVAILABLE),
+                evidence(2, AiEvidenceType.NEWS, null, AiEvidenceAccessStatus.AVAILABLE)));
+
+        assertThat(service.listEvidence(REPORT_ID, OWNER, "news"))
+                .extracting(AiEvidenceView::evidenceType)
+                .containsExactly("NEWS");
+        assertThat(service.listEvidence(REPORT_ID, OWNER, "  "))
+                .describedAs("空白视同不过滤，而不是报错")
+                .hasSize(2);
+    }
+
+    @Test
+    @DisplayName("证据类型不在白名单：400，且文案落在「证据类型」上")
+    void rejectsUnknownEvidenceType() {
+        when(reports.find(REPORT_ID)).thenReturn(Optional.of(validReport()));
+        when(tasks.find(TASK_ID)).thenReturn(Optional.of(task(OWNER)));
+
+        assertThatThrownBy(() -> service.listEvidence(REPORT_ID, OWNER, "NEWW"))
+                .isInstanceOf(InvalidAiEvidenceQueryException.class)
+                .hasMessageContaining("不支持的证据类型");
+    }
+
+    @Test
+    @DisplayName("他人的报告：引用查询与报告查询返回同一个 404，且不去查证据表")
+    void otherUsersReportHasNoEvidence() {
+        when(reports.find(REPORT_ID)).thenReturn(Optional.of(validReport()));
+        when(tasks.find(TASK_ID)).thenReturn(Optional.of(task(OTHER)));
+
+        assertThatThrownBy(() -> service.listEvidence(REPORT_ID, OWNER, null))
+                .isInstanceOf(AiTaskException.class)
+                .satisfies(exception -> assertThat(((AiTaskException) exception).code())
+                        .isEqualTo(AiTaskErrorCode.REPORT_NOT_FOUND));
+        verify(evidences, never()).listByReport(anyLong());
+    }
+
+    @Test
+    @DisplayName("报告存在但没有引用：返回空列表而不是 404（与「查不到报告」区分开）")
+    void reportWithoutEvidenceIsNotNotFound() {
+        when(reports.find(REPORT_ID)).thenReturn(Optional.of(validReport()));
+        when(tasks.find(TASK_ID)).thenReturn(Optional.of(task(OWNER)));
+        when(evidences.listByReport(REPORT_ID)).thenReturn(List.of());
+
+        assertThat(service.listEvidence(REPORT_ID, OWNER, null)).isEmpty();
+    }
+
+    private static AiEvidence evidence(
+            int evidenceNo, AiEvidenceType type, String sourceUrl, AiEvidenceAccessStatus status) {
+        return new AiEvidence(
+                9000L + evidenceNo,
+                REPORT_ID,
+                evidenceNo,
+                null,
+                type,
+                "SECURITY",
+                600519L,
+                "来源标题" + evidenceNo,
+                sourceUrl,
+                "来源摘要" + evidenceNo,
+                CUTOFF,
+                CUTOFF,
+                status,
+                "hash-" + evidenceNo,
+                GENERATED);
     }
 
     private static AiTaskException catchException(Runnable call) {

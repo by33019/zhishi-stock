@@ -5,6 +5,7 @@ import cn.zhishi.stock.ai.application.AiTaskErrorCode;
 import cn.zhishi.stock.ai.application.AiTaskException;
 import cn.zhishi.stock.ai.application.AiTaskQuota;
 import cn.zhishi.stock.ai.application.InvalidAiContextQueryException;
+import cn.zhishi.stock.ai.application.InvalidAiEvidenceQueryException;
 import cn.zhishi.stock.ai.application.InvalidAiFeedbackException;
 import cn.zhishi.stock.ai.application.InvalidAiHistoryQueryException;
 import cn.zhishi.stock.ai.application.InvalidAiTargetException;
@@ -310,6 +311,24 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(InvalidAiHistoryQueryException.class)
     public ResponseEntity<ApiResponse<Void>> invalidAiHistoryQuery(
             InvalidAiHistoryQueryException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.badRequest().body(ApiResponse.failure(
+                exception.code(),
+                exception.getMessage(),
+                null,
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
+    /**
+     * 报告引用的过滤参数不合法（契约 §HIS-07）：{@code evidenceType} 不在取值内。
+     *
+     * <p>与上面几个 AI 校验异常并列而不是合并：它们的提示语要落在各自的参数上。
+     * 业务码统一是 {@code INVALID_REQUEST}（契约没有为证据类型定义专属码）。
+     */
+    @ExceptionHandler(InvalidAiEvidenceQueryException.class)
+    public ResponseEntity<ApiResponse<Void>> invalidAiEvidenceQuery(
+            InvalidAiEvidenceQueryException exception,
             HttpServletRequest request) {
         return ResponseEntity.badRequest().body(ApiResponse.failure(
                 exception.code(),

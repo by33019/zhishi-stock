@@ -23,6 +23,96 @@
 
 ---
 
+## 2026-09-22 — M3-08 收口：HIS-07 报告来源引用（写入侧 + 端点 + 引用栏）
+
+M3-08 的最后一个端点。`ai_evidence` 表自 V6 起结构就绪，但**零代码引用**——
+报告正文里的引用编号 `[n]` 在库里没有行可反查。本轮把它接上：
+定稿时把固化的证据候选落库（写入侧），并新增 `GET /ai/reports/{reportId}/evidence`
+（读取侧），`/ai` 的引用栏随之显示真实来源。
+
+### 新增
+
+**写入侧（`stock-ai` / `stock-ai-worker`）**
+- `domain/AiEvidence`：报告的一条来源证据。由 `AiEvidenceCandidate` **投影**而来。
+- `domain/AiEvidenceStore`：只有 `insertAll`（整批）与 `listByReport` 两个动词。
+- `infrastructure/AiEvidenceRow` / `AiEvidenceMapper` / `MyBatisAiEvidenceStore`：
+  多值 `VALUES` 一次写入整批，不逐条往返。
+- `AiTaskExecutionService.persistEvidence(...)`：在 `reports.insert(report)` **之后**、
+  任务状态推进**之前**落证据；写入前按 `evidenceNo` 显式排序。
+
+**读取侧（`stock-ai` / `stock-backend`）**
+- `application/AiEvidenceView`：契约 §HIS-07 的 8 个字段（内部代理键不外发）。
+- `application/InvalidAiEvidenceQueryException`：`evidenceType` 不在白名单 → 400。
+- `AiReportQueryService.listEvidence(reportId, userId, evidenceTypeCode)`：
+  复用同一条 `requireOwned` 归属判据。
+- `AiReportController` 新增 `GET /reports/{reportId}/evidence`；
+  `GlobalExceptionHandler` 新增对应 400 处理器。
+
+**前端**
+- `services/aiApi.ts` 新增 `getReportEvidence`；`types/domain.ts` 新增 `AiReportEvidence`。
+- `/ai` 的引用栏由"如实说明未交付"改为**渲染真实来源**：编号用 `evidenceNo`
+  （与正文的 `[n]` 对齐，不按数组下标）、类型码翻中文、外链带 `noopener noreferrer`。
+- `business.css` 新增 `.evidence-list` 系列样式。
+
+### 关键取舍
+
+1. **证据落库点是"定稿之后"，不是"定稿之中"**。`ai_evidence.report_id` 是外键，
+   而 `reportId` 在 `reports.insert` 之后才存在。放在报告之后、状态推进之前，
+   证据与报告同生；重投场景由 `uk_ai_report_task` 先挡住，走不到第二次写入。
+2. **`context_snapshot_id` 写 `null`**。`AiEvidenceCandidate` **不携带**它来自哪个快照的
+   引用（候选集合是跨全部快照汇总的）。该列可空；没有映射就填一个"看起来合理"的值
+   等于编造。将来若要补上这个关联，应该在候选固化时带上快照 ID，而不是在这里猜。
+3. **只做搬运，不挑不拣**。候选集合就是这次分析的全部事实来源，正文引用编号也只允许
+   落在这个集合内（定稿校验保证）。任何"补一条 / 去一条"都会让证据表与正文引用对不上号。
+4. **`RESTRICTED` 不给原文地址，但摘要必须留**。这是 `AiEvidenceAccessStatus` 的定义。
+   出口处**同时**再判一次协议白名单（复用资讯域的 `NewsUrlPolicy`，不为 AI 域另写一份
+   ——两份白名单分叉时，会有一条路径悄悄把 `http` 链接放给用户）。
+   两种"没有链接"在响应里**不区分**：对用户而言结果都是"这里没有可点的原文"。
+5. **证据按类型过滤在内存里做**。一份报告的证据是那次定稿的全集（个位数行），
+   给仓储加一个带条件的查询会让"证据全集"出现两个入口。
+6. **HIS-07 是独立端点，不并进 HIS-06 的响应**。契约把它们定义成两个资源；
+   合进来会让报告详情体积随引用数增长，而历史页列表、导出等路径并不需要引用。
+7. **前端把四种状态分开表达**：加载失败（可重试）、还没有报告、加载中、报告没有引用。
+   合并任意两个都会让用户把"读不到"当成"没有"——而这两者的处置完全不同。
+
+### 测试查出的真实缺陷（自查）
+
+扩展 `AiWorkerIntegrationTest` 时先写下的断言是
+`assertThat(evidenceRowsOf(taskId)).isEqualTo(evidenceRowsOf(taskId))`——
+**自己跟自己比**，同义反复、恒真。已改为"第一次投递后先断言 `isPositive`，
+再断言重投后与第一次相等"，否则两边都是 0 时那条相等断言会毫无意义地通过。
+
+### 验证
+
+- 后端 `mvn clean compile` 10 个模块通过；`stock-ai` 单测 **202 → 212**（新增 10 项）：
+  - `AiTaskExecutionServiceTest` 16 → **19**：候选原样落库（编号/类型/摘要/来源对象逐项照搬，
+    `contextSnapshotId` 为 `null`）、候选为空不写占位行、乱序传入仍按 `evidenceNo` 升序写入。
+  - `AiReportQueryServiceTest` 7 → **14**：字段投影、`RESTRICTED` 隐去链接但保留摘要、
+    非白名单协议不外发且访问状态不变、类型过滤大小写不敏感、非法类型 400、
+    他人报告返回同一个 404 且不查证据表、报告无引用返回空数组而不是 404。
+- **真库集成测试通过（5/5）**：`AiWorkerIntegrationTest` 用 Testcontainers 起真实
+  MySQL 8.4 + Redis，新增断言"报告写下时来源引用一起落库"与"重投两次证据行数不翻倍"。
+  这条只能在真库上验——整批 `INSERT` 的多值 `VALUES` 语法、
+  `evidence_type` / `access_status` 两个枚举与 `VARCHAR` 列的映射、
+  以及 `uk_ai_evidence_report_no` 是否真的建对，桩全都看不见。
+- `BackendConfigurationTest` / `AiWorkerConfigurationTest` 补 `AiEvidenceStore` 断言
+  （少这一个 Bean 的症状是"报告写下了、来源一行没有"，与"确实没有引用"无法区分）。
+- 前端 `npm run typecheck` 0 错误；`npm run build` 成功
+  （`AiWorkspacePage` 9.85 → **11.81 kB**）；**21 文件 / 172 项**全绿
+  （`AiWorkspacePage.test.ts` 由 7 增至 **12** 项：编号用 `evidenceNo` 而非下标、
+  无链接时不渲染链接、外链带 `noopener noreferrer`、加载失败可重试且不冒充"没有引用"、
+  报告确无引用时明确说明、未提交时不请求接口）。
+
+### 未覆盖
+
+- **`AI_EVIDENCE_RESTRICTED` 这个业务码没有实现**。契约 §14.2 把它列在常见异常里，
+  但**没有说明它的触发条件**；而"授权受限"在数据模型里已经是**行级**状态
+  （`ai_evidence.access_status = RESTRICTED`），HIS-07 靠它逐条表达。
+  为它编一个触发条件就是伪造契约。需要时应在契约里补上语义再实现。
+- 浏览器级验收仍未覆盖 `/ai` 的真实提交流程与引用栏渲染。
+
+---
+
 ## 2026-09-22 — M3-10（续）：AI 研究工作台接真实接口
 
 `/ai` 此前是纯静态原型：写死的场景下拉、写死的标的「浦发银行 SH.600000」、写死的

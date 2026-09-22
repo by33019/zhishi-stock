@@ -2,10 +2,18 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import AiWorkspacePage from './AiWorkspacePage.vue'
-import { createTask, getReport, getScenes, getTask, previewContext } from '@/services/aiApi'
+import {
+  createTask,
+  getReport,
+  getReportEvidence,
+  getScenes,
+  getTask,
+  previewContext,
+} from '@/services/aiApi'
 import { searchSecurities } from '@/services/securityApi'
 import type {
   AiReportDetail,
+  AiReportEvidence,
   AiSceneDefinition,
   AiTaskAccepted,
   AiTaskSummary,
@@ -17,6 +25,7 @@ vi.mock('@/services/aiApi', () => ({
   createTask: vi.fn(),
   getTask: vi.fn(),
   getReport: vi.fn(),
+  getReportEvidence: vi.fn(),
 }))
 vi.mock('@/services/securityApi', () => ({ searchSecurities: vi.fn() }))
 
@@ -83,6 +92,20 @@ function report(): AiReportDetail {
   }
 }
 
+function evidence(overrides: Partial<AiReportEvidence> = {}): AiReportEvidence {
+  return {
+    evidenceNo: 1,
+    evidenceType: 'QUOTE',
+    sourceTitle: '模拟证券600519 行情快照',
+    sourceUrl: null,
+    evidenceSummary: '最新价 13.96，涨跌幅 +1.20%',
+    sourcePublishedAt: NOW,
+    dataTime: NOW,
+    accessStatus: 'AVAILABLE',
+    ...overrides,
+  }
+}
+
 function mountPage() {
   return mount(AiWorkspacePage, {
     global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
@@ -138,7 +161,20 @@ beforeEach(() => {
   vi.mocked(createTask).mockResolvedValue(accepted)
   vi.mocked(getTask).mockResolvedValue(task('COMPLETED', '8001'))
   vi.mocked(getReport).mockResolvedValue(report())
+  vi.mocked(getReportEvidence).mockResolvedValue([evidence()])
 })
+
+/** 走一遍"检索标的 → 选标的 → 提交 → 轮询到完成"的最短路径。 */
+async function runAnalysis(wrapper: ReturnType<typeof mountPage>) {
+  await flushPromises()
+  await wrapper.get('.inline-search input').setValue('600519')
+  await wrapper.get('.inline-search input').trigger('keyup.enter')
+  await flushPromises()
+  await wrapper.get('.target-candidates button').trigger('click')
+  await flushPromises()
+  await wrapper.get('.question-composer button').trigger('click')
+  await flushPromises()
+}
 
 describe('AI 研究工作台', () => {
   it('场景清单来自 AI-01，而不是前端硬编码', async () => {
@@ -260,13 +296,86 @@ describe('AI 研究工作台', () => {
     expect(wrapper.find('.ai-report').exists()).toBe(false)
   })
 
-  it('来源引用区如实说明 HIS-07 未交付，不渲染一份写死的引用列表', async () => {
+  // ---------- 来源引用（HIS-07）----------
+
+  it('报告就位后自动取引用，编号用 evidenceNo（与正文的 [n] 对齐）而不是数组下标', async () => {
+    // 故意让 evidenceNo 不从 1 连续：按下标渲染会得到 [1] [2]，看上去"也对"
+    vi.mocked(getReportEvidence).mockResolvedValue([
+      evidence({ evidenceNo: 2, evidenceType: 'NEWS', sourceTitle: '某公司公告' }),
+      evidence({ evidenceNo: 5, evidenceType: 'SECTOR', sourceTitle: '板块行情' }),
+    ])
+
+    const wrapper = mountPage()
+    await runAnalysis(wrapper)
+
+    expect(getReportEvidence).toHaveBeenCalledWith('8001')
+    expect(wrapper.findAll('.evidence-no').map((node) => node.text())).toEqual(['[2]', '[5]'])
+    // 类型码翻成中文，而不是把 QUOTE / NEWS 直接丢给用户
+    expect(wrapper.text()).toContain('资讯')
+    expect(wrapper.text()).toContain('板块')
+  })
+
+  it('没有 sourceUrl 就不给链接：授权受限与协议不合规都由服务端判过，前端不猜', async () => {
+    vi.mocked(getReportEvidence).mockResolvedValue([
+      evidence({ evidenceNo: 1, accessStatus: 'RESTRICTED', sourceUrl: null }),
+    ])
+
+    const wrapper = mountPage()
+    await runAnalysis(wrapper)
+
+    expect(wrapper.find('.evidence-link').exists()).toBe(false)
+    expect(wrapper.text()).toContain('授权受限，仅摘要')
+    // 摘要必须还在——受限不等于没有证据
+    expect(wrapper.text()).toContain('最新价 13.96')
+  })
+
+  it('有原文地址时给外链，并带上 noopener noreferrer（契约 §24）', async () => {
+    vi.mocked(getReportEvidence).mockResolvedValue([
+      evidence({ evidenceNo: 1, sourceUrl: 'https://news.example.com/a' }),
+    ])
+
+    const wrapper = mountPage()
+    await runAnalysis(wrapper)
+
+    const link = wrapper.get('.evidence-link')
+    expect(link.attributes('href')).toBe('https://news.example.com/a')
+    expect(link.attributes('rel')).toBe('noopener noreferrer')
+    expect(link.attributes('target')).toBe('_blank')
+  })
+
+  it('引用加载失败：显示错误并给重试，不把"读不到"表现成"没有引用"', async () => {
+    vi.mocked(getReportEvidence).mockRejectedValueOnce(
+      Object.assign(new Error('服务暂时不可用'), { traceId: 'trace-9' }),
+    )
+
+    const wrapper = mountPage()
+    await runAnalysis(wrapper)
+
+    expect(wrapper.text()).toContain('服务暂时不可用')
+    expect(wrapper.text()).not.toContain('这份报告没有引用任何来源')
+
+    vi.mocked(getReportEvidence).mockResolvedValue([evidence({ evidenceNo: 1 })])
+    await wrapper.get('.evidence-drawer .link-button').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('.evidence-no').map((node) => node.text())).toEqual(['[1]'])
+  })
+
+  it('报告确实没有引用：明确说明，而不是留一片空白', async () => {
+    vi.mocked(getReportEvidence).mockResolvedValue([])
+
+    const wrapper = mountPage()
+    await runAnalysis(wrapper)
+
+    expect(wrapper.text()).toContain('这份报告没有引用任何来源')
+    expect(wrapper.find('.evidence-link').exists()).toBe(false)
+  })
+
+  it('还没提交时引用栏说明"报告生成后才会有"，不去请求接口', async () => {
     const wrapper = mountPage()
     await flushPromises()
 
-    expect(wrapper.text()).toContain('HIS-07')
-    // 原型里那些写死的 evidenceNo / sourceTitle 必须消失
-    expect(wrapper.text()).not.toContain('浦发银行实时行情')
-    expect(wrapper.text()).not.toContain('银行板块行情')
+    expect(getReportEvidence).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('报告生成后，这里会列出它引用的来源')
   })
 })

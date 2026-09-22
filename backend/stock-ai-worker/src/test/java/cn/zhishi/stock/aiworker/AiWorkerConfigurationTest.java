@@ -9,6 +9,7 @@ import cn.zhishi.stock.ai.application.AiTaskService;
 import cn.zhishi.stock.ai.domain.AiContentHasher;
 import cn.zhishi.stock.ai.domain.AiContextBuilder;
 import cn.zhishi.stock.ai.domain.AiContextSnapshotStore;
+import cn.zhishi.stock.ai.domain.AiEvidenceStore;
 import cn.zhishi.stock.ai.domain.AiMessageStore;
 import cn.zhishi.stock.ai.domain.AiReportStore;
 import cn.zhishi.stock.ai.domain.AiTaskEventStream;
@@ -16,6 +17,7 @@ import cn.zhishi.stock.ai.domain.AiTaskQueue;
 import cn.zhishi.stock.ai.domain.AiTaskStore;
 import cn.zhishi.stock.ai.domain.LlmProviderPort;
 import cn.zhishi.stock.ai.infrastructure.AiContextSnapshotMapper;
+import cn.zhishi.stock.ai.infrastructure.AiEvidenceMapper;
 import cn.zhishi.stock.ai.infrastructure.AiMessageMapper;
 import cn.zhishi.stock.ai.infrastructure.AiReportMapper;
 import cn.zhishi.stock.ai.infrastructure.AiTaskMapper;
@@ -55,6 +57,7 @@ class AiWorkerConfigurationTest {
                     .withBean(AiTaskMapper.class, () -> mock(AiTaskMapper.class))
                     .withBean(AiMessageMapper.class, () -> mock(AiMessageMapper.class))
                     .withBean(AiReportMapper.class, () -> mock(AiReportMapper.class))
+                    .withBean(AiEvidenceMapper.class, () -> mock(AiEvidenceMapper.class))
                     .withBean(AiContextSnapshotMapper.class, () -> mock(AiContextSnapshotMapper.class))
                     .withBean(NewsSourceMapper.class, () -> mock(NewsSourceMapper.class))
                     .withBean(NewsArticleMapper.class, () -> mock(NewsArticleMapper.class))
@@ -67,6 +70,9 @@ class AiWorkerConfigurationTest {
             assertThat(context).hasSingleBean(AiContextSnapshotStore.class);
             assertThat(context).hasSingleBean(AiMessageStore.class);
             assertThat(context).hasSingleBean(AiReportStore.class);
+            // 少这一个的症状不是启动报错，而是**报告写下了、来源一行没有**：
+            // 用户点开引用栏看到空列表，与"这份报告确实没有引用"无法区分。
+            assertThat(context).hasSingleBean(AiEvidenceStore.class);
         });
     }
 

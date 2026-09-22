@@ -201,10 +201,27 @@ class AiWorkerIntegrationTest {
                 .isPositive();
         assertThat(messages.countBySession(sessionId)).isPositive();
 
+        // 来源引用也必须随报告一起落下（HIS-07 的写入侧）。
+        // 这条只能在真库上验：整批 INSERT 的多值 VALUES、两个枚举与 VARCHAR 列的
+        // 映射、以及 uk_ai_evidence_report_no 是否真的建对了——桩全都看不见。
+        assertThat(evidenceRowsOf(task.taskId()))
+                .describedAs("报告写下时，它的来源引用必须一起落库")
+                .isPositive();
+
         assertThat(events.readAfter(task.taskId(), 0, 200))
                 .extracting(event -> event.type())
                 .contains(AiTaskEventType.STATUS, AiTaskEventType.CHUNK,
                         AiTaskEventType.REPORT, AiTaskEventType.DONE);
+    }
+
+    /** {@code ai_report} 没有 {@code user_id}，所以按 {@code task_id} 经报告表关联。 */
+    private int evidenceRowsOf(long taskId) {
+        return jdbc.queryForObject(
+                "SELECT COUNT(*) FROM ai_evidence e"
+                        + " JOIN ai_report r ON r.id = e.report_id"
+                        + " WHERE r.task_id = ?",
+                Integer.class,
+                taskId);
     }
 
     /**
@@ -226,6 +243,7 @@ class AiWorkerIntegrationTest {
         queue.enqueue(task.taskId());
         consumer.poll();
         AiTask afterFirst = tasks.find(task.taskId()).orElseThrow();
+        int evidenceAfterFirst = evidenceRowsOf(task.taskId());
 
         queue.enqueue(task.taskId());
         consumer.poll();
@@ -244,6 +262,14 @@ class AiWorkerIntegrationTest {
                         Integer.class,
                         task.taskId()))
                 .isEqualTo(1);
+        // 证据与报告同生：重复投递也不能让来源翻倍（uk_ai_evidence_report_no 的职责）。
+        // 先断言"第一次确实写了"，否则两边都是 0 时下面那条相等断言会毫无意义地通过。
+        assertThat(evidenceAfterFirst)
+                .describedAs("第一次投递就该把来源引用写下来")
+                .isPositive();
+        assertThat(evidenceRowsOf(task.taskId()))
+                .describedAs("定稿只发生一次，证据行数不该因为重投而翻倍")
+                .isEqualTo(evidenceAfterFirst);
     }
 
     /**

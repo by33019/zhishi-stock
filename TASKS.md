@@ -84,26 +84,28 @@
 - [x] **M3-05** P1 前端 news 接真实 API — 已完成，见下方详情
 - [x] **M3-06** P0 AI Provider 抽象 + 确定性模拟实现 — 已完成，见下方详情
 - [x] **M3-07** P0 AI 任务编排 + SSE 流式契约（V6 表） — 已完成，见下方详情
-- [ ] **M3-08** P0 AI 报告/证据/反馈持久化 — 依赖：M3-07
+- [x] **M3-08** P0 AI 报告/证据/反馈持久化 — 依赖：M3-07
   > 契约 §13.3 定义的是 **HIS-01~HIS-09 共 9 个端点**，此前任务清单只有一句
   > "AI 报告/证据/反馈持久化"，看不出这 9 个端点分别是什么。范围映射只存在于
   > spec 附录里，按"小任务"估工必然中途发现做不完。故在此显式列出。
+  > **9/9 全部完成**。
   - [x] **HIS-06** `GET /ai/reports/{reportId}` 报告读接口 — 已完成，见下方详情
   - [x] **HIS-01** `GET /ai/sessions` 会话历史分页（`scene` / `keyword` / `favorite` / 时间范围）— 已完成，见下方详情
   - [x] **HIS-02** `GET /ai/sessions/{sessionId}` 会话详情 — 已完成，见下方详情
   - [x] **HIS-03** `PATCH /ai/sessions/{sessionId}` 重命名 / 收藏（需 `If-Match`，标题 1~60 字符）— 已完成，见下方详情
   - [x] **HIS-04** `DELETE /ai/sessions/{sessionId}` 软删（需 `If-Match`，默认 30 天后物理清理）— 已完成，见下方详情
   - [x] **HIS-05** `GET /ai/sessions/{sessionId}/messages` 消息分页（**不得返回 `SYSTEM` 内部 Prompt**）— 已完成，见下方详情
-  - [ ] **HIS-07** `GET /ai/reports/{reportId}/evidence` 证据数组 + `ai_evidence` 落库
-    （M3-07 已在快照里固化 `AiEvidenceCandidate` 全集，报告正文的引用编号 `[1]` 目前**无行可反查**）
+  - [x] **HIS-07** `GET /ai/reports/{reportId}/evidence` 证据数组 + `ai_evidence` 落库 — 已完成，见下方详情
   - [x] **HIS-08** `PUT /ai/reports/{reportId}/feedback` 创建或替换本人唯一反馈 + `ai_feedback` 落库 — 已完成，见下方详情
   - [x] **HIS-09** `DELETE /ai/reports/{reportId}/feedback` 删除本人反馈 — 已完成，见下方详情
+  > 遗留：契约 §14.2 列出的 `AI_EVIDENCE_RESTRICTED` **未实现**——契约没有说明它的
+  > 触发条件，而"授权受限"已由行级 `access_status=RESTRICTED` 表达。
+  > 需先在契约里补语义，再实现。
 - [ ] **M3-09** P1 AI 配额与用量统计 — 依赖：M3-07
 - [ ] **M3-10** P0 前端 ai 工作台 + history 接真实 API/SSE — 依赖：M3-08
   > 进行中：`/history` 已接真实接口（HIS-01/02/03/04/05 全部接上，含改名/收藏/两步删除）；
-  > `/ai` 工作台已接真实接口（AI-01/02/03/04 + HIS-06，走轮询）。
-  > 未接入：SSE（AI-05）、取消/重试/追问（AI-06/07/08）、板块与多标的对比场景的标的检索、
-  > 来源引用（HIS-07）。
+  > `/ai` 工作台已接真实接口（AI-01/02/03/04 + HIS-06 + HIS-07，走轮询）。
+  > 未接入：SSE（AI-05）、取消/重试/追问（AI-06/07/08）、板块与多标的对比场景的标的检索。
   > 遗留：浏览器级验收尚未覆盖 /history 的三个写操作与 /ai 的真实提交流程。
 - [ ] **M3-11** P1 后台 admin 最小集 — 依赖：M3-09
 - [ ] **M3-12** P1 热点榜单 Excel 导出 — 依赖：M2-06

@@ -7,6 +7,7 @@ import cn.zhishi.stock.ai.application.AiContextPreviewService;
 import cn.zhishi.stock.ai.application.AiTaskRequestResolver;
 import cn.zhishi.stock.ai.application.AiTaskService;
 import cn.zhishi.stock.ai.domain.AiContextSnapshotStore;
+import cn.zhishi.stock.ai.domain.AiEvidenceStore;
 import cn.zhishi.stock.ai.domain.AiMessageStore;
 import cn.zhishi.stock.ai.domain.AiReportStore;
 import cn.zhishi.stock.ai.domain.AiSessionStore;
@@ -14,6 +15,7 @@ import cn.zhishi.stock.ai.domain.AiTaskEventStream;
 import cn.zhishi.stock.ai.domain.AiTaskQueue;
 import cn.zhishi.stock.ai.domain.AiTaskStore;
 import cn.zhishi.stock.ai.infrastructure.AiContextSnapshotMapper;
+import cn.zhishi.stock.ai.infrastructure.AiEvidenceMapper;
 import cn.zhishi.stock.ai.infrastructure.AiFeedbackMapper;
 import cn.zhishi.stock.ai.infrastructure.AiMessageMapper;
 import cn.zhishi.stock.ai.infrastructure.AiReportMapper;
@@ -72,6 +74,7 @@ class BackendConfigurationTest {
         .withBean(AiSessionMapper.class, () -> mock(AiSessionMapper.class))
         .withBean(AiMessageMapper.class, () -> mock(AiMessageMapper.class))
         .withBean(AiReportMapper.class, () -> mock(AiReportMapper.class))
+        .withBean(AiEvidenceMapper.class, () -> mock(AiEvidenceMapper.class))
         .withBean(AiFeedbackMapper.class, () -> mock(AiFeedbackMapper.class))
         .withBean(AiContextSnapshotMapper.class, () -> mock(AiContextSnapshotMapper.class))
         .withBean(StringRedisTemplate.class, () -> mock(StringRedisTemplate.class))
@@ -117,6 +120,7 @@ class BackendConfigurationTest {
           assertThat(context).hasSingleBean(AiSessionStore.class);
           assertThat(context).hasSingleBean(AiMessageStore.class);
           assertThat(context).hasSingleBean(AiReportStore.class);
+          assertThat(context).hasSingleBean(AiEvidenceStore.class);
           assertThat(context).hasSingleBean(AiContextSnapshotStore.class);
           assertThat(context).hasSingleBean(AiTaskQueue.class);
           assertThat(context).hasSingleBean(AiTaskEventStream.class);

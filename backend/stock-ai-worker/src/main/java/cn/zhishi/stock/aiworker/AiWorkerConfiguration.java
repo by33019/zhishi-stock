@@ -6,6 +6,7 @@ import cn.zhishi.stock.ai.application.AiTaskRecoveryService;
 import cn.zhishi.stock.ai.domain.AiContentHasher;
 import cn.zhishi.stock.ai.domain.AiContextBuilder;
 import cn.zhishi.stock.ai.domain.AiContextSnapshotStore;
+import cn.zhishi.stock.ai.domain.AiEvidenceStore;
 import cn.zhishi.stock.ai.domain.AiMessageStore;
 import cn.zhishi.stock.ai.domain.AiReportStore;
 import cn.zhishi.stock.ai.domain.AiTaskEventStream;
@@ -13,10 +14,12 @@ import cn.zhishi.stock.ai.domain.AiTaskQueue;
 import cn.zhishi.stock.ai.domain.AiTaskStore;
 import cn.zhishi.stock.ai.domain.LlmProviderPort;
 import cn.zhishi.stock.ai.infrastructure.AiContextSnapshotMapper;
+import cn.zhishi.stock.ai.infrastructure.AiEvidenceMapper;
 import cn.zhishi.stock.ai.infrastructure.AiMessageMapper;
 import cn.zhishi.stock.ai.infrastructure.AiReportMapper;
 import cn.zhishi.stock.ai.infrastructure.AiTaskMapper;
 import cn.zhishi.stock.ai.infrastructure.MyBatisAiContextSnapshotStore;
+import cn.zhishi.stock.ai.infrastructure.MyBatisAiEvidenceStore;
 import cn.zhishi.stock.ai.infrastructure.MyBatisAiMessageStore;
 import cn.zhishi.stock.ai.infrastructure.MyBatisAiReportStore;
 import cn.zhishi.stock.ai.infrastructure.MyBatisAiTaskStore;
@@ -319,6 +322,20 @@ public class AiWorkerConfiguration {
         return new MyBatisAiReportStore(mapper, clock);
     }
 
+    /**
+     * 报告来源证据（{@code ai_evidence}）。
+     *
+     * <p>worker **只写不读**：证据随报告定稿一次性写入，读取在 Web 侧
+     * （HIS-07）。所以这里装配的实例只被 {@code AiTaskExecutionService} 用来
+     * {@code insertAll}，{@code listByReport} 在 worker 里没有调用方。
+     * 不为它另写一个"只写"接口——那会让仓储有两个形状，而 {@code listByReport}
+     * 在 Web 侧仍然要存在。
+     */
+    @Bean
+    AiEvidenceStore aiEvidenceStore(AiEvidenceMapper mapper, Clock clock) {
+        return new MyBatisAiEvidenceStore(mapper, clock);
+    }
+
     @Bean
     AiContextSnapshotStore aiContextSnapshotStore(
             AiContextSnapshotMapper mapper,
@@ -360,6 +377,7 @@ public class AiWorkerConfiguration {
             AiContextSnapshotStore aiContextSnapshotStore,
             AiMessageStore aiMessageStore,
             AiReportStore aiReportStore,
+            AiEvidenceStore aiEvidenceStore,
             AiTaskEventStream aiTaskEventStream,
             AiTaskQueue aiTaskQueue,
             AiContextBuilder aiContextBuilder,
@@ -376,6 +394,7 @@ public class AiWorkerConfiguration {
                 aiContextSnapshotStore,
                 aiMessageStore,
                 aiReportStore,
+                aiEvidenceStore,
                 aiTaskEventStream,
                 aiTaskQueue,
                 aiContextBuilder,

@@ -14,7 +14,9 @@ import cn.zhishi.stock.ai.domain.AiContextSnapshot;
 import cn.zhishi.stock.ai.domain.AiContextSnapshotStore;
 import cn.zhishi.stock.ai.domain.AiContextTarget;
 import cn.zhishi.stock.ai.domain.AiContextType;
+import cn.zhishi.stock.ai.domain.AiEvidence;
 import cn.zhishi.stock.ai.domain.AiEvidenceCandidate;
+import cn.zhishi.stock.ai.domain.AiEvidenceStore;
 import cn.zhishi.stock.ai.domain.AiEvidenceType;
 import cn.zhishi.stock.ai.domain.AiMessage;
 import cn.zhishi.stock.ai.domain.AiMessageRole;
@@ -96,6 +98,7 @@ class AiTaskExecutionServiceTest {
     private final InMemorySnapshotStore snapshots = new InMemorySnapshotStore();
     private final InMemoryMessageStore messages = new InMemoryMessageStore();
     private final InMemoryReportStore reports = new InMemoryReportStore();
+    private final InMemoryEvidenceStore evidences = new InMemoryEvidenceStore();
     private final InMemoryEventStream events = new InMemoryEventStream();
     private final RecordingQueue queue = new RecordingQueue();
     private final AiContextBuilder contextBuilder = mock(AiContextBuilder.class);
@@ -138,6 +141,7 @@ class AiTaskExecutionServiceTest {
                 snapshots,
                 messages,
                 reports,
+                evidences,
                 events,
                 queue,
                 contextBuilder,
@@ -251,6 +255,75 @@ class AiTaskExecutionServiceTest {
         assertThat(report.contentHash()).isNotBlank().hasSize(9);
     }
 
+    // ---------- 证据落库（HIS-07 的写入侧）----------
+
+    @Test
+    @DisplayName("定稿把固化的候选原样落成证据行：编号、类型、摘要、来源对象都照搬")
+    void persistsEvidenceCandidatesOnCompletion() {
+        llm.completion = completionOf(Map.of(
+                AiReportSection.CORE_CONCLUSION, "结论 [1]。",
+                AiReportSection.QUOTE_EVIDENCE, "依据 [1]。",
+                AiReportSection.RISK_AND_UNCERTAINTY, "风险。",
+                AiReportSection.DISCLAIMER, "免责。"));
+
+        assertThat(service().execute(TASK_ID)).isEqualTo(AiTaskExecutionService.Outcome.COMPLETED);
+
+        AiReport report = reports.rows.get(0);
+        assertThat(evidences.rows).hasSize(1);
+        AiEvidence evidence = evidences.rows.get(0);
+        assertThat(evidence.reportId())
+                .describedAs("证据必须挂在刚写下的那份报告下")
+                .isEqualTo(report.reportId());
+        assertThat(evidence.evidenceNo()).isEqualTo(1);
+        assertThat(evidence.evidenceType()).isEqualTo(AiEvidenceType.QUOTE);
+        assertThat(evidence.sourceObjectType()).isEqualTo("SECURITY");
+        assertThat(evidence.sourceObjectId()).isEqualTo(600519L);
+        assertThat(evidence.evidenceSummary()).isEqualTo("最新价 10.00，涨跌幅 +1.00%");
+        assertThat(evidence.contentHash()).isEqualTo("hash-evidence");
+        assertThat(evidence.createdAt()).isEqualTo(OffsetDateTime.now(CLOCK));
+        assertThat(evidence.contextSnapshotId())
+                .describedAs("候选不携带快照引用，这里就不能编一个看起来合理的值")
+                .isNull();
+    }
+
+    @Test
+    @DisplayName("候选为空：一行证据都不写，也不留占位行")
+    void writesNoEvidenceWhenCandidatesEmpty() {
+        when(contextBuilder.build(any(), any(), any()))
+                .thenReturn(context(List.of(), true, List.of()));
+        llm.completion = completionOf(Map.of(
+                AiReportSection.CORE_CONCLUSION, "结论。",
+                AiReportSection.QUOTE_EVIDENCE, "依据。",
+                AiReportSection.RISK_AND_UNCERTAINTY, "风险。",
+                AiReportSection.DISCLAIMER, "免责。"));
+
+        service().execute(TASK_ID);
+
+        assertThat(reports.rows).hasSize(1);
+        assertThat(evidences.rows).isEmpty();
+    }
+
+    @Test
+    @DisplayName("候选乱序传入：写下的编号仍是升序（仓储写入契约）")
+    void writesEvidenceInAscendingEvidenceNo() {
+        when(contextBuilder.build(any(), any(), any())).thenReturn(context(List.of(), true, List.of(
+                candidate(3, AiEvidenceType.NEWS),
+                candidate(1, AiEvidenceType.QUOTE),
+                candidate(2, AiEvidenceType.KLINE))));
+        llm.completion = completionOf(Map.of(
+                AiReportSection.CORE_CONCLUSION, "结论。",
+                AiReportSection.QUOTE_EVIDENCE, "依据。",
+                AiReportSection.RISK_AND_UNCERTAINTY, "风险。",
+                AiReportSection.DISCLAIMER, "免责。"));
+
+        service().execute(TASK_ID);
+
+        assertThat(evidences.rows)
+                .extracting(AiEvidence::evidenceNo)
+                .describedAs("仓储契约要求整批按 evidenceNo 升序写入")
+                .containsExactly(1, 2, 3);
+    }
+
     @Test
     @DisplayName("内容哈希：改掉任意一个章节，哈希就变（六章节全部参与）")
     void contentHashCoversEverySection() {
@@ -259,6 +332,7 @@ class AiTaskExecutionServiceTest {
         String baseline = reports.rows.get(0).contentHash();
 
         reports.rows.clear();
+        evidences.rows.clear();
         tasks.rows.get(0).status = AiTaskStatus.QUEUED;
         events.byTask.clear();
         Map<AiReportSection, String> changed = new LinkedHashMap<>(validSections());
@@ -443,6 +517,23 @@ class AiTaskExecutionServiceTest {
     }
 
     private static AiContextBuildResult context(List<String> limitations, boolean coreAvailable) {
+        return context(limitations, coreAvailable, List.of(new AiEvidenceCandidate(
+                1,
+                AiEvidenceType.QUOTE,
+                "SECURITY",
+                600519L,
+                "模拟证券600519",
+                null,
+                "最新价 10.00，涨跌幅 +1.00%",
+                CUTOFF,
+                CUTOFF,
+                cn.zhishi.stock.ai.domain.AiEvidenceAccessStatus.AVAILABLE,
+                "hash-evidence")));
+    }
+
+    /** 带自定义证据候选的上下文：用于"候选为空"与"多条候选"两条边界。 */
+    private static AiContextBuildResult context(
+            List<String> limitations, boolean coreAvailable, List<AiEvidenceCandidate> evidence) {
         List<AiContextSnapshot> snapshotList = new ArrayList<>();
         snapshotList.add(new AiContextSnapshot(
                 1,
@@ -466,19 +557,22 @@ class AiTaskExecutionServiceTest {
                 "hash-sector",
                 Map.of("sectorId", "bk-ai"),
                 false));
-        List<AiEvidenceCandidate> evidence = List.of(new AiEvidenceCandidate(
-                1,
-                AiEvidenceType.QUOTE,
+        return new AiContextBuildResult(snapshotList, evidence, limitations, coreAvailable);
+    }
+
+    private static AiEvidenceCandidate candidate(int evidenceNo, AiEvidenceType type) {
+        return new AiEvidenceCandidate(
+                evidenceNo,
+                type,
                 "SECURITY",
                 600519L,
-                "模拟证券600519",
+                "来源标题" + evidenceNo,
                 null,
-                "最新价 10.00，涨跌幅 +1.00%",
+                "来源摘要" + evidenceNo,
                 CUTOFF,
                 CUTOFF,
                 cn.zhishi.stock.ai.domain.AiEvidenceAccessStatus.AVAILABLE,
-                "hash-evidence"));
-        return new AiContextBuildResult(snapshotList, evidence, limitations, coreAvailable);
+                "hash-" + evidenceNo);
     }
 
     /** 按章节拼出片段序列，每章一段（足够覆盖校验逻辑）。 */
@@ -760,6 +854,31 @@ class AiTaskExecutionServiceTest {
         @Override
         public Optional<AiReport> findByTask(long taskId) {
             return rows.stream().filter(row -> row.taskId() == taskId).findFirst();
+        }
+    }
+
+    /**
+     * 证据桩。
+     *
+     * <p>{@code insertAll} 如实按"整批写入"落地、不做去重——真实实现靠
+     * {@code uk_ai_evidence_report_no} 阻断重复，桩里若悄悄去重，
+     * "定稿被跑了两遍导致证据翻倍"这类缺陷就永远看不出来。
+     */
+    private static final class InMemoryEvidenceStore implements AiEvidenceStore {
+        final List<AiEvidence> rows = new ArrayList<>();
+
+        @Override
+        public void insertAll(List<AiEvidence> evidences) {
+            // 原样存：evidenceId / reportId 由用例层分配（与 MyBatisAiEvidenceStore 一致）
+            rows.addAll(evidences);
+        }
+
+        @Override
+        public List<AiEvidence> listByReport(long reportId) {
+            return rows.stream()
+                    .filter(row -> row.reportId() == reportId)
+                    .sorted(Comparator.comparingInt(AiEvidence::evidenceNo))
+                    .toList();
         }
     }
 

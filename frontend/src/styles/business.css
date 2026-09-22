@@ -493,6 +493,16 @@
 .evidence-cards small { color: var(--ink-faint); font-size: var(--text-caption); }
 .evidence-empty { display: grid; place-items: center; min-height: 210px; border: 1px dashed var(--line-strong); border-radius: 9px; color: var(--ink-faint); font-size: var(--text-body); text-align: center; }
 .evidence-empty p { max-width: 150px; line-height: 1.6; }
+/* 来源引用列表（HIS-07 的真实数据）。沿用 .evidence-cards 的卡片观感，但编号是正文里的 [n]。 */
+.evidence-list { display: grid; gap: 9px; margin: 0; padding: 0; list-style: none; }
+.evidence-list > li { padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--white); }
+.evidence-head { display: flex; align-items: center; justify-content: space-between; }
+.evidence-no { color: var(--gold); font-size: var(--text-caption); font-weight: 800; }
+.evidence-type { color: var(--ink-faint); font-size: var(--text-caption); }
+.evidence-title { margin: 10px 0 5px; font-family: var(--font-serif); font-size: var(--text-card-title); }
+.evidence-summary { margin: 0 0 6px; color: var(--ink-soft); font-size: var(--text-caption); line-height: 1.6; }
+.evidence-meta { margin: 0; color: var(--ink-faint); font-size: var(--text-caption); }
+.evidence-link { display: inline-block; margin-top: 7px; color: var(--nav); font-size: var(--text-caption); font-weight: 700; }
 
 .history-layout { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 16px; }
 .history-filter { align-self: start; padding: 15px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--panel-bg); }

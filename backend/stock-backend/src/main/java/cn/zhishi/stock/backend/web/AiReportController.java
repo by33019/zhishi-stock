@@ -1,5 +1,6 @@
 package cn.zhishi.stock.backend.web;
 
+import cn.zhishi.stock.ai.application.AiEvidenceView;
 import cn.zhishi.stock.ai.application.AiFeedbackService;
 import cn.zhishi.stock.ai.application.AiFeedbackView;
 import cn.zhishi.stock.ai.application.AiReportDetail;
@@ -9,6 +10,7 @@ import cn.zhishi.stock.system.auth.AccessTokenPrincipal;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Clock;
 import java.time.OffsetDateTime;
+import java.util.List;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -16,24 +18,25 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * AI 报告接口（契约 §13.3 HIS-06 / HIS-08 / HIS-09）。
+ * AI 报告接口（契约 §13.3 HIS-06 / HIS-07 / HIS-08 / HIS-09）。
  *
  * <h2>为什么单独一个控制器，而不是塞进 {@code AiTaskController}</h2>
  * 路径同在 {@code /api/v1/ai} 下，但资源不同：任务是"排队中/运行中"的过程对象，
- * 报告是定稿后不可变的结果对象，反馈是挂在报告上的用户标注。M3-08 还要往这里挂
- * HIS-07（证据），全部挂到任务控制器上会让三套生命周期混在一个类里。
+ * 报告是定稿后不可变的结果对象，来源引用与反馈是挂在报告上的两个子视图。
+ * 全部挂到任务控制器上会让几套生命周期混在一个类里。
  *
  * <h2>归属校验在用例层</h2>
  * 与 {@code AiTaskController} 同一处置：别人的报告与不存在的报告返回同一句
  * {@code AI_REPORT_NOT_FOUND}，因此这里不因为多写一次判断而泄露"这个 ID 存在"（契约 §23.1）。
  *
  * <h2>读写两类的幂等要求不同</h2>
- * HIS-06 是纯读、不需要 {@code Idempotency-Key}；HIS-08 是 PUT——**方法本身**就是幂等的
- * （同一份 body 重复提交得到同一结果），契约也没有为它要求幂等键。HIS-09 同理：
- * 重复删除的结果都是"现在没有反馈"。
+ * HIS-06 / HIS-07 是纯读、不需要 {@code Idempotency-Key}；HIS-08 是 PUT——**方法本身**
+ * 就是幂等的（同一份 body 重复提交得到同一结果），契约也没有为它要求幂等键。
+ * HIS-09 同理：重复删除的结果都是"现在没有反馈"。
  */
 @RestController
 @RequestMapping("/api/v1/ai")
@@ -58,6 +61,33 @@ public class AiReportController {
             HttpServletRequest request) {
         long userId = principal(authentication).userId();
         return success(reports.get(reportId, userId), request);
+    }
+
+    /**
+     * HIS-07：查询本人报告引用的来源。
+     *
+     * <h2>为什么不挂在 HIS-06 的响应里</h2>
+     * 契约把它们定义成两个资源。合进来会让"报告详情"这个响应的体积随引用数增长，
+     * 而历史页的列表、导出等路径并不需要引用——它们会为了一份用不到的数据多付一次查询。
+     *
+     * <h2>空数组与 404 的分工</h2>
+     * 报告不存在或不属于本人 → 404（{@code AiReportQueryService.requireOwned}）；
+     * 报告在但没有引用行 → {@code 200} + 空数组。"查不到这份报告"与
+     * "这份报告没有引用"必须可区分，否则前端会把越权当成"没有引用"。
+     *
+     * @param evidenceType 可选过滤，取值同 {@code AiEvidenceType}；不合法时由用例层
+     *                     抛 {@code InvalidAiEvidenceQueryException} → 400
+     *                     （声明为 {@code String} 而不是枚举，同 HIS-08 的处置：
+     *                     让"取值不在白名单"与"参数格式错误"保持可区分）
+     */
+    @GetMapping("/reports/{reportId}/evidence")
+    public ApiResponse<List<AiEvidenceView>> evidence(
+            Authentication authentication,
+            @PathVariable long reportId,
+            @RequestParam(name = "evidenceType", required = false) String evidenceType,
+            HttpServletRequest request) {
+        long userId = principal(authentication).userId();
+        return success(reports.listEvidence(reportId, userId, evidenceType), request);
     }
 
     /** HIS-08：创建或替换本人对这份报告的唯一反馈。 */
