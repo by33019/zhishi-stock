@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import AiWorkspacePage from './AiWorkspacePage.vue'
 import {
   createTask,
+  getMyAiQuota,
   getReport,
   getReportEvidence,
   getScenes,
@@ -26,6 +27,7 @@ vi.mock('@/services/aiApi', () => ({
   getTask: vi.fn(),
   getReport: vi.fn(),
   getReportEvidence: vi.fn(),
+  getMyAiQuota: vi.fn(),
 }))
 vi.mock('@/services/securityApi', () => ({ searchSecurities: vi.fn() }))
 
@@ -150,6 +152,7 @@ beforeEach(() => {
     statusUrl: '/api/v1/ai/tasks/7001',
     streamUrl: '/api/v1/ai/tasks/7001/stream',
     quota: {
+      date: '2026-09-22',
       dailyLimit: 20,
       usedCount: 1,
       remainingCount: 19,
@@ -162,6 +165,17 @@ beforeEach(() => {
   vi.mocked(getTask).mockResolvedValue(task('COMPLETED', '8001'))
   vi.mocked(getReport).mockResolvedValue(report())
   vi.mocked(getReportEvidence).mockResolvedValue([evidence()])
+  // USER-07：进页面就取一次配额。给一个与提交后**不同**的数，用来证明
+  // 页面上显示的是 AI-03 覆盖后的值，而不是这个初始值。
+  vi.mocked(getMyAiQuota).mockResolvedValue({
+    date: '2026-09-22',
+    dailyLimit: 20,
+    usedCount: 0,
+    remainingCount: 20,
+    runningCount: 0,
+    concurrentLimit: 2,
+    resetsAt: '2026-09-23T00:00:00+08:00',
+  })
 })
 
 /** 走一遍"检索标的 → 选标的 → 提交 → 轮询到完成"的最短路径。 */
@@ -185,6 +199,25 @@ describe('AI 研究工作台', () => {
     const options = wrapper.findAll('select option').map((option) => option.text())
     expect(options).toContain('个股研究')
     expect(options).toContain('多标的对比')
+  })
+
+  it('进页面就用 USER-07 读到配额：不点提交也知道还剩几次', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+
+    expect(getMyAiQuota).toHaveBeenCalledOnce()
+    expect(wrapper.get('.quota-note').text()).toContain('今日剩余 20 / 20 次')
+    expect(wrapper.get('.quota-note').text()).toContain('重置于')
+  })
+
+  it('配额读不到时如实说明，不编一个"还剩 20 次"', async () => {
+    vi.mocked(getMyAiQuota).mockRejectedValueOnce({ message: '配额服务暂时不可用' })
+
+    const wrapper = mountPage()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('配额服务暂时不可用')
+    expect(wrapper.find('.quota-note').exists()).toBe(false)
   })
 
   it('预览展示数据截止与数据缺口（缺口与报告的受限原因同源）', async () => {

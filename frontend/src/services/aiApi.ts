@@ -7,6 +7,7 @@ import type {
   AiScene,
   AiSceneDefinition,
   AiTaskAccepted,
+  AiTaskQuota,
   AiTaskSummary,
 } from '@/types/domain'
 
@@ -88,4 +89,18 @@ export function getReportEvidence(reportId: string, evidenceType?: string) {
   return apiRequest<AiReportEvidence[]>(
     `/ai/reports/${encodeURIComponent(reportId)}/evidence${search}`,
   )
+}
+
+/**
+ * USER-07：当前用户的 AI 当日配额与并发占用。
+ *
+ * 路径在 `/users/me` 下而不是 `/ai` 下，**照抄契约，不要"顺手改到 AI 模块"**：
+ * 它是当前用户的属性，鉴权只要"已登录"，与 AI 模块的权限无关。
+ * 挪过去，一个没有 AI 权限的用户连自己还剩几次都读不到。
+ *
+ * 与 AI-03 响应里的 `quota` 是**同一批字段的同一份事实**（服务端两边都出自
+ * `AiQuotaQueryService`），所以前端两处共用 `AiTaskQuota` 一个类型即可。
+ */
+export function getMyAiQuota() {
+  return apiRequest<AiTaskQuota>('/users/me/ai-quota')
 }

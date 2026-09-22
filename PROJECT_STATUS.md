@@ -50,7 +50,7 @@
 | --- | --- | --- |
 | M1 | 合流与工程地基 | 🟢 15/16 完成（仅 M1-07 的「GitHub 分支保护」需用户操作） |
 | M2 | 市场域纵向补全（游客主流程全真实） | ✅ **11/11 完成**（M2-01 交易日历与市场状态、M2-02 市场广度、M2-03 成交趋势、M2-04 证券主数据与搜索建议、M2-05 个股快照与日/周/月 K 线、M2-06 榜单、M2-07 板块排行/详情/成分股、M2-08 前端四页接入真实接口、M2-09 全局搜索接真实接口、M2-10 市场状态真实化、M2-11 总览板块预览真实化） |
-| M3 | 用户态闭环与 AI 研究编排 | 🟡 **7/12 完成**（M3-01 自选分组 CRUD、M3-02 自选项 CRUD + 排序 + 行情概览、M3-03 前端 `/watchlist` 接真实 API、M3-04 资讯域（第 7 个模块 `stock-news`）+ 六个接口 + 定时采集落库、M3-05 前端 `/news` 接真实资讯接口、M3-06 AI Provider 抽象（第 8 个模块 `stock-ai`）+ AI-01/AI-02 两个接口、**M3-07 AI 任务编排 + SSE 流式契约（第 9 个模块 `stock-ai-worker`）+ AI-03~AI-08 六个端点**；**自选闭环、资讯域、AI 上下文预览、AI 任务全链路四条链路都已端到端可用，且仓库里不再有 mock 通路**） |
+| M3 | 用户态闭环与 AI 研究编排 | 🟡 **9/12 完成**（M3-01 自选分组 CRUD、M3-02 自选项 CRUD + 排序 + 行情概览、M3-03 前端 `/watchlist` 接真实 API、M3-04 资讯域（第 7 个模块 `stock-news`）+ 六个接口 + 定时采集落库、M3-05 前端 `/news` 接真实资讯接口、M3-06 AI Provider 抽象（第 8 个模块 `stock-ai`）+ AI-01/AI-02 两个接口、**M3-07 AI 任务编排 + SSE 流式契约（第 9 个模块 `stock-ai-worker`）+ AI-03~AI-08 六个端点**、**M3-08 报告/证据/反馈持久化收口（HIS-01~HIS-09 共 9 个端点全部完成）**、**M3-09 AI 配额与用量统计（`ai_usage` 写入侧 + USER-07 `GET /users/me/ai-quota`）**；**自选闭环、资讯域、AI 上下文预览、AI 任务全链路、AI 历史与报告读回五条链路都已端到端可用，且仓库里不再有 mock 通路**） |
 
 ## 5. 已完成能力盘点
 
@@ -59,8 +59,8 @@
 | 设计文档 | ✅ 100% | PRD 86KB、Architecture 53KB、RESTful-API 79KB + superpowers specs/plans |
 | 数据库迁移 | ✅ 结构 100% / 两条路径均验证 | Flyway V1–V8；旧库样本 149KB（原 24MB） |
 | 前端原型 | ✅ 页面 100% / 真实接入 10/11 | 11 路由全部有页面；`/market`、`/login`、`/rankings`、`/sectors`、`/sectors/:id`、`/stocks/:id`、`/watchlist`、`/news` 接真实 API；**顶栏全局搜索框已接 STK-01、顶栏市场状态与侧栏数据源已接 MKT-02**（两者都是非路由的全局组件）；`/ai`（AI-01~04 + HIS-06/07，走轮询）与 `/history`（HIS-01~05，含改名/收藏/两步删除）已接真实接口；`/admin` 仍是本地演示数据的静态页面（M3-11）；**`services/mockApi.ts` 已随 M3-05 删除**，仓库里不再有 mock 通路 |
-| 后端 | 🟡 8/9 域 | 认证闭环 ✅、市场总览（MKT-01~04）🟡、证券主数据与个股行情（STK-01/02/04/07）🟡、榜单（QTE-01）🟡、板块（SEC-01/02/03/04/06/**07**）🟡、**自选中心（WAT-01~WAT-12）✅ 后端完整**、**资讯域（NEWS-01~04 + STK-10 + SEC-07）✅ 后端完整且落库**、**AI 域（AI-01~AI-08 + HIS-01~HIS-09）✅ 全链路可用**——任务编排、SSE 中继、报告与来源证据落库都已端到端验证；V6 的 9 张表中 7 张已有真实数据，`ai_feedback` / `ai_usage` 属 M3-08 / M3-09 |
-| 测试 | ✅ 1040 个 | 后端 890 + 前端 150；无覆盖率门槛 |
+| 后端 | 🟡 8/9 域 | 认证闭环 ✅、市场总览（MKT-01~04）🟡、证券主数据与个股行情（STK-01/02/04/07）🟡、榜单（QTE-01）🟡、板块（SEC-01/02/03/04/06/**07**）🟡、**自选中心（WAT-01~WAT-12）✅ 后端完整**、**资讯域（NEWS-01~04 + STK-10 + SEC-07）✅ 后端完整且落库**、**AI 域（AI-01~AI-08 + HIS-01~HIS-09 + USER-07）✅ 全链路可用**——任务编排、SSE 中继、报告与来源证据落库、调用用量台账都已端到端验证；**V6 的 9 张表全部已有真实数据**（`ai_feedback` 由 M3-08、`ai_usage` 由 M3-09 补上） |
+| 测试 | ✅ 1150 个 | 后端 976（9 个模块）+ 前端 174；无覆盖率门槛 |
 | 工程化 | 🟢 85% | CI 工作流 ✅、TASKS/STATUS/CHANGELOG ✅、根与模块 README ✅、容器构建稳定 ✅；分支保护待用户配置 |
 
 ## 6. 已知问题（按严重度）
@@ -68,7 +68,7 @@
 | # | 问题 | 严重度 | 处置 |
 | --- | --- | --- | --- |
 | 1 | 分支保护未设置（CI 四个作业已实际跑通） | 🟡 | M1-07 收尾（需用户在 GitHub 配置必需检查） |
-| 2 | 5 个前端页面尚无真实数据源 | 🟠 | M2-08 已接入 rankings / sectors / sectors:id / stocks:id 四页（真实接入 2/11 → 6/11）；`/news` 已由 M3-05 接入、`/watchlist` 由 M3-03 接入，**`services/mockApi.ts` 已删除**；剩余 `/ai`、`/history`、`/admin` 是静态原型、连 mock 都没有（M3-10 / M3-11） |
+| 2 | 前端页面真实数据源 | 🔵 | M2-08 接入 rankings / sectors / sectors:id / stocks:id 四页；`/news` 由 M3-05、`/watchlist` 由 M3-03、`/ai` 与 `/history` 由 M3-10 接入，**`services/mockApi.ts` 已删除**；**仅剩 `/admin` 仍是本地演示数据的静态页面（M3-11）** |
 | 3 | 认证默认值偏松（`JWT_SECRET` 默认空、dev `COOKIE_SECURE=false`、演示账号固定密码） | 🟡 | 生产 profile 需单独加固，待排期 |
 | 4 | `preflight_existing_schema.sql` 第 8 段永远不会触发（`block_label` 实际是 `varchar(10)`，检查条件为 `> 20`） | 🔵 | 设计上的防御性检查，无实际影响，仅记录 |
 | 5 | 独立 `MockMvc` 的日期序列化与线上不一致（`LocalDate` → `[2026,9,11]`） | 🔵 | **已修复**：契约测试显式构造 `ObjectMapper` 关闭 `WRITE_DATES_AS_TIMESTAMPS`。后续新增契约测试需沿用同一 helper，否则日期断言会失真 |
@@ -89,7 +89,7 @@
 | 20 | **WAT-11 的 `latestNewsCount` 无法表达“0 条”**：`NewsCountProvider` 的端口注释声称“0 条”与“不知道”可区分，但实现里**没有任何代码路径产生“未知”**——`countSince` 无论资讯源是否可用都只返回“有条数”的证券，于是“0 条”这个事实被写成了“不知道”，前端只能渲染“—” | 🔵 | M3-04 e2e 实测发现（`sim-600519` 无资讯 → `null`；`newsSince=2026-09-19` 时三只全 `null`）。本轮**不改**：契约 §12.2 没规定 `null`/`0` 语义，且 M3-03 已立下“缺失即 `null`”的口径。**M3-05 已定前端处置**：`null` 时**不渲染该字段**（不是渲染成“0 条”，也不是渲染成“—”）；后端语义的最终决定留到有真实资讯源之后，届时要么给 WAT-11 补一个资讯新鲜度字段（契约增量），要么把缺失当 `0`（此时“未知”只剩“悬空证券”一种）。原建议是：要么给 WAT-11 补一个资讯新鲜度字段（契约增量），要么把缺失当 `0`（此时“未知”只剩“悬空证券”一种）。**在那之前，前端不要把 `null` 渲染成“0 条”** |
 | 21 | **`GET /news/options` 的 `availableTimeRange` 多出一个契约外的 `empty` 字段**：`NewsTimeRange.isEmpty()` 是**无参** `isXxx()` 方法，Jackson 按 getter 规则把它序列化进了响应（契约 §4.3 只列 `startAt` / `endAt`） | 🔵 | M3-05 e2e 实测发现。修法是给该方法加 `@JsonIgnore`（一行）。**本轮不改**：M3-05 是前端里程碑、前端类型不认这个字段、功能无影响。同类风险：同模块的 `Sector.isType(SectorType)` 与 `LoginAttemptState.isLocked(Instant)` 都带参数，不受影响——**新增 record 的无参 `isXxx()` 方法前要想一下它会不会被序列化** |
 | 22 | **AI 上下文只接入了 7 类 `dataCategory` 中的 3 类**（`QUOTE` / `SECTOR` / `NEWS`；V6 的 CHECK 另列 `KLINE` / `BUSINESS` / `CALENDAR` / `RULE`） | 🔵 | M3-06 交付范围。`dataCategories` **只列实际取到的类别**——为未接入的 4 类补一个「看起来合法的截止时间」就是编造。各自数据源就位后逐个接入 |
-| 23 | ~~AI 域 V6 的 9 张表仍为零行零引用~~ | ✅ | **M3-07 已关闭 6/9**：`ai_session` / `ai_task` / `ai_task_target` / `ai_context_snapshot` / `ai_message` / `ai_report` 已有真实数据（由 worker 真实执行写入，非夹具）。剩 `ai_evidence` / `ai_feedback` / `ai_usage` 三张属 M3-08 |
+| 23 | ~~AI 域 V6 的 9 张表仍为零行零引用~~ | ✅ | **M3-07 关闭 6/9**：`ai_session` / `ai_task` / `ai_task_target` / `ai_context_snapshot` / `ai_message` / `ai_report` 已有真实数据（由 worker 真实执行写入，非夹具）。**M3-08 补 `ai_evidence` / `ai_feedback`、M3-09 补 `ai_usage` → 9/9 全部有真实数据** |
 | 24 | **契约 §13.5 的全局 30 并发上限未实现**（只做了单用户并发上限 2） | 🔵 | 全局上限需要跨实例的计数（Redis 或 DB 聚合），而本轮只验证了单实例形态。单用户闸门已实现并有测试；全局闸门按"不要按模块零散加"的原则随限流一起排期（同 #17） |
 | 25 | **`AiTaskStore.findByRequestId` 传非 ASCII 串会抛 collation 错而不是返回空**（`request_id` 是 `char(36) ascii_bin`） | 🔵 | M3-07 集成测试发现。生产路径上该参数永远是由 `(userId, Idempotency-Key)` 派生的 UUID，因此不可达；只记录，不加防御分支 |
 
@@ -204,7 +204,9 @@ docker exec -i zhishi-legacy-mysql-1 mysql -ustock -pstock_dev_password stock_sy
 前端接入（M2-10）：顶栏市场状态 + 侧栏数据源 → MKT-02（composables/useMarketStatus：60s 刷新 + 页面不可见暂停）
 资讯接口（M3-04，六个全 PUBLIC）：NEWS-01~04、STK-10、SEC-07 —— **前端已由 M3-05 消费**（`/news` 列表 + 筛选项）
                                         WAT-11 的 latestNewsCount / newsSince 已接真实资讯数（M3-04）
-AI 接口（M3-06，两个均需认证）：AI-01 `GET /ai/scenes`、AI-02 `POST /ai/context-previews` —— **前端尚未消费，归属 M3-10**
+AI 接口（M3-06，两个均需认证）：AI-01 `GET /ai/scenes`、AI-02 `POST /ai/context-previews` —— **前端已由 M3-10 消费**（`/ai` 工作台：场景下拉来自 AI-01，预览与数据缺口来自 AI-02）
+配额接口（M3-09，需认证）：USER-07 `GET /users/me/ai-quota` —— **前端已消费**（`/ai` 进页面即读，显示今日剩余与重置时刻）
+调用用量：`ai_usage` 每次真实 Provider 调用一行（成功与失败都记），`estimated_cost` 恒 0（无价格表，不做估算）
 ```
 
 **不可动摇的架构约束**：前端不直连任何数据源；AI 由 Spring Boot 编排第三方 LLM（不提前拆 FastAPI）；MySQL 无外键，业务写入靠应用层事务 + 乐观锁 + Outbox。
@@ -239,7 +241,7 @@ AI 接口（M3-06，两个均需认证）：AI-01 `GET /ai/scenes`、AI-02 `POST
 | `GET /news/{id}`、`GET /news/sync-status` | — | 列表页不需要：NEWS-01 已含契约 §4.3 的全部摘要字段，`dataStatus` / `lastSuccessfulSyncAt` 也与 NEWS-03 同源。**详情页未排期**，列表已能完成「看摘要 → 跳原文」 |
 | `GET /securities/{id}/news`、`GET /sectors/{id}/news` | 后续 | 个股页与板块页的资讯段，随这两页的后续工作排期 |
 
-**下一步：M3 已开工（6/12）**，按契约依赖推进：
+**下一步：M3 已开工（9/12）**，按契约依赖推进：
 
 1. ✅ M3-01 自选分组 CRUD → ✅ M3-02 自选项 CRUD + 排序 + 行情概览 → ✅ M3-03 前端 `/watchlist` 接真实 API
    —— **自选闭环已端到端可用**（后端 12 接口 + 前端页，e2e 实测）
@@ -251,7 +253,8 @@ AI 接口（M3-06，两个均需认证）：AI-01 `GET /ai/scenes`、AI-02 `POST
 4. ✅ **M3-06 AI Provider 抽象 + 确定性模拟实现** —— 第 8 个模块 `stock-ai`（31 个 main 类型 + 4 个测试类），
    AI-01 / AI-02 两个接口；e2e 实测 + 受控实验验证 `allow_ai_analysis`；本轮顺带修掉 2 个真实缺陷
    （上下文哈希对数据时间不敏感、区间不合法被报成 `AI_TARGET_INVALID`）
-   → M3-07 编排 + SSE → M3-08 报告/证据持久化 → M3-09 配额 → M3-10 AI 工作台 + history → M3-11 后台最小集 → M3-12 热点榜单导出
+5. ✅ **M3-07 AI 任务编排 + SSE 流式契约** → ✅ **M3-08 报告/证据/反馈持久化（HIS-01~HIS-09 全部收口）**
+   → ✅ **M3-09 配额与用量统计** → ⏭ M3-10 AI 工作台 + history 续作 → M3-11 后台最小集 → M3-12 热点榜单导出
 5. **STK-05 批量行情接口**（已知问题 #10）—— M2-09 遗留的搜索建议无涨跌幅依赖它；
    底层 `SimulatedQuoteSnapshotProvider` 已同时提供单只与整批，实现成本很低
 

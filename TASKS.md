@@ -101,10 +101,14 @@
   > 遗留：契约 §14.2 列出的 `AI_EVIDENCE_RESTRICTED` **未实现**——契约没有说明它的
   > 触发条件，而"授权受限"已由行级 `access_status=RESTRICTED` 表达。
   > 需先在契约里补语义，再实现。
-- [ ] **M3-09** P1 AI 配额与用量统计 — 依赖：M3-07
+- [x] **M3-09** P1 AI 配额与用量统计 — 已完成，见下方详情
+  > 写入侧：每次真实 Provider 调用在 `ai_usage` 记一行（成功与失败都记）；
+  > 读取侧：USER-07 `GET /users/me/ai-quota`，前端 `/ai` 进页面即读。
+  > 口径：**额度按「任务」扣（创建时），用量按「调用」记（每次调用）**，
+  > 两条口径各自只有一处产出，互不替代。
 - [ ] **M3-10** P0 前端 ai 工作台 + history 接真实 API/SSE — 依赖：M3-08
   > 进行中：`/history` 已接真实接口（HIS-01/02/03/04/05 全部接上，含改名/收藏/两步删除）；
-  > `/ai` 工作台已接真实接口（AI-01/02/03/04 + HIS-06 + HIS-07，走轮询）。
+  > `/ai` 工作台已接真实接口（AI-01/02/03/04 + HIS-06 + HIS-07 + USER-07，走轮询）。
   > 未接入：SSE（AI-05）、取消/重试/追问（AI-06/07/08）、板块与多标的对比场景的标的检索。
   > 遗留：浏览器级验收尚未覆盖 /history 的三个写操作与 /ai 的真实提交流程。
 - [ ] **M3-11** P1 后台 admin 最小集 — 依赖：M3-09
@@ -1655,3 +1659,93 @@ Redis Stream 队列（`stream:ai:tasks`，消费组 `ai-worker`）与事件流
 `keyword=端到端` 命中 1 条、不存在关键字命中 0 条，`scene=STOCK`=4 而 `MARKET`/`SECTOR`=0；
 消息 200 且**角色集合只有 USER / ASSISTANT**；不存在会话 404；未登录 401。
 单测：`stock-ai` 191 项、`stock-backend` 45 项全绿。
+
+---
+
+## M3-09 交付详情
+
+**交付范围**：AI 的**配额**（用户还能创建几个任务）与**用量**（每一次真实 Provider 调用
+花了多少 token）。同样是"V6 表结构就绪、零代码引用"的那种活：`ai_usage` 建了 21 列
+却没有任何一行代码写它。
+
+| 项 | 内容 |
+| --- | --- |
+| 写入侧 | `AiUsage` / `AiUsageStore` / `AiUsageResultStatus`（`stock-ai` domain） |
+| 持久化 | `AiUsageRow`、`AiUsageMapper`（单条 `@Insert`）、`MyBatisAiUsageStore` |
+| 埋点 | `AiTaskExecutionService.recordUsageSuccess` / `recordUsageFailure`，紧贴 `LlmProviderPort.complete` |
+| 读取侧 | `AiQuotaQueryService`（从 `AiTaskService` 抽出的纯读服务） |
+| USER-07 | `GET /api/v1/users/me/ai-quota`（挂"当前用户"模块，**不在 AI 模块下**） |
+| 装配 | `AiWorkerConfiguration.aiUsageStore`（只写）；`BackendConfiguration.aiQuotaQueryService` |
+| 前端 | `aiApi.getMyAiQuota`；`/ai` 进页面即读配额并显示重置时刻 |
+| 测试 | `AiTaskExecutionServiceTest` +6、`CurrentUserControllerContractTest` 重写 3 项、真库集成 +3 条断言 |
+
+### 关键设计取舍
+
+1. **额度按「任务」扣，用量按「调用」记——两条口径都保留，互不替代。**
+   额度在**创建时**扣（创建前的额度闸门就是数当日任务行数）。若改成"按调用成功计"，
+   用户可以让任务反复失败来绕过额度，而每一次失败都真实消耗了供应商调用。
+   契约 USER-07 说"实际 Provider 失败不计成功次数"——那句话说明 `usedCount`
+   **不是**"调用成功次数"；调用成功次数由 `ai_usage.result_status` 回答。
+2. **同一任务内的自动重试不额外扣额度，但每次调用各记一行用量。**
+   重试是系统行为，不是新的用户意图；而每一次重试都真的花了钱。
+   写入点只有两处（成功 / 失败），都在 `complete` 调用返回处——
+   抢不到执行权、上下文构建失败、请求组装失败**不**记行，那些路径上一分钱没花。
+   反过来，调用成功但定稿校验拒绝了报告时，用量行**照样要写**：
+   `ai_usage.result_status` 记的是调用，`ai_task.status` 记的是任务。
+3. **`AiUsage` 与数据库的 `uk_ai_usage_task_attempt` 对齐。**
+   一行 = 一个 `(task_id, attempt_no)`。重试走 `requeueForRetry` →
+   `attempt_no` 递增 → 新一轮的 `(task, attempt)` 才允许再写一行。
+   埋点若放在"任务级"（如 `finishCompleted`）就会与这个唯一键直接冲突。
+4. **`estimated_cost` 一律写 0，不做估算。**
+   没有价格表。"按 token 乘一个猜测单价"填进去，是**看起来精确的编造**——
+   月底对账时无人能分辨哪一列是真实开销。宁可留 0 并在文档里写明未覆盖。
+   同理 `currency_code` 用表默认值 `CNY`，不在这里另立口径。
+5. **`failure` 的 `first_chunk_latency_ms` 留空，`total_latency_ms` 记到失败为止。**
+   首段从未到达，填 0 会与"首段瞬时到达"混为一谈。
+6. **配额读取抽成独立服务 `AiQuotaQueryService`。**
+   它有两个调用方，分属两侧：写侧 `AiTaskService`（创建前拦额度、创建后回填响应）
+   与读侧 `CurrentUserController`（USER-07）。留在 `AiTaskService` 里，读接口就要
+   依赖整个"创建任务"用例（十二个依赖，大半与"读一个数字"无关）。
+   更重要的是**口径只剩一处**：这个类之前，"当日额度怎么算"散在守卫、响应组装
+   与私有重载三处——三处各改一次是分叉的经典成因，而分叉的表现是
+   "前端显示还剩 3 次、实际提交被拒"，两边都不报错。
+7. **USER-07 挂在 `/users/me` 下，不在 `/ai` 下。** 契约把路径定在这里：它是
+   **当前用户**的属性，鉴权只需要"已登录"，与 AI 模块的权限无关。挪到 `/ai/quota`
+   会让一个没有 AI 权限的用户连自己还剩几次都读不到。
+8. **响应形状直接复用 `AiTaskQuota`**（与 AI-03 响应里的 `quota` 同一个记录）。
+   各定义一个 DTO 就会有两份字段清单，而分叉的表现是
+   "创建页说还剩 3 次、个人中心说还剩 5 次"。
+   本轮给它**新增了 `date` 字段**：没有它客户端只能从 `resetsAt` 反推是哪一天，
+   而跨零点的那一秒里反推得到的是前一天。`date` 与 `resetsAt` 出自同一个
+   `dayStartOf(now)`，不是各自取一次"现在"。
+9. **`AiUsageResultStatus` 是四个值（SUCCESS / FAILURE / CANCELED / TIMED_OUT），
+   与表的 CHECK 约束同集合。** 后两个当前没有产出方（阻塞式调用没有中途打断的入口），
+   属预留而非遗漏——枚举少一个值，将来加值时旧数据的语义就无从判断。
+
+### 未覆盖（如实记录，不装作已支持）
+
+- **成本**：`estimated_cost` 恒为 0（无价格表），`cached_tokens` 恒为 0
+  （模拟 Provider 不产生缓存命中）。ADM-AI-05 的成本汇总（M3-11）若直接照这列求和
+  会得到 0，**必须先接入真实价格表**。
+- **ADM-AI-01~06（后台用量视图）** 属 M3-11，本轮不做。
+- **`CANCELED` / `TIMED_OUT`** 两类结果状态当前无产出方（见取舍 9）。
+
+### 验证结果
+
+- `stock-ai` 单测 **212 → 218**（`AiTaskExecutionServiceTest` +6）：
+  成功记一行、Provider 失败记一行、重试两次后各记一行、抢不到执行权不记、
+  上下文构建失败不记、**调用成功但报告被定稿校验拒绝时仍记**。
+- `stock-backend` 单测 **250 → 252**（`CurrentUserControllerContractTest` 1 → 3）：
+  `date` / `remainingCount` / `resetsAt` 三者一致、额度用尽时 `remainingCount` 钳到 0。
+  ⚠️ 该测试首版**假绿**：独立 `MockMvc` 的默认 `ObjectMapper` 会把 `LocalDate`
+  序列化成数组 `[2026,9,11]`，`resetsAt` 同样变成数字。已显式
+  `featuresToDisable(WRITE_DATES_AS_TIMESTAMPS)` 对齐线上（与其它契约测试同形），
+  否则"`date` 是不是 ISO 字符串"这条契约根本没被验到。
+- **真库集成测试通过（5/5）**：`AiWorkerIntegrationTest` 新增
+  "任务跑完必须留下用量行且记 `SUCCESS`"、"重投两次用量行数不翻倍"。
+  这条只能在真库上验：21 列 `INSERT` 的列序、`result_status` 的 CHECK 清单、
+  `total_tokens >= prompt_tokens + completion_tokens` 这条 CHECK、
+  以及 `decimal(18,8)` 的 `estimated_cost`——桩一个都看不见。
+- 前端：`AiWorkspacePage.test.ts` 12 → **14**（进页面即读到配额并显示重置时刻、
+  读不到时如实说明而不编一个数）；`vitest` 全量 174 项、`vue-tsc` 0 错误。
+

@@ -40,6 +40,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
@@ -334,7 +335,12 @@ class AiTaskControllerContractTest {
     @DisplayName("额度用尽 → 429 AI_QUOTA_EXCEEDED，且带 quota")
     void mapsQuotaExceededTo429() throws Exception {
         AiTaskQuota quota = AiTaskQuota.of(
-                20, 20, 0, 2, OffsetDateTime.of(2026, 9, 21, 0, 0, 0, 0, ZoneOffset.ofHours(8)));
+                LocalDate.of(2026, 9, 21),
+                20,
+                20,
+                0,
+                2,
+                OffsetDateTime.of(2026, 9, 21, 0, 0, 0, 0, ZoneOffset.ofHours(8)));
         when(tasks.create(any(), anyLong(), anyString(), anyString()))
                 .thenThrow(new AiQuotaExceededException(quota));
 
@@ -345,6 +351,7 @@ class AiTaskControllerContractTest {
                         .content(createBody()))
                 .andExpect(status().isTooManyRequests())
                 .andExpect(jsonPath("$.code").value("AI_QUOTA_EXCEEDED"))
+                .andExpect(jsonPath("$.data.date").value("2026-09-21"))
                 .andExpect(jsonPath("$.data.dailyLimit").value(20))
                 .andExpect(jsonPath("$.data.usedCount").value(20))
                 .andExpect(jsonPath("$.data.resetsAt").value("2026-09-21T00:00:00+08:00"));
@@ -446,7 +453,12 @@ class AiTaskControllerContractTest {
 
     private static AiTaskAccepted accepted() {
         AiTaskQuota quota = AiTaskQuota.of(
-                20, 3, 1, 2, OffsetDateTime.of(2026, 9, 21, 0, 0, 0, 0, ZoneOffset.ofHours(8)));
+                LocalDate.of(2026, 9, 21),
+                20,
+                3,
+                1,
+                2,
+                OffsetDateTime.of(2026, 9, 21, 0, 0, 0, 0, ZoneOffset.ofHours(8)));
         return new AiTaskAccepted(
                 summary(AiTaskStatus.QUEUED, null),
                 "/api/v1/ai/tasks/" + TASK_ID,

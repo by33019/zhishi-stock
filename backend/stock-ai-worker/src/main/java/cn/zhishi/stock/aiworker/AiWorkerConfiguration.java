@@ -12,17 +12,20 @@ import cn.zhishi.stock.ai.domain.AiReportStore;
 import cn.zhishi.stock.ai.domain.AiTaskEventStream;
 import cn.zhishi.stock.ai.domain.AiTaskQueue;
 import cn.zhishi.stock.ai.domain.AiTaskStore;
+import cn.zhishi.stock.ai.domain.AiUsageStore;
 import cn.zhishi.stock.ai.domain.LlmProviderPort;
 import cn.zhishi.stock.ai.infrastructure.AiContextSnapshotMapper;
 import cn.zhishi.stock.ai.infrastructure.AiEvidenceMapper;
 import cn.zhishi.stock.ai.infrastructure.AiMessageMapper;
 import cn.zhishi.stock.ai.infrastructure.AiReportMapper;
 import cn.zhishi.stock.ai.infrastructure.AiTaskMapper;
+import cn.zhishi.stock.ai.infrastructure.AiUsageMapper;
 import cn.zhishi.stock.ai.infrastructure.MyBatisAiContextSnapshotStore;
 import cn.zhishi.stock.ai.infrastructure.MyBatisAiEvidenceStore;
 import cn.zhishi.stock.ai.infrastructure.MyBatisAiMessageStore;
 import cn.zhishi.stock.ai.infrastructure.MyBatisAiReportStore;
 import cn.zhishi.stock.ai.infrastructure.MyBatisAiTaskStore;
+import cn.zhishi.stock.ai.infrastructure.MyBatisAiUsageStore;
 import cn.zhishi.stock.ai.infrastructure.RedisAiTaskEventStream;
 import cn.zhishi.stock.ai.infrastructure.RedisAiTaskQueue;
 import cn.zhishi.stock.integration.ai.SimulatedContentHasher;
@@ -336,6 +339,24 @@ public class AiWorkerConfiguration {
         return new MyBatisAiEvidenceStore(mapper, clock);
     }
 
+    /**
+     * 调用用量台账（{@code ai_usage}），M3-09。
+     *
+     * <p><b>就一个 INSERT，且只增不改。</b>每次真实 Provider 调用记一行——包括
+     * 同一次任务里的自动重试，每次调用各记一行；用量是"花了多少"，不是"成没成"。
+     *
+     * <p>与 {@code aiEvidenceStore} 一样，worker 侧**只写不读**：读取方在 Web 侧
+     * （{@code AiQuotaQueryService} 读的是任务行数，不是这张表）。给只写场景另造一个
+     * "只写"接口会让仓储有两个形状，而 {@code listByTask} 在排查时仍然要存在。
+     *
+     * <p>这个 Bean 是**必需的**：少了它 {@code AiTaskExecutionService} 就装不起来，
+     * 表现为 Worker 启动即失败——比起"安静地不记用量"，这种失败反而是好事。
+     */
+    @Bean
+    AiUsageStore aiUsageStore(AiUsageMapper mapper, Clock clock) {
+        return new MyBatisAiUsageStore(mapper, clock);
+    }
+
     @Bean
     AiContextSnapshotStore aiContextSnapshotStore(
             AiContextSnapshotMapper mapper,
@@ -378,6 +399,7 @@ public class AiWorkerConfiguration {
             AiMessageStore aiMessageStore,
             AiReportStore aiReportStore,
             AiEvidenceStore aiEvidenceStore,
+            AiUsageStore aiUsageStore,
             AiTaskEventStream aiTaskEventStream,
             AiTaskQueue aiTaskQueue,
             AiContextBuilder aiContextBuilder,
@@ -395,6 +417,7 @@ public class AiWorkerConfiguration {
                 aiMessageStore,
                 aiReportStore,
                 aiEvidenceStore,
+                aiUsageStore,
                 aiTaskEventStream,
                 aiTaskQueue,
                 aiContextBuilder,

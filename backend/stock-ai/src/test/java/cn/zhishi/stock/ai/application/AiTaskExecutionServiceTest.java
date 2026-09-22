@@ -33,6 +33,9 @@ import cn.zhishi.stock.ai.domain.AiTaskEventType;
 import cn.zhishi.stock.ai.domain.AiTaskQueue;
 import cn.zhishi.stock.ai.domain.AiTaskStatus;
 import cn.zhishi.stock.ai.domain.AiTaskStore;
+import cn.zhishi.stock.ai.domain.AiUsage;
+import cn.zhishi.stock.ai.domain.AiUsageResultStatus;
+import cn.zhishi.stock.ai.domain.AiUsageStore;
 import cn.zhishi.stock.market.domain.SectorIdentityProvider;
 import cn.zhishi.stock.market.domain.SecurityIdentity;
 import cn.zhishi.stock.market.domain.SecurityIdentityProvider;
@@ -99,6 +102,7 @@ class AiTaskExecutionServiceTest {
     private final InMemoryMessageStore messages = new InMemoryMessageStore();
     private final InMemoryReportStore reports = new InMemoryReportStore();
     private final InMemoryEvidenceStore evidences = new InMemoryEvidenceStore();
+    private final InMemoryUsageStore usages = new InMemoryUsageStore();
     private final InMemoryEventStream events = new InMemoryEventStream();
     private final RecordingQueue queue = new RecordingQueue();
     private final AiContextBuilder contextBuilder = mock(AiContextBuilder.class);
@@ -142,6 +146,7 @@ class AiTaskExecutionServiceTest {
                 messages,
                 reports,
                 evidences,
+                usages,
                 events,
                 queue,
                 contextBuilder,
@@ -503,6 +508,114 @@ class AiTaskExecutionServiceTest {
         assertThat(report.limited()).isTrue();
         assertThat(report.limitedReason()).contains("暂无可用资讯");
         assertThat(report.qualityStatus()).isEqualTo("LIMITED");
+    }
+
+    // ---------- 调用用量（M3-09） ----------
+
+    @Test
+    @DisplayName("正常链路：记一行 SUCCESS 用量，token / 延迟 / providerRequestId 照搬")
+    void recordsUsageOnSuccess() {
+        llm.completion = completionOf(validSections());
+
+        assertThat(service().execute(TASK_ID)).isEqualTo(AiTaskExecutionService.Outcome.COMPLETED);
+
+        assertThat(usages.rows).singleElement().satisfies(usage -> {
+            assertThat(usage.resultStatus()).isEqualTo(AiUsageResultStatus.SUCCESS);
+            assertThat(usage.taskId()).isEqualTo(TASK_ID);
+            assertThat(usage.attemptNo()).isEqualTo(1);
+            assertThat(usage.userId()).isEqualTo(USER_ID);
+            assertThat(usage.providerCode()).isEqualTo("SIMULATED");
+            assertThat(usage.modelCode()).isEqualTo("sim-analyst-v1");
+            assertThat(usage.providerRequestId()).isEqualTo("sim-req-1");
+            assertThat(usage.usage()).isEqualTo(new LlmUsage(10, 20, 0, 30));
+            assertThat(usage.firstChunkLatencyMs()).isEqualTo(100);
+            assertThat(usage.totalLatencyMs()).isEqualTo(900);
+            assertThat(usage.errorCategory()).isNull();
+            assertThat(usage.callCompletedAt()).isAfterOrEqualTo(usage.callStartedAt());
+        });
+    }
+
+    @Test
+    @DisplayName("供应商拒绝：仍记一行 FAILURE，token 为 0，首段延迟留空而不是填总延迟")
+    void recordsUsageOnProviderFailure() {
+        llm.failure = LlmProviderException.safetyRejected("命中禁用表达");
+
+        assertThat(service().execute(TASK_ID)).isEqualTo(AiTaskExecutionService.Outcome.FAILED);
+
+        assertThat(usages.rows).singleElement().satisfies(usage -> {
+            assertThat(usage.resultStatus()).isEqualTo(AiUsageResultStatus.FAILURE);
+            assertThat(usage.errorCategory()).isEqualTo(LlmErrorCategory.SAFETY);
+            assertThat(usage.usage()).isEqualTo(LlmUsage.EMPTY);
+            // 首段从未到达。把它填成总延迟，看板上"首段延迟"会看起来正常，
+            // 而实际是每次失败都被记成"首段慢"——一个不会报错的错。
+            assertThat(usage.firstChunkLatencyMs()).isNull();
+            assertThat(usage.totalLatencyMs()).isNotNull();
+        });
+    }
+
+    @Test
+    @DisplayName("重试：两次尝试两条用量行，attemptNo 递增（成本台账不漏记重试）")
+    void recordsUsagePerAttemptAcrossRetries() {
+        llm.failure = LlmProviderException.rateLimited("模拟限流");
+        AiTaskExecutionService service = service();
+
+        assertThat(service.execute(TASK_ID))
+                .isEqualTo(AiTaskExecutionService.Outcome.RETRY_SCHEDULED);
+        assertThat(service.execute(TASK_ID)).isEqualTo(AiTaskExecutionService.Outcome.FAILED);
+
+        assertThat(usages.rows).extracting(AiUsage::attemptNo).containsExactly(1, 2);
+        assertThat(usages.rows)
+                .extracting(AiUsage::resultStatus)
+                .containsExactly(AiUsageResultStatus.FAILURE, AiUsageResultStatus.FAILURE);
+        // 同一任务两次调用不许撞 uk_ai_usage_task_attempt：执行次数由"抢占执行权"递增，
+        // 所以恢复扫描重跑时用的是新的 attempt_no。这条断言钉住"抢占会递增"这个前提。
+        assertThat(usages.rows).extracting(AiUsage::attemptNo).doesNotHaveDuplicates();
+    }
+
+    @Test
+    @DisplayName("抢不到执行权：一次调用都没发生，因此不记用量（至少一次消费不得变成至少一次计费）")
+    void recordsNoUsageWhenClaimFails() {
+        tasks.forceStatus(TASK_ID, AiTaskStatus.COMPLETED);
+
+        assertThat(service().execute(TASK_ID)).isEqualTo(AiTaskExecutionService.Outcome.SKIPPED);
+
+        assertThat(llm.calls).isZero();
+        assertThat(usages.rows).isEmpty();
+    }
+
+    @Test
+    @DisplayName("核心行情缺失：在发起调用之前就失败，不记用量（一分钱没花）")
+    void recordsNoUsageWhenCoreDataMissing() {
+        when(contextBuilder.build(any(), any(), any())).thenReturn(context(List.of(), false));
+
+        assertThat(service().execute(TASK_ID)).isEqualTo(AiTaskExecutionService.Outcome.FAILED);
+
+        assertThat(llm.calls).isZero();
+        assertThat(usages.rows).isEmpty();
+    }
+
+    /**
+     * 定稿校验拒绝**不改变**用量行的状态：调用本身成功了，token 是真花掉的。
+     *
+     * <p>若把用量写进定稿那一步，这一类任务的开销就会从台账上消失，
+     * 而"报告被拒绝"恰恰是最该被看见的那一类——它说明模型反复产出不合规的引用。
+     */
+    @Test
+    @DisplayName("报告被定稿校验拒绝：用量行仍是 SUCCESS（记的是调用，不是任务）")
+    void recordsSuccessUsageEvenWhenReportIsRejected() {
+        llm.completion = completionOf(Map.of(
+                AiReportSection.CORE_CONCLUSION, "结论引用了 [7]，但候选集合里只有 [1]。",
+                AiReportSection.QUOTE_EVIDENCE, "依据 [1]。",
+                AiReportSection.RISK_AND_UNCERTAINTY, "风险。",
+                AiReportSection.DISCLAIMER, "免责。"));
+
+        assertThat(service().execute(TASK_ID)).isEqualTo(AiTaskExecutionService.Outcome.FAILED);
+
+        assertThat(tasks.rows.get(0).errorCode).isEqualTo("AI_OUTPUT_REJECTED");
+        assertThat(usages.rows).singleElement().satisfies(usage -> {
+            assertThat(usage.resultStatus()).isEqualTo(AiUsageResultStatus.SUCCESS);
+            assertThat(usage.errorCategory()).isNull();
+        });
     }
 
     // ---------- 构造器与夹具 ----------
@@ -878,6 +991,30 @@ class AiTaskExecutionServiceTest {
             return rows.stream()
                     .filter(row -> row.reportId() == reportId)
                     .sorted(Comparator.comparingInt(AiEvidence::evidenceNo))
+                    .toList();
+        }
+    }
+
+    /**
+     * 用量桩。
+     *
+     * <p>与证据桩同理，**不去重**：真实实现靠 {@code uk_ai_usage_task_attempt} 撞键报错，
+     * 桩里若悄悄按 {@code (taskId, attemptNo)} 覆盖，"同一执行次数发起了两次调用"
+     * 这类缺陷就永远看不出来——而那正是唯一索引存在的理由。
+     */
+    private static final class InMemoryUsageStore implements AiUsageStore {
+        final List<AiUsage> rows = new ArrayList<>();
+
+        @Override
+        public void insert(AiUsage usage) {
+            rows.add(usage);
+        }
+
+        @Override
+        public List<AiUsage> listByTask(long taskId) {
+            return rows.stream()
+                    .filter(row -> row.taskId() == taskId)
+                    .sorted(Comparator.comparingInt(AiUsage::attemptNo))
                     .toList();
         }
     }

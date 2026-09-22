@@ -6,6 +6,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import { useRemoteData } from '@/composables/useRemoteData'
 import {
   createTask,
+  getMyAiQuota,
   getReport,
   getReportEvidence,
   getScenes,
@@ -152,7 +153,26 @@ const submitting = ref(false)
 const submitError = ref('')
 const task = ref<AiTaskSummary>()
 const quota = ref<AiTaskQuota>()
+const quotaError = ref('')
 const report = ref<AiReportDetail>()
+
+/**
+ * USER-07：打开页面就取一次"今天还剩几次"。
+ *
+ * 提交后的 AI-03 响应里也有 `quota`，但那是**提交之后**才有的数——只靠它，
+ * 用户在点"开始分析"之前根本不知道额度还剩多少，只能点下去靠错误码告诉他。
+ * 取不到就如实留空并说明原因，**不编一个默认值**：显示"今日剩余 20 次"
+ * 而实际是 0，比不显示更糟。
+ */
+async function loadQuota() {
+  quotaError.value = ''
+  try {
+    quota.value = await getMyAiQuota()
+  } catch (cause) {
+    const failure = cause as { message?: string }
+    quotaError.value = failure.message ?? '配额信息暂时取不到。'
+  }
+}
 
 const TERMINAL = new Set(['COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELED'])
 
@@ -221,7 +241,10 @@ async function submit() {
 }
 
 // `useRemoteData` 只提供 reload，不会自动执行——不挂载时调一次，页面会永远停在"加载中"。
-onMounted(reloadScenes)
+onMounted(() => {
+  void reloadScenes()
+  void loadQuota()
+})
 onUnmounted(stopPolling)
 
 const running = computed(() => Boolean(task.value) && !TERMINAL.has(task.value!.status))
@@ -407,11 +430,16 @@ const sections = computed(() => {
           </p>
         </template>
 
-        <!-- 配额只在提交后才有权威来源（AI-03 的响应）；提交前不显示，不编一个数 -->
+        <!--
+          配额有两条来源，都是服务端同一份事实：进页面时走 USER-07，
+          提交后用 AI-03 响应里的 quota 覆盖（那是刚扣过额度的最新值）。
+          两处都不编数：取不到就如实说明。
+        -->
         <p v-if="quota" class="quota-note">
           今日剩余 {{ quota.remainingCount }} / {{ quota.dailyLimit }} 次 · 并发上限
-          {{ quota.concurrentLimit }}
+          {{ quota.concurrentLimit }} · 重置于 {{ formatDateTime(quota.resetsAt) }}
         </p>
+        <p v-else-if="quotaError" class="state-note state-note--warn">{{ quotaError }}</p>
       </aside>
 
       <main class="report-canvas">

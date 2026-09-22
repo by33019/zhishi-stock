@@ -24,6 +24,8 @@ import cn.zhishi.stock.ai.domain.AiTaskEventType;
 import cn.zhishi.stock.ai.domain.AiTaskQueue;
 import cn.zhishi.stock.ai.domain.AiTaskStatus;
 import cn.zhishi.stock.ai.domain.AiTaskStore;
+import cn.zhishi.stock.ai.domain.AiUsage;
+import cn.zhishi.stock.ai.domain.AiUsageStore;
 import cn.zhishi.stock.ai.domain.LlmChunk;
 import cn.zhishi.stock.ai.domain.LlmCompletion;
 import cn.zhishi.stock.ai.domain.LlmErrorCategory;
@@ -68,6 +70,13 @@ import org.slf4j.LoggerFactory;
  * （{@link LlmErrorCategory#retryable()}），由 {@code attempt_no < max_attempts} 封顶。
  * {@code SAFETY} / {@code DATA} / {@code SYSTEM} 不重试——重试对它们没有意义，
  * 而安全拒绝再试一次可能造成伤害。
+ *
+ * <h2>每一次真实调用都记一行用量</h2>
+ * {@code ai_usage} 的写入点只有两个（{@code recordUsageSuccess} /
+ * {@code recordUsageFailure}），两者都紧贴 {@link LlmProviderPort#complete}：
+ * 抢不到执行权、上下文构建失败、请求组装失败都不会留下用量行——那些路径上一分钱没花。
+ * 反过来，调用成功但报告被定稿校验拒绝时，用量行**照样要写**：
+ * {@code ai_usage.result_status} 记的是调用，{@code ai_task.status} 记的是任务。
  */
 public class AiTaskExecutionService {
 
@@ -90,6 +99,7 @@ public class AiTaskExecutionService {
     private final AiMessageStore messages;
     private final AiReportStore reports;
     private final AiEvidenceStore evidences;
+    private final AiUsageStore usages;
     private final AiTaskEventStream events;
     private final AiTaskQueue queue;
     private final AiContextBuilder contextBuilder;
@@ -108,6 +118,7 @@ public class AiTaskExecutionService {
             AiMessageStore messages,
             AiReportStore reports,
             AiEvidenceStore evidences,
+            AiUsageStore usages,
             AiTaskEventStream events,
             AiTaskQueue queue,
             AiContextBuilder contextBuilder,
@@ -124,6 +135,7 @@ public class AiTaskExecutionService {
         this.messages = messages;
         this.reports = reports;
         this.evidences = evidences;
+        this.usages = usages;
         this.events = events;
         this.queue = queue;
         this.contextBuilder = contextBuilder;
@@ -210,11 +222,13 @@ public class AiTaskExecutionService {
         AiTask running = advanced.get();
 
         Cursor cursor = new Cursor(running);
-        LlmCompletion completion;
+
+        // 组装请求单独一个 try：它失败时**一次调用都没发生**，因此不该留下用量行。
+        // 与真正的调用混在同一个 try 里，就会为一次没发生的调用记一笔开销——
+        // 而台账上多出来的这一笔无从被证伪。
+        LlmRequest request;
         try {
-            completion = llm.complete(requestOf(running, context), chunk -> onChunk(cursor, chunk));
-        } catch (LlmProviderException exception) {
-            return onProviderFailure(reload(cursor.task.taskId()), exception);
+            request = requestOf(running, context);
         } catch (RuntimeException exception) {
             return finishFailed(
                     reload(cursor.task.taskId()),
@@ -222,6 +236,25 @@ public class AiTaskExecutionService {
                     "AI_PROVIDER_FAILED",
                     describe(exception));
         }
+
+        // 调用起点在**发起之前**取。用 completion 的延迟反推起点会丢掉
+        // "发起到供应商开始响应"的那一段，而限流与网络问题最先表现在那里。
+        OffsetDateTime callStartedAt = OffsetDateTime.now(clock);
+        LlmCompletion completion;
+        try {
+            completion = llm.complete(request, chunk -> onChunk(cursor, chunk));
+        } catch (LlmProviderException exception) {
+            recordUsageFailure(running, exception.category(), callStartedAt);
+            return onProviderFailure(reload(cursor.task.taskId()), exception);
+        } catch (RuntimeException exception) {
+            recordUsageFailure(running, LlmErrorCategory.SYSTEM, callStartedAt);
+            return finishFailed(
+                    reload(cursor.task.taskId()),
+                    LlmErrorCategory.SYSTEM,
+                    "AI_PROVIDER_FAILED",
+                    describe(exception));
+        }
+        recordUsageSuccess(running, completion, callStartedAt);
 
         AiTask afterGeneration = reload(cursor.task.taskId());
         stopped = stopIfInterrupted(afterGeneration);
@@ -267,6 +300,35 @@ public class AiTaskExecutionService {
             // 而心跳有 30 秒量级的恢复阈值兜着。
             LOGGER.warn("刷新心跳被乐观锁拒绝：taskId={}", task.taskId());
         }
+    }
+
+    // ---------- 调用用量 ----------
+
+    /**
+     * 记一行**成功**调用。
+     *
+     * <p>写入位置刻意紧贴调用返回处，而不是并进 {@code finishCompleted}：两者记的不是
+     * 同一件事。调用成功、但定稿校验随后拒绝了报告（任务 {@code FAILED}）时，
+     * token 已经真的花掉了——并进定稿就会让这笔开销从台账上消失。
+     * {@link AiUsage#resultStatus()} 记的是调用，{@code ai_task.status} 记的是任务。
+     */
+    private void recordUsageSuccess(
+            AiTask task, LlmCompletion completion, OffsetDateTime callStartedAt) {
+        usages.insert(AiUsage.success(
+                idGenerator.getAsLong(), task, completion, callStartedAt, OffsetDateTime.now(clock)));
+    }
+
+    /**
+     * 记一行**失败**调用。
+     *
+     * <p>失败也要记：失败是限流与故障排查的主要信号，也是"这次重试是不是又一次
+     * 白花钱"的唯一依据。{@code errorCategory} 从异常携带的类别来，不从消息文本里猜。
+     */
+    private void recordUsageFailure(
+            AiTask task, LlmErrorCategory category, OffsetDateTime callStartedAt) {
+        OffsetDateTime now = OffsetDateTime.now(clock);
+        usages.insert(
+                AiUsage.failure(idGenerator.getAsLong(), task, category, callStartedAt, now, now));
     }
 
     private Outcome onProviderFailure(AiTask task, LlmProviderException exception) {

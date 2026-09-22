@@ -22,7 +22,6 @@ import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.OffsetDateTime;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -81,8 +80,7 @@ public class AiTaskService {
     private final AiTargetHydrator targetHydrator;
     private final LongSupplier idGenerator;
     private final Clock clock;
-    private final int dailyTaskLimit;
-    private final int maxConcurrentTasks;
+    private final AiQuotaQueryService quotas;
     private final Duration taskDeadline;
     private final String providerCode;
     private final String modelCode;
@@ -98,8 +96,7 @@ public class AiTaskService {
             AiTargetHydrator targetHydrator,
             LongSupplier idGenerator,
             Clock clock,
-            int dailyTaskLimit,
-            int maxConcurrentTasks,
+            AiQuotaQueryService quotas,
             Duration taskDeadline,
             String providerCode,
             String modelCode) {
@@ -113,8 +110,7 @@ public class AiTaskService {
         this.targetHydrator = targetHydrator;
         this.idGenerator = idGenerator;
         this.clock = clock;
-        this.dailyTaskLimit = dailyTaskLimit;
-        this.maxConcurrentTasks = maxConcurrentTasks;
+        this.quotas = quotas;
         this.taskDeadline = taskDeadline;
         this.providerCode = providerCode;
         this.modelCode = modelCode;
@@ -162,9 +158,15 @@ public class AiTaskService {
         return summaryOf(task);
     }
 
-    /** 当日配额与并发占用（契约 USER-07 的字段集）。 */
+    /**
+     * 当日配额与并发占用（契约 USER-07 的字段集）。
+     *
+     * <p>转调 {@link AiQuotaQueryService}而不是在这里自己数：USER-07 读的是同一个数字，
+     * 两处各算一次就是两份口径。这里保留方法是为了不让调用方（控制器、异常处理器）
+     * 为了一个数字去认识第二个 Bean。
+     */
     public AiTaskQuota quotaOf(long userId) {
-        return quotaOf(userId, OffsetDateTime.now(clock));
+        return quotas.quotaOf(userId);
     }
 
     // ---------- AI-06 取消 ----------
@@ -399,17 +401,20 @@ public class AiTaskService {
 
     private void guardConcurrency(long userId) {
         int active = tasks.countByUserAndStatuses(userId, AiTaskStatus.activeStatuses());
-        if (active >= maxConcurrentTasks) {
+        int limit = quotas.concurrentLimit();
+        if (active >= limit) {
             throw new AiTaskException(
                     AiTaskErrorCode.CONCURRENCY_EXCEEDED,
-                    "单用户最多 " + maxConcurrentTasks + " 个进行中的 AI 任务，当前 " + active + " 个");
+                    "单用户最多 " + limit + " 个进行中的 AI 任务，当前 " + active + " 个");
         }
     }
 
     private void guardQuota(long userId, OffsetDateTime now) {
-        int used = tasks.countCreatedSince(userId, dayStart(now));
-        if (used >= dailyTaskLimit) {
-            throw new AiQuotaExceededException(quotaOf(userId, now));
+        // 额度与"还能不能再建"必须是同一个判断：这里读一次配额、用它自己带的上限比较，
+        // 而不是再取一次配置。配置在两次读取之间被改过的话，前者会与用户看到的数字不符。
+        AiTaskQuota quota = quotas.quotaOf(userId, now);
+        if (quota.usedCount() >= quota.dailyLimit()) {
+            throw new AiQuotaExceededException(quota);
         }
     }
 
@@ -450,10 +455,7 @@ public class AiTaskService {
     }
 
     private AiTaskQuota quotaOf(long userId, OffsetDateTime now) {
-        int used = tasks.countCreatedSince(userId, dayStart(now));
-        int running = tasks.countByUserAndStatuses(userId, AiTaskStatus.activeStatuses());
-        return AiTaskQuota.of(
-                dailyTaskLimit, used, running, maxConcurrentTasks, dayStart(now).plusDays(1));
+        return quotas.quotaOf(userId, now);
     }
 
     // ---------- 会话 ----------
@@ -533,11 +535,6 @@ public class AiTaskService {
                 .toString();
     }
 
-    /** {@code Asia/Shanghai} 自然日零点。统计口径一律钉这个时区（CI 是 UTC）。 */
-    private OffsetDateTime dayStart(OffsetDateTime now) {
-        ZoneId zone = clock.getZone();
-        return now.atZoneSameInstant(zone).toLocalDate().atStartOfDay(zone).toOffsetDateTime();
-    }
     private static String blankToNull(String value) {
         if (value == null) {
             return null;

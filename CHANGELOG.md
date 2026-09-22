@@ -23,6 +23,86 @@
 
 ---
 
+## 2026-09-22 — M3-09：AI 配额与用量统计（`ai_usage` 写入侧 + USER-07）
+
+`ai_usage` 与 `ai_evidence` 是同一个病：V6 起表结构就绪（21 列、4 条 CHECK），
+**零代码引用**——"这次分析花了多少"在库里没有行可查。本轮把写入侧接上
+（每次真实 Provider 调用记一行），并落地读取侧 `GET /users/me/ai-quota`（USER-07）。
+
+### 新增
+
+**写入侧（`stock-ai` / `stock-ai-worker`）**
+- `domain/AiUsage`：一次调用的用量台账。`success(...)` / `failure(...)` 两个工厂，
+  不变量写在工厂里（`callCompletedAt >= callStartedAt`、SUCCESS 不得带 `errorCategory`）。
+- `domain/AiUsageStore`：只增不改，`insert` + `listByTask`。
+- `domain/AiUsageResultStatus`：SUCCESS / FAILURE / CANCELED / TIMED_OUT，
+  与表 `ck_ai_usage_status` 同集合。
+- `infrastructure/AiUsageRow` / `AiUsageMapper` / `MyBatisAiUsageStore`：单条 `INSERT`。
+- `AiTaskExecutionService.recordUsageSuccess` / `recordUsageFailure`：紧贴
+  `LlmProviderPort.complete` 的返回处（含两个 catch 分支）。调用起点在**发起之前**
+  用 `OffsetDateTime.now(clock)` 取，不靠 completion 的延迟反推。
+- `AiWorkerConfiguration.aiUsageStore`：worker 侧**只写不读**。
+
+**读取侧（`stock-ai` / `stock-backend`）**
+- `application/AiQuotaQueryService`：从 `AiTaskService` 抽出的**纯读**配额服务，
+  两个调用方（写侧守卫与读侧 USER-07）共用同一处口径；`dayStartOf` 给出
+  `Asia/Shanghai` 自然日零点，`date` 与 `resetsAt` 出自同一个 `now`。
+- `AiTaskQuota` 新增 `date` 字段。
+- `CurrentUserController` 新增 `GET /users/me/ai-quota`。挂在"当前用户"模块而不是
+  AI 模块下——鉴权只需"已登录"，与 `ai:read` 之类权限无关。
+
+**前端**
+- `services/aiApi.ts` 新增 `getMyAiQuota`；`types/domain.ts` 的 `AiTaskQuota` 补 `date`。
+- `/ai` 工作台进页面即读一次配额（此前只有提交后的 AI-03 响应里才有，
+  用户在点"开始分析"之前看不到还剩几次），并显示重置时刻；读不到时如实说明。
+
+### 关键取舍
+
+1. **额度按「任务」扣（创建时），用量按「调用」记（每次调用）——两条口径都保留。**
+   额度改成"按调用成功计"会留下一个绕过口：让任务反复失败即可不扣额度，
+   而每次失败都真的消耗了供应商调用。契约 USER-07 的"实际 Provider 失败不计成功次数"
+   说的是 `usedCount` 的语义，不等于它等于调用成功次数。
+2. **`estimated_cost` 一律写 0，不估算。** 没有价格表，"token 乘一个猜的单价"
+   是看起来精确的编造，月底对账时无人能分辨真假。ADM-AI-05 的成本汇总（M3-11）
+   若直接照这列求和会得到 0，**必须先接真实价格表**。
+3. **`failure` 的 `first_chunk_latency_ms` 留空**（首段从未到达，填 0 会与
+   "首段瞬时到达"混为一谈），`total_latency_ms` 记到失败为止。
+4. **配额的读取侧从 `AiTaskService` 抽出来**。留在原处，USER-07 这个读接口就要依赖
+   整个"创建任务"用例（十二个依赖）。抽出的真正收益是**口径只剩一处**：
+   抽之前"当日额度怎么算"散在守卫、响应组装与私有重载三处，分叉的表现是
+   "前端显示还剩 3 次、提交却被拒"——两边都不报错。
+
+### 测试查出的真实缺陷（自查）
+
+`CurrentUserControllerContractTest` 首版是**假绿**：独立 `MockMvc` 的默认
+`ObjectMapper` 会把 `LocalDate` 序列化成数组 `[2026,9,11]`（`WRITE_DATES_AS_TIMESTAMPS`
+是 Spring Boot 自动配置关掉的，不是 `Jackson2ObjectMapperBuilder` 的默认值）。
+断言 `$.data.date == "2026-09-11"` 因此失败——这正是它该有的样子：
+该测试已与其它契约测试同形显式关闭该开关，否则"`date` 是不是 ISO 字符串"根本没被验到。
+
+### 验证
+
+- 后端 10 个模块 `mvn test` 全绿：`stock-ai` 单测 **212 → 218**
+  （`AiTaskExecutionServiceTest` +6：成功记一行、Provider 失败记一行、
+  重试两次各记一行、抢不到执行权不记、上下文构建失败不记、
+  **调用成功但报告被定稿校验拒绝时仍记**）；
+  `stock-backend` **250 → 252**；`stock-ai-worker` 18 项含配置测试全绿。
+- **真库集成测试通过（5/5）**：`AiWorkerIntegrationTest` 新增"任务跑完必须留下用量行
+  且记 `SUCCESS`"、"重投两次用量行数不翻倍"。这条只能在真库上验：21 列 `INSERT`
+  的列序、`result_status` 的 CHECK 清单、
+  `total_tokens >= prompt_tokens + completion_tokens`、`decimal(18,8)` 的
+  `estimated_cost`——桩一个都看不见。
+- 前端 `vitest` 21 文件 / **174 项**全绿、`vue-tsc` 0 错误；
+  `AiWorkspacePage.test.ts` 12 → **14**。
+
+### 未覆盖
+
+- 成本（`estimated_cost` 恒 0）、`cached_tokens` 恒 0（模拟 Provider 不产生缓存命中）
+- `CANCELED` / `TIMED_OUT` 两个结果状态当前无产出方（阻塞式调用没有中途打断的入口）
+- ADM-AI-01~06 后台用量视图属 M3-11
+
+---
+
 ## 2026-09-22 — M3-08 收口：HIS-07 报告来源引用（写入侧 + 端点 + 引用栏）
 
 M3-08 的最后一个端点。`ai_evidence` 表自 V6 起结构就绪，但**零代码引用**——

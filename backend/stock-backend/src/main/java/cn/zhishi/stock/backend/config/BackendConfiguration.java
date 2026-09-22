@@ -4,6 +4,7 @@ import cn.zhishi.stock.ai.application.AiContextPreviewService;
 import cn.zhishi.stock.ai.application.AiFeedbackService;
 import cn.zhishi.stock.ai.application.AiHistoryService;
 import cn.zhishi.stock.ai.application.AiReportQueryService;
+import cn.zhishi.stock.ai.application.AiQuotaQueryService;
 import cn.zhishi.stock.ai.application.AiTaskRequestResolver;
 import cn.zhishi.stock.ai.application.AiTargetHydrator;
 import cn.zhishi.stock.ai.application.AiTaskService;
@@ -864,6 +865,23 @@ public class BackendConfiguration {
     }
 
     /**
+     * AI 配额查询（契约 USER-07；AI-03 的 {@code quota} 走同一条）。
+     *
+     * <p>单独一个 Bean 而不是复用 {@code AiTaskService}：USER-07 是纯读，
+     * 让它去依赖"创建任务"用例会把一整套取数与投递依赖带进一个只读一个数字的接口。
+     * 额度与并发两个上限在这里取值，{@code AiTaskService} 的闸门也从这里读——
+     * 口径只有一处，前端显示的剩余次数与实际能不能提交因此不可能分叉。
+     */
+    @Bean
+    AiQuotaQueryService aiQuotaQueryService(
+            AiTaskStore aiTaskStore,
+            Clock clock,
+            @Value("${stock.ai.daily-task-limit:20}") int dailyTaskLimit,
+            @Value("${stock.ai.max-concurrent-tasks:2}") int maxConcurrentTasks) {
+        return new AiQuotaQueryService(aiTaskStore, clock, dailyTaskLimit, maxConcurrentTasks);
+    }
+
+    /**
      * 任务编排用例。
      *
      * <p>刻意**不注入** {@code IdempotencyGuard}：幂等的第一层（回放完整响应）
@@ -883,8 +901,7 @@ public class BackendConfiguration {
             AiTargetHydrator aiTargetHydrator,
             LongSupplier databaseIdGenerator,
             Clock clock,
-            @Value("${stock.ai.daily-task-limit:20}") int dailyTaskLimit,
-            @Value("${stock.ai.max-concurrent-tasks:2}") int maxConcurrentTasks,
+            AiQuotaQueryService aiQuotaQueryService,
             @Value("${stock.ai.task-deadline-seconds:180}") long taskDeadlineSeconds,
             @Value("${stock.ai.provider-code:SIMULATED}") String providerCode,
             @Value("${stock.ai.model-code:sim-analyst-v1}") String modelCode) {
@@ -899,8 +916,7 @@ public class BackendConfiguration {
                 aiTargetHydrator,
                 databaseIdGenerator,
                 clock,
-                dailyTaskLimit,
-                maxConcurrentTasks,
+                aiQuotaQueryService,
                 Duration.ofSeconds(taskDeadlineSeconds),
                 providerCode,
                 modelCode);

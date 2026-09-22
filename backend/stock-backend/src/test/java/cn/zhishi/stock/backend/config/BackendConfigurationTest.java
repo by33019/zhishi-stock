@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
 import cn.zhishi.stock.ai.application.AiContextPreviewService;
+import cn.zhishi.stock.ai.application.AiQuotaQueryService;
 import cn.zhishi.stock.ai.application.AiTaskRequestResolver;
 import cn.zhishi.stock.ai.application.AiTaskService;
 import cn.zhishi.stock.ai.domain.AiContextSnapshotStore;
@@ -124,6 +125,9 @@ class BackendConfigurationTest {
           assertThat(context).hasSingleBean(AiContextSnapshotStore.class);
           assertThat(context).hasSingleBean(AiTaskQueue.class);
           assertThat(context).hasSingleBean(AiTaskEventStream.class);
+          // 配额口径必须只有一处：USER-07（读）与创建时的额度闸门（写）都从它取数。
+          // 各算一次的症状是"个人中心显示还剩 5 次，点创建却说额度已用完"。
+          assertThat(context).hasSingleBean(AiQuotaQueryService.class);
 
           FilterRegistrationBean<?> registration =
               context.getBean("traceIdFilterRegistration", FilterRegistrationBean.class);

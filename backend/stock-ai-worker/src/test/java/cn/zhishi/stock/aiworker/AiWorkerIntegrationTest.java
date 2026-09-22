@@ -212,6 +212,46 @@ class AiWorkerIntegrationTest {
                 .extracting(event -> event.type())
                 .contains(AiTaskEventType.STATUS, AiTaskEventType.CHUNK,
                         AiTaskEventType.REPORT, AiTaskEventType.DONE);
+
+        // 用量台账（M3-09 的写入侧）。这条同样只能在真库上验：
+        // 21 列 INSERT 的列序、`result_status` 的 CHECK 清单、`total_tokens >= prompt+completion`
+        // 这条 CHECK、以及 decimal(18,8) 的 estimated_cost——桩一个都看不见。
+        // 它也是"这一次任务究竟花了多少"的唯一账面依据。
+        assertThat(usageRowsOf(task.taskId()))
+                .describedAs("每次真实 Provider 调用都要在 ai_usage 留一行")
+                .isPositive();
+        assertThat(usageStatusOf(task.taskId(), 1))
+                .describedAs("这一跑是成功的，台账必须记 SUCCESS 而不是把它算成失败")
+                .isEqualTo("SUCCESS");
+        assertThat(headlinePromptTokensOf(task.taskId(), 1))
+                .describedAs("prompt_tokens 与 completion_tokens 必须落在两列上；"
+                        + "填反了界面看不出来，只有真库的列映射能发现")
+                .isPositive();
+    }
+
+    /** {@code ai_usage} 没有 {@code user_id} 之外的用户维度，按 {@code task_id} 直接过滤即可。 */
+    private int usageRowsOf(long taskId) {
+        return jdbc.queryForObject(
+                "SELECT COUNT(*) FROM ai_usage WHERE task_id = ?",
+                Integer.class,
+                taskId);
+    }
+
+    private String usageStatusOf(long taskId, int attemptNo) {
+        return jdbc.queryForObject(
+                "SELECT result_status FROM ai_usage WHERE task_id = ? AND attempt_no = ?",
+                String.class,
+                taskId,
+                attemptNo);
+    }
+
+    private int headlinePromptTokensOf(long taskId, int attemptNo) {
+        return jdbc.queryForObject(
+                "SELECT prompt_tokens + completion_tokens FROM ai_usage"
+                        + " WHERE task_id = ? AND attempt_no = ?",
+                Integer.class,
+                taskId,
+                attemptNo);
     }
 
     /** {@code ai_report} 没有 {@code user_id}，所以按 {@code task_id} 经报告表关联。 */
@@ -244,6 +284,7 @@ class AiWorkerIntegrationTest {
         consumer.poll();
         AiTask afterFirst = tasks.find(task.taskId()).orElseThrow();
         int evidenceAfterFirst = evidenceRowsOf(task.taskId());
+        int usageAfterFirst = usageRowsOf(task.taskId());
 
         queue.enqueue(task.taskId());
         consumer.poll();
@@ -270,6 +311,16 @@ class AiWorkerIntegrationTest {
         assertThat(evidenceRowsOf(task.taskId()))
                 .describedAs("定稿只发生一次，证据行数不该因为重投而翻倍")
                 .isEqualTo(evidenceAfterFirst);
+
+        // 用量同理，而且理由更硬：第二次没抢到执行权 → 一次 Provider 调用都没发生。
+        // 台账上多出一行就意味着"系统为一个没跑的任务算了钱"，而这是无法从界面上看出来的。
+        // 先断言第一次确实写了，否则两边都是 0 时下面那条相等断言会毫无意义地通过。
+        assertThat(usageAfterFirst)
+                .describedAs("第一次投递就该留下用量行")
+                .isPositive();
+        assertThat(usageRowsOf(task.taskId()))
+                .describedAs("第二次一次调用都没发生，用量行数不该变")
+                .isEqualTo(usageAfterFirst);
     }
 
     /**

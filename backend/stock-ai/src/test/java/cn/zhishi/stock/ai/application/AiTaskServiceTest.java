@@ -130,8 +130,9 @@ class AiTaskServiceTest {
                 new AiTargetHydrator(securities, sectors),
                 new AtomicLong(10_000L)::incrementAndGet,
                 CLOCK,
-                dailyLimit,
-                maxConcurrent,
+                // 配额守卫与 USER-07 走同一个服务：这里装真的那个，而不是再插一份桩，
+                // 否则"额度怎么算"在测试里与实际运行时会分叉。
+                new AiQuotaQueryService(tasks, CLOCK, dailyLimit, maxConcurrent),
                 Duration.ofSeconds(60),
                 "SIMULATED",
                 "sim-analyst-v1");

@@ -903,8 +903,15 @@ export interface AiContextPreview {
   limitations: string[]
 }
 
-/** AI-03 的配额视图（契约 §13.5）。 */
+/**
+ * AI 当日配额（契约 USER-07 的字段集；AI-03 的 `quota` 是同一批字段的同一份事实）。
+ *
+ * `date` 不是冗余：没有它，客户端只能从 `resetsAt` 反推"这是哪一天的额度"，
+ * 而跨零点的那一秒里反推得到的是前一天。服务端两侧都由
+ * `AiQuotaQueryService` 产出，所以这里一个类型覆盖两个接口是对的。
+ */
 export interface AiTaskQuota {
+  date: string
   dailyLimit: number
   usedCount: number
   remainingCount: number
