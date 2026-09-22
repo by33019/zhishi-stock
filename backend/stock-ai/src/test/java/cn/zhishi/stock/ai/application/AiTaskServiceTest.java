@@ -900,6 +900,21 @@ class AiTaskServiceTest {
         public int countByUser(long userId, AiSessionQuery query) {
             throw new UnsupportedOperationException("本测试不覆盖会话历史列表");
         }
+
+        /*
+         * HIS-03 / HIS-04 的写入路径本类用不到，理由同上：抛异常而不是返回 false，
+         * 否则"版本冲突"与"这个方法根本没实现"会给出同一个返回值。
+         */
+        @Override
+        public boolean update(long sessionId, int version, String title, boolean favorite) {
+            throw new UnsupportedOperationException("本测试不覆盖会话改名与收藏");
+        }
+
+        @Override
+        public boolean softDelete(
+                long sessionId, int version, OffsetDateTime deletedAt, OffsetDateTime purgeAfter) {
+            throw new UnsupportedOperationException("本测试不覆盖会话软删");
+        }
     }
 
     private static final class InMemoryMessageStore implements AiMessageStore {

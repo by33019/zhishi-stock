@@ -806,11 +806,11 @@ public class BackendConfiguration {
     }
 
     /**
-     * 会话历史用例（HIS-01 列表 / HIS-02 详情 / HIS-05 消息）。
+     * 会话历史用例（HIS-01 列表 / HIS-02 详情 / HIS-03 改名收藏 / HIS-04 软删 / HIS-05 消息）。
      *
-     * <p>详情要拼最近任务与报告摘要，因此比另两个读接口多依赖任务与报告仓储，
-     * 以及把目标代理键还原成对外标识的 {@code AiTargetHydrator}——
-     * 少了它，前端拿到的目标主键解析不了。
+     * <p>详情要拼最近任务与报告摘要，因此比纯读接口多依赖任务与报告仓储，以及把目标
+     * 代理键还原成对外标识的 {@code AiTargetHydrator}——少了它前端拿到的目标主键解析不了。
+     * {@code Clock} 是 HIS-04 的 `purge_after` 需要的：清理时间必须能从测试里固定住。
      */
     @Bean
     AiHistoryService aiHistoryService(
@@ -818,9 +818,10 @@ public class BackendConfiguration {
             AiMessageStore aiMessageStore,
             AiTaskStore aiTaskStore,
             AiReportStore aiReportStore,
-            AiTargetHydrator aiTargetHydrator) {
+            AiTargetHydrator aiTargetHydrator,
+            Clock clock) {
         return new AiHistoryService(
-                aiSessionStore, aiMessageStore, aiTaskStore, aiReportStore, aiTargetHydrator);
+                aiSessionStore, aiMessageStore, aiTaskStore, aiReportStore, aiTargetHydrator, clock);
     }
 
     /**

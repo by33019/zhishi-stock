@@ -3,6 +3,7 @@ package cn.zhishi.stock.ai.application;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -28,7 +29,10 @@ import cn.zhishi.stock.ai.domain.AiTargetType;
 import cn.zhishi.stock.ai.domain.AiTask;
 import cn.zhishi.stock.ai.domain.AiTaskStatus;
 import cn.zhishi.stock.ai.domain.AiTaskStore;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.DisplayName;
@@ -52,6 +56,10 @@ class AiHistoryServiceTest {
 
     private static final OffsetDateTime NOW = OffsetDateTime.parse("2026-09-22T15:00:00+08:00");
 
+    /** 固定时钟：HIS-04 的 `purgeAfter` 必须能从测试里算准，不能跟着真实时间跑。 */
+    private static final Clock CLOCK =
+            Clock.fixed(Instant.parse("2026-09-22T07:00:00Z"), ZoneId.of("Asia/Shanghai"));
+
     private final AiSessionStore sessions = mock(AiSessionStore.class);
     private final AiMessageStore messages = mock(AiMessageStore.class);
     private final AiTaskStore tasks = mock(AiTaskStore.class);
@@ -59,7 +67,7 @@ class AiHistoryServiceTest {
     private final AiTargetHydrator targetHydrator = mock(AiTargetHydrator.class);
 
     private final AiHistoryService service =
-            new AiHistoryService(sessions, messages, tasks, reports, targetHydrator);
+            new AiHistoryService(sessions, messages, tasks, reports, targetHydrator, CLOCK);
 
     // ---------- HIS-01：会话历史列表 ----------
 
@@ -237,6 +245,95 @@ class AiHistoryServiceTest {
         verify(reports, never()).findByTask(anyLong());
     }
 
+    // ---------- HIS-03 / HIS-04：改名、收藏与软删 ----------
+
+    @Test
+    @DisplayName("改名后回传新版本（客户端下次 If-Match 要用它）")
+    void renameReturnsNextVersion() {
+        when(sessions.find(SESSION_ID)).thenReturn(Optional.of(session("ACTIVE", USER_ID)));
+        when(sessions.update(SESSION_ID, 1, "新标题", false)).thenReturn(true);
+
+        AiSessionUpdated updated = service.updateSession(SESSION_ID, USER_ID, 1, "  新标题  ", null);
+
+        assertThat(updated.title()).isEqualTo("新标题");
+        assertThat(updated.version()).isEqualTo(2);
+        assertThat(updated.favorite()).isFalse();
+    }
+
+    @Test
+    @DisplayName("PATCH 只改给了的字段：只改收藏时标题保持原样，反之亦然")
+    void patchOnlyTouchesProvidedFields() {
+        when(sessions.find(SESSION_ID)).thenReturn(Optional.of(session("ACTIVE", USER_ID)));
+
+        // 只改收藏 → 标题取当前行的
+        when(sessions.update(SESSION_ID, 1, "贵州茅台分析", true)).thenReturn(true);
+        service.updateSession(SESSION_ID, USER_ID, 1, null, Boolean.TRUE);
+        verify(sessions).update(SESSION_ID, 1, "贵州茅台分析", true);
+
+        // 只改标题 → 收藏取当前行的
+        when(sessions.update(SESSION_ID, 1, "改过的标题", false)).thenReturn(true);
+        service.updateSession(SESSION_ID, USER_ID, 1, "改过的标题", null);
+        verify(sessions).update(SESSION_ID, 1, "改过的标题", false);
+    }
+
+    @Test
+    @DisplayName("标题校验：空白与超长都 400，且不写库")
+    void rejectsInvalidTitle() {
+        when(sessions.find(SESSION_ID)).thenReturn(Optional.of(session("ACTIVE", USER_ID)));
+
+        assertThatThrownBy(() -> service.updateSession(SESSION_ID, USER_ID, 1, "   ", null))
+                .isInstanceOf(InvalidAiHistoryQueryException.class);
+        assertThatThrownBy(() -> service.updateSession(
+                        SESSION_ID, USER_ID, 1, "字".repeat(61), null))
+                .isInstanceOf(InvalidAiHistoryQueryException.class);
+
+        verify(sessions, never()).update(anyLong(), anyInt(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    @Test
+    @DisplayName("版本过期 → 409，且文案里带上当前版本（只报期望值等于没说）")
+    void versionConflictReportsCurrentVersion() {
+        when(sessions.find(SESSION_ID)).thenReturn(Optional.of(sessionWithVersion(USER_ID, 5)));
+        when(sessions.update(SESSION_ID, 1, "贵州茅台分析", false)).thenReturn(false);
+
+        AiTaskException conflict = catchException(
+                () -> service.updateSession(SESSION_ID, USER_ID, 1, null, null));
+
+        assertThat(conflict.code()).isEqualTo(AiTaskErrorCode.SESSION_VERSION_CONFLICT);
+        assertThat(conflict.code().httpStatus()).isEqualTo(409);
+        assertThat(conflict.getMessage()).contains("期望版本=1").contains("当前版本=5");
+    }
+
+    @Test
+    @DisplayName("软删写入 deleted_at 与 purge_after，并回传清理时间（契约 30 天）")
+    void softDeleteWritesPurgeAfter() {
+        when(sessions.find(SESSION_ID)).thenReturn(Optional.of(session("ACTIVE", USER_ID)));
+        when(sessions.softDelete(eq(SESSION_ID), eq(1), any(), any())).thenReturn(true);
+        ArgumentCaptor<OffsetDateTime> purge = ArgumentCaptor.forClass(OffsetDateTime.class);
+
+        AiSessionDeletion deletion = service.deleteSession(SESSION_ID, USER_ID, 1);
+
+        assertThat(deletion.deleted()).isTrue();
+        verify(sessions).softDelete(eq(SESSION_ID), eq(1), any(), purge.capture());
+        // 固定时钟是 2026-09-22T15:00+08:00（北京时间），30 天后即 2026-10-22T15:00+08:00
+        assertThat(purge.getValue()).isEqualTo(OffsetDateTime.parse("2026-10-22T15:00:00+08:00"));
+        assertThat(deletion.purgeAfter()).isEqualTo(purge.getValue());
+    }
+
+    @Test
+    @DisplayName("已软删的会话不能再改名 / 收藏，也删不了第二次（都是 404）")
+    void deletedSessionIsNotMutable() {
+        when(sessions.find(SESSION_ID)).thenReturn(Optional.of(session("DELETED", USER_ID)));
+
+        assertThatThrownBy(() -> service.updateSession(SESSION_ID, USER_ID, 1, "新标题", null))
+                .isInstanceOf(AiTaskException.class);
+        assertThatThrownBy(() -> service.deleteSession(SESSION_ID, USER_ID, 1))
+                .isInstanceOf(AiTaskException.class);
+
+        verify(sessions, never()).update(anyLong(), anyInt(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+        verify(sessions, never()).softDelete(anyLong(), anyInt(), any(), any());
+    }
+
     // ---------- HIS-05：会话消息 ----------
 
     @Test
@@ -317,6 +414,18 @@ class AiHistoryServiceTest {
         return new AiSession(
                 SESSION_ID, userId, AiScene.STOCK, "贵州茅台分析", status, false,
                 lastTaskId, NOW, 1, NOW);
+    }
+
+    /**
+     * 指定版本的会话。
+     *
+     * <p>刻意**不**重载 {@link #session}：那个三参版本收的是 {@code Long lastTaskId}，
+     * 传一个整数会被当成任务 ID 而不是版本——而两者都编译通过，测试会安静地测错东西。
+     */
+    private static AiSession sessionWithVersion(long userId, int version) {
+        return new AiSession(
+                SESSION_ID, userId, AiScene.STOCK, "贵州茅台分析", "ACTIVE", false,
+                TASK_ID, NOW, version, NOW);
     }
 
     /**

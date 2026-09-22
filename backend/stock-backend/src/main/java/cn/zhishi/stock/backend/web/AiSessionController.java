@@ -1,9 +1,11 @@
 package cn.zhishi.stock.backend.web;
 
-import cn.zhishi.stock.ai.application.AiHistoryService;
 import cn.zhishi.stock.ai.application.AiMessageView;
+import cn.zhishi.stock.ai.application.AiSessionDeletion;
 import cn.zhishi.stock.ai.application.AiSessionDetail;
 import cn.zhishi.stock.ai.application.AiSessionSummaryView;
+import cn.zhishi.stock.ai.application.AiSessionUpdated;
+import cn.zhishi.stock.ai.application.AiHistoryService;
 import cn.zhishi.stock.ai.application.InvalidAiHistoryQueryException;
 import cn.zhishi.stock.common.api.ApiResponse;
 import cn.zhishi.stock.common.api.PageData;
@@ -13,8 +15,12 @@ import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -91,7 +97,54 @@ public class AiSessionController {
         return success(history.getSession(sessionId, userId), request);
     }
 
-    /** HIS-05：获取本人会话消息（不含 {@code SYSTEM} 内部 Prompt）。 */
+    /**
+     * HIS-03：重命名 / 收藏。
+     *
+     * <p>两个字段都可选，但服务端的 UPDATE 是覆盖式的——未提供的那个由用例层从当前行补上，
+     * 再把**读取时的版本**连同写入一起提交。`If-Match` 缺失或非整数由 {@code IfMatch}
+     * 助手抛 400；版本对不上由用例层抛 409。
+     */
+    @PatchMapping("/sessions/{sessionId}")
+    public ApiResponse<AiSessionUpdated> updateSession(
+            Authentication authentication,
+            @PathVariable long sessionId,
+            @RequestHeader(value = "If-Match", required = false) String ifMatch,
+            @RequestBody SessionUpdateRequest body,
+            HttpServletRequest request) {
+        long userId = principal(authentication).userId();
+        return success(
+                history.updateSession(
+                        sessionId, userId, IfMatch.version(ifMatch), body.title(), body.isFavorite()),
+                request);
+    }
+
+    /** HIS-04：软删除（默认 30 天后物理清理，响应里回传 `purgeAfter`）。 */
+    @DeleteMapping("/sessions/{sessionId}")
+    public ApiResponse<AiSessionDeletion> deleteSession(
+            Authentication authentication,
+            @PathVariable long sessionId,
+            @RequestHeader(value = "If-Match", required = false) String ifMatch,
+            HttpServletRequest request) {
+        long userId = principal(authentication).userId();
+        return success(history.deleteSession(sessionId, userId, IfMatch.version(ifMatch)), request);
+    }
+
+    /**
+     * HIS-03 的请求体。
+     *
+     * <p>两个字段都可空，`null` 表示"这次不改它"。刻意不用 {@code Optional}：
+     * Jackson 对 record 的 {@code Optional} 组件需要额外的模块配置，而 `null`
+     * 在这里的语义足够清楚。
+     *
+     * @param title      新标题，1~60 字符；不传表示不改
+     * @param isFavorite 收藏状态；不传表示不改（**注意 `false` 是"取消收藏"，不是"不改"**）
+     */
+    public record SessionUpdateRequest(String title, Boolean isFavorite) {
+    }
+
+    /**
+     * HIS-05：获取本人会话消息（不含 {@code SYSTEM} 内部 Prompt）。
+     */
     @GetMapping("/sessions/{sessionId}/messages")
     public ApiResponse<PageData<AiMessageView>> messages(
             Authentication authentication,

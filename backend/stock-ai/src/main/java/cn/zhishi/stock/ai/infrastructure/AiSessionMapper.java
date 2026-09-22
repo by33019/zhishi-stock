@@ -93,6 +93,53 @@ public interface AiSessionMapper {
             @Param("startAt") LocalDateTime startAt,
             @Param("endAt") LocalDateTime endAt);
 
+    /**
+     * 改名 / 收藏（契约 §HIS-03）。
+     *
+     * <p>{@code WHERE version = #{version}} 是乐观锁：影响 0 行表示"这份会话在你读取之后
+     * 被改过了"，由用例层转成 409。
+     *
+     * <p>{@code status <> 'DELETED'} 让已软删的会话不可再改。少了它，一次删除与一次改名
+     * 并发时后者会"成功"，把已删会话又改出用户可见的内容。
+     *
+     * @return 影响行数；0 表示版本冲突或会话已删除
+     */
+    @Update("""
+            UPDATE ai_session
+               SET title = #{title},
+                   is_favorite = #{favorite},
+                   version = version + 1
+             WHERE id = #{sessionId} AND version = #{version} AND status <> 'DELETED'
+            """)
+    int update(
+            @Param("sessionId") long sessionId,
+            @Param("version") int version,
+            @Param("title") String title,
+            @Param("favorite") boolean favorite);
+
+    /**
+     * 软删除（契约 §HIS-04）。
+     *
+     * <p>三个字段必须一起写：{@code ck_ai_session_delete_state} 要求
+     * {@code status='DELETED' ⇔ deleted_at 与 purge_after 都非空}。只改 status
+     * 会被数据库拒绝，而那条约束错误读起来像"字段没填"，不像"删除状态不自洽"。
+     *
+     * @return 影响行数；0 表示版本冲突或已经是删除态
+     */
+    @Update("""
+            UPDATE ai_session
+               SET status = 'DELETED',
+                   deleted_at = #{deletedAt},
+                   purge_after = #{purgeAfter},
+                   version = version + 1
+             WHERE id = #{sessionId} AND version = #{version} AND status <> 'DELETED'
+            """)
+    int softDelete(
+            @Param("sessionId") long sessionId,
+            @Param("version") int version,
+            @Param("deletedAt") LocalDateTime deletedAt,
+            @Param("purgeAfter") LocalDateTime purgeAfter);
+
     @Select("SELECT " + COLUMNS + " FROM ai_session WHERE id = #{sessionId}")
     AiSessionRow find(@Param("sessionId") long sessionId);
 

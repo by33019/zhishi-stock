@@ -13,6 +13,7 @@ import cn.zhishi.stock.ai.domain.AiSessionSummary;
 import cn.zhishi.stock.ai.domain.AiTask;
 import cn.zhishi.stock.ai.domain.AiTaskStore;
 import cn.zhishi.stock.common.api.PageData;
+import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Locale;
@@ -47,18 +48,21 @@ public class AiHistoryService {
     private final AiTaskStore tasks;
     private final AiReportStore reports;
     private final AiTargetHydrator targetHydrator;
+    private final Clock clock;
 
     public AiHistoryService(
             AiSessionStore sessions,
             AiMessageStore messages,
             AiTaskStore tasks,
             AiReportStore reports,
-            AiTargetHydrator targetHydrator) {
+            AiTargetHydrator targetHydrator,
+            Clock clock) {
         this.sessions = sessions;
         this.messages = messages;
         this.tasks = tasks;
         this.reports = reports;
         this.targetHydrator = targetHydrator;
+        this.clock = clock;
     }
 
     /** 本人会话历史（契约 §HIS-01），按最后活动时间倒序。 */
@@ -149,6 +153,79 @@ public class AiHistoryService {
                 total,
                 totalPages,
                 effectivePage < totalPages);
+    }
+
+    static final int MAX_TITLE_LENGTH = 60;
+
+    /**
+     * 软删后保留天数（契约 §HIS-04「默认 30 天后物理清理」）。
+     *
+     * <p>这里只负责把 `purge_after` 写对，**不做实际清理**——那是清理作业的事，
+     * 放在一次用户请求里删数据会让"响应变慢"与"数据丢失"耦合在一起。
+     */
+    static final int PURGE_AFTER_DAYS = 30;
+
+    /**
+     * 改名与收藏（契约 §HIS-03）。
+     *
+     * <h2>两个字段都传，缺的那个从当前行补</h2>
+     * `PATCH` 的语义是"只改我给了的那些"。SQL 上是同一条 UPDATE，所以用例层先把
+     * 未提供的字段从当前行填上，再连同**读取时的版本**一起写。少了这一步，
+     * 并发下会出现"用 A 的标题覆盖 B 的收藏"。
+     *
+     * @param expectedVersion 来自 `If-Match`；与库里不一致时抛 409
+     */
+    public AiSessionUpdated updateSession(
+            long sessionId, long userId, int expectedVersion, String title, Boolean favorite) {
+        AiSession session = requireOwnedSession(sessionId, userId);
+
+        String nextTitle = session.title();
+        if (title != null) {
+            String trimmed = title.trim();
+            if (trimmed.isEmpty() || trimmed.length() > MAX_TITLE_LENGTH) {
+                throw new InvalidAiHistoryQueryException(
+                        "标题长度必须在 1 到 " + MAX_TITLE_LENGTH + " 个字符之间");
+            }
+            nextTitle = trimmed;
+        }
+        boolean nextFavorite = favorite == null ? session.favorite() : favorite;
+
+        if (!sessions.update(sessionId, expectedVersion, nextTitle, nextFavorite)) {
+            throw versionConflictOf(sessionId, expectedVersion);
+        }
+        // 数据库负责推进版本（SET version = version + 1），这里回传 +1 后的值。
+        return new AiSessionUpdated(
+                Long.toString(sessionId), nextTitle, nextFavorite, expectedVersion + 1);
+    }
+
+    /**
+     * 软删除（契约 §HIS-04）。
+     *
+     * <p>已删除的会话在 {@link #requireOwnedSession} 那里就按"不存在"处理，因此重复删除
+     * 得到的是 404 而不是静默成功——列表里看不到的会话，删除接口也不该说"删好了"。
+     */
+    public AiSessionDeletion deleteSession(long sessionId, long userId, int expectedVersion) {
+        requireOwnedSession(sessionId, userId);
+        OffsetDateTime now = OffsetDateTime.now(clock);
+        OffsetDateTime purgeAfter = now.plusDays(PURGE_AFTER_DAYS);
+        if (!sessions.softDelete(sessionId, expectedVersion, now, purgeAfter)) {
+            throw versionConflictOf(sessionId, expectedVersion);
+        }
+        return new AiSessionDeletion(true, purgeAfter);
+    }
+
+    /**
+     * 版本冲突：重新读一次拿到**当前版本**再报。
+     *
+     * <p>不回读就只能报"期望版本 N"，而那是客户端自己的值——它已经知道了。
+     * 真正有用的是"现在是 M"，前端据此判断该重新拉取还是提示用户。
+     */
+    private AiTaskException versionConflictOf(long sessionId, int expectedVersion) {
+        return sessions.find(sessionId)
+                .map(current -> AiTaskException.sessionVersionConflict(
+                        sessionId, expectedVersion, current.version()))
+                // 读不到了：说明这一行在冲突处理的这一刻被清理了，按不存在报更准确。
+                .orElseGet(() -> AiTaskException.sessionNotFound(sessionId));
     }
 
     private AiSession requireOwnedSession(long sessionId, long userId) {

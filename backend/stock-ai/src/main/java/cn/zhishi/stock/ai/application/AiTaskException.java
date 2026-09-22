@@ -37,4 +37,17 @@ public class AiTaskException extends RuntimeException {
     public static AiTaskException reportNotFound(long reportId) {
         return new AiTaskException(AiTaskErrorCode.REPORT_NOT_FOUND, "AI 报告不存在：" + reportId);
     }
+
+    /**
+     * 会话版本冲突（{@code If-Match} 已过期）。
+     *
+     * <p>文案里带上**期望版本与当前版本**：前端拿着它就知道该重新拉一次，
+     * 而只回一句"冲突了"会让人不知道该做什么。
+     */
+    public static AiTaskException sessionVersionConflict(long sessionId, int expected, int actual) {
+        return new AiTaskException(
+                AiTaskErrorCode.SESSION_VERSION_CONFLICT,
+                "会话已被修改，请重新获取后再提交：sessionId=" + sessionId
+                        + " 期望版本=" + expected + " 当前版本=" + actual);
+    }
 }

@@ -41,4 +41,28 @@ public interface AiSessionStore {
 
     /** 与 {@link #listByUser} 完全同条件的总数，供分页字段使用。 */
     int countByUser(long userId, AiSessionQuery query);
+
+    /**
+     * 改名与收藏（契约 §HIS-03），乐观锁写入。
+     *
+     * <p>两个字段一起传——{@code PATCH} 的语义是"只改我给了的那些"，而"只改标题"
+     * 与"只改收藏"在 SQL 上是同一条语句。调用方（用例层）负责把没给的那个字段
+     * 从当前行补上，再把**读取时的版本**传进来；这样并发下不会出现
+     * "用 A 的标题覆盖 B 的收藏"。
+     *
+     * @param version 调用方读取时的版本（即 {@code If-Match}）
+     * @return 是否写入成功；{@code false} 表示版本已被别人推进，或会话已删除
+     */
+    boolean update(long sessionId, int version, String title, boolean favorite);
+
+    /**
+     * 软删除（契约 §HIS-04），乐观锁写入。
+     *
+     * <p>软删而不是物理删：契约要求"默认 30 天后物理清理"，而清理任务不在这里——
+     * 它属于后续的清理作业。本方法只负责把状态与清理时间写对。
+     *
+     * @param version 调用方读取时的版本
+     * @return 是否写入成功；{@code false} 表示版本冲突或已经是删除态
+     */
+    boolean softDelete(long sessionId, int version, OffsetDateTime deletedAt, OffsetDateTime purgeAfter);
 }

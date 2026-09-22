@@ -91,8 +91,8 @@
   - [x] **HIS-06** `GET /ai/reports/{reportId}` 报告读接口 — 已完成，见下方详情
   - [x] **HIS-01** `GET /ai/sessions` 会话历史分页（`scene` / `keyword` / `favorite` / 时间范围）— 已完成，见下方详情
   - [x] **HIS-02** `GET /ai/sessions/{sessionId}` 会话详情 — 已完成，见下方详情
-  - [ ] **HIS-03** `PATCH /ai/sessions/{sessionId}` 重命名 / 收藏（需 `If-Match`，标题 1~60 字符）
-  - [ ] **HIS-04** `DELETE /ai/sessions/{sessionId}` 软删（需 `If-Match`，默认 30 天后物理清理）
+  - [x] **HIS-03** `PATCH /ai/sessions/{sessionId}` 重命名 / 收藏（需 `If-Match`，标题 1~60 字符）— 已完成，见下方详情
+  - [x] **HIS-04** `DELETE /ai/sessions/{sessionId}` 软删（需 `If-Match`，默认 30 天后物理清理）— 已完成，见下方详情
   - [x] **HIS-05** `GET /ai/sessions/{sessionId}/messages` 消息分页（**不得返回 `SYSTEM` 内部 Prompt**）— 已完成，见下方详情
   - [ ] **HIS-07** `GET /ai/reports/{reportId}/evidence` 证据数组 + `ai_evidence` 落库
     （M3-07 已在快照里固化 `AiEvidenceCandidate` 全集，报告正文的引用编号 `[1]` 目前**无行可反查**）
@@ -1463,6 +1463,7 @@ Redis Stream 队列（`stream:ai:tasks`，消费组 `ai-worker`）与事件流
 - [x] HIS-08 / HIS-09（2026-09-22）
 - [x] HIS-01 / HIS-05（2026-09-22）
 - [x] HIS-02（2026-09-22）
+- [x] HIS-03 / HIS-04（2026-09-22）
 
 ---
 

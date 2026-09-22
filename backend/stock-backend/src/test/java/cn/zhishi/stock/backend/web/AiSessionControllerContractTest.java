@@ -2,19 +2,25 @@ package cn.zhishi.stock.backend.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import cn.zhishi.stock.ai.application.AiHistoryService;
 import cn.zhishi.stock.ai.application.AiMessageView;
+import cn.zhishi.stock.ai.application.AiSessionDeletion;
 import cn.zhishi.stock.ai.application.AiSessionDetail;
 import cn.zhishi.stock.ai.application.AiSessionSummaryView;
+import cn.zhishi.stock.ai.application.AiSessionUpdated;
 import cn.zhishi.stock.ai.application.AiTaskException;
 import cn.zhishi.stock.ai.application.AiTaskSummary;
 import cn.zhishi.stock.ai.application.InvalidAiHistoryQueryException;
@@ -36,6 +42,7 @@ import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
 import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -228,6 +235,98 @@ class AiSessionControllerContractTest {
                 .thenThrow(AiTaskException.sessionNotFound(Long.parseLong(SESSION_ID)));
 
         mvc().perform(get("/api/v1/ai/sessions/" + SESSION_ID).principal(authentication()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("AI_SESSION_NOT_FOUND"));
+    }
+
+    // ---------- HIS-03 / HIS-04 ----------
+
+    @Test
+    @DisplayName("HIS-03 PATCH 带 If-Match 返回 200 与新版本，isFavorite 字段名正确")
+    void patchReturnsNextVersion() throws Exception {
+        when(history.updateSession(anyLong(), anyLong(), eq(3), any(), any()))
+                .thenReturn(new AiSessionUpdated(SESSION_ID, "新标题", true, 4));
+
+        mvc().perform(patch("/api/v1/ai/sessions/" + SESSION_ID)
+                        .principal(authentication())
+                        .header("If-Match", "3")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"新标题\",\"isFavorite\":true}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.sessionId").value(SESSION_ID))
+                .andExpect(jsonPath("$.data.title").value("新标题"))
+                .andExpect(jsonPath("$.data.isFavorite").value(true))
+                .andExpect(jsonPath("$.data.version").value(4));
+
+        // If-Match 的引号形式（"3"）也要能解析：HTTP 的 ETag 本来就带引号
+        mvc().perform(patch("/api/v1/ai/sessions/" + SESSION_ID)
+                        .principal(authentication())
+                        .header("If-Match", "\"3\"")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"isFavorite\":false}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("HIS-03 缺 If-Match 或格式非法 → 400，且不改数据")
+    void patchRequiresValidIfMatch() throws Exception {
+        mvc().perform(patch("/api/v1/ai/sessions/" + SESSION_ID)
+                        .principal(authentication())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"新标题\"}"))
+                .andExpect(status().isBadRequest());
+
+        mvc().perform(patch("/api/v1/ai/sessions/" + SESSION_ID)
+                        .principal(authentication())
+                        .header("If-Match", "not-a-number")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"新标题\"}"))
+                .andExpect(status().isBadRequest());
+
+        verify(history, never()).updateSession(anyLong(), anyLong(), anyInt(), any(), any());
+    }
+
+    @Test
+    @DisplayName("HIS-03 版本过期 → 409 AI_SESSION_VERSION_CONFLICT")
+    void patchVersionConflictIsConflict() throws Exception {
+        when(history.updateSession(anyLong(), anyLong(), anyInt(), any(), any()))
+                .thenThrow(AiTaskException.sessionVersionConflict(Long.parseLong(SESSION_ID), 1, 5));
+
+        mvc().perform(patch("/api/v1/ai/sessions/" + SESSION_ID)
+                        .principal(authentication())
+                        .header("If-Match", "1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"新标题\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("AI_SESSION_VERSION_CONFLICT"));
+    }
+
+    @Test
+    @DisplayName("HIS-04 DELETE 带 If-Match 返回 deleted 与 purgeAfter")
+    void deleteReturnsPurgeAfter() throws Exception {
+        when(history.deleteSession(anyLong(), anyLong(), eq(3)))
+                .thenReturn(new AiSessionDeletion(true, OffsetDateTime.parse("2026-10-22T15:00:00+08:00")));
+
+        mvc().perform(delete("/api/v1/ai/sessions/" + SESSION_ID)
+                        .principal(authentication())
+                        .header("If-Match", "3"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.deleted").value(true))
+                // 必须告诉用户数据哪天彻底消失，只回 deleted 等于说"删了但还留着"
+                .andExpect(jsonPath("$.data.purgeAfter").value("2026-10-22T15:00:00+08:00"));
+    }
+
+    @Test
+    @DisplayName("HIS-04 缺 If-Match → 400；他人的会话 → 404")
+    void deleteRequiresIfMatchAndOwnership() throws Exception {
+        mvc().perform(delete("/api/v1/ai/sessions/" + SESSION_ID).principal(authentication()))
+                .andExpect(status().isBadRequest());
+
+        when(history.deleteSession(anyLong(), anyLong(), anyInt()))
+                .thenThrow(AiTaskException.sessionNotFound(Long.parseLong(SESSION_ID)));
+        mvc().perform(delete("/api/v1/ai/sessions/" + SESSION_ID)
+                        .principal(authentication())
+                        .header("If-Match", "1"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("AI_SESSION_NOT_FOUND"));
     }

@@ -23,6 +23,67 @@
 
 ---
 
+## 2026-09-22 — HIS-03 / HIS-04 会话改名、收藏与软删（首个 `If-Match` 乐观锁端点）
+
+### 新增
+
+- **HIS-03 `PATCH /api/v1/ai/sessions/{sessionId}`**（`USER`）：重命名 / 收藏，需 `If-Match`，
+  返回更新后的会话与**新版本**。标题 1~60 字符。
+- **HIS-04 `DELETE /api/v1/ai/sessions/{sessionId}`**（`USER`）：软删，需 `If-Match`，
+  返回 `deleted` 与 `purgeAfter`（默认 30 天后物理清理）。
+- `AiSessionUpdated` / `AiSessionDeletion`（application）；`AiSessionStore.update` /
+  `softDelete`；两个 Mapper 的乐观锁 UPDATE；`AiHistoryService` 新增 `Clock` 依赖。
+- `AiTaskErrorCode.SESSION_VERSION_CONFLICT`（409）+ `AiTaskException.sessionVersionConflict`。
+- 测试：`AiHistoryServiceTest` 由 14 增至 **20** 项、`AiSessionControllerContractTest`
+  由 10 增至 **15** 项。
+
+### 变更
+
+- 三处测试内的内存桩补上新方法（抛 `UnsupportedOperationException`，与既有处置一致——
+  返回 `false` 会让"版本冲突"与"方法没实现"给出同一个返回值）。
+
+### 关键设计取舍
+
+1. **两个字段一起写、缺的那个从当前行补**。`PATCH` 的语义是"只改我给了的那些"，
+   而 SQL 上是同一条 `UPDATE`。用例层先把未提供的字段填上，再连同**读取时的版本**
+   一起提交——少了这一步，并发下会出现"用 A 的标题覆盖 B 的收藏"。
+   实测：只传 `isFavorite` 时标题保持不变。
+2. **`WHERE version = ? AND status <> 'DELETED'`**。前者是乐观锁；后者让已软删的会话
+   不可再改——少了它，一次删除与一次改名并发时后者会"成功"，把已删会话又改出
+   用户可见的内容。
+3. **软删的三个字段必须一起写**：`ck_ai_session_delete_state` 要求
+   `status='DELETED' ⇔ deleted_at 与 purge_after 都非空`。只改 `status` 会被数据库拒绝，
+   而那条约束错误读起来像"字段没填"，不像"删除状态不自洽"。
+4. **版本冲突回读一次拿当前版本再报**。只报"期望版本 N"没有信息量——那是客户端
+   自己的值；真正有用的是"现在是 M"，前端据此决定重新拉取还是提示用户。
+5. **`deleted` 恒为 `true`**：该字段存在是因为契约响应里有它，而不是因为存在
+   "删除失败但返回 200"的路径——版本冲突与已删除都抛 409 / 404。保留它是为了让
+   响应形状与契约一致，前端不必为"成功但 deleted=false"写分支。
+6. **软删后重复删除返回 404 而不是静默成功**：列表里看不到的会话，删除接口也不该
+   说"删好了"。三种"拿不到"（不存在 / 属于别人 / 已删除）仍共用同一句 404。
+7. **不做实际清理**：这里只把 `purge_after` 写对，清理是作业的事。把删数据放进一次
+   用户请求里，会让"响应变慢"与"数据丢失"耦合在一起。
+
+### 验证
+
+- `stock-ai` **202 项**、`stock-backend` **52 项**全绿（含 `BackendConfigurationTest`）。
+- **真实端到端**（Docker 全栈，用一条 M3-07 遗留的可弃测试会话）：
+  改名 200 且 `version` 1→2、`isFavorite` 字段名正确；
+  **只传 `isFavorite` 时标题保持不变**（部分更新合并正确）；
+  用过期版本提交 → **409 `AI_SESSION_VERSION_CONFLICT`，文案含"期望版本=1 当前版本=3"**；
+  缺 `If-Match` / 非整数 `If-Match` / 空标题 → 均 400；
+  软删 200 且 `purgeAfter = 2026-10-22T16:59:17+08:00`（正好 +30 天）；
+  **重复删除 → 404**；软删后**列表不再包含它**、详情与改名均为 404；未登录 → 401。
+
+### 不在本轮范围
+
+- **HIS-07**（证据数组 + `ai_evidence` 落库）仍属 M3-08，需改动 `AiTaskExecutionService`
+  的报告定稿链路。
+- `purge_after` 到点后的物理清理作业尚未实现（表里的索引 `idx_ai_session_purge` 已就位）。
+- `/history` 页面的改名 / 收藏 / 删除按钮尚未接上（前端属 M3-10）。
+
+---
+
 ## 2026-09-22 — M3-10（部分）：前端 `/history` 接真实接口
 
 `/history` 此前是**完全静态的原型**：4 条写死的报告（`R-0908-01` 等）、写死的筛选计数

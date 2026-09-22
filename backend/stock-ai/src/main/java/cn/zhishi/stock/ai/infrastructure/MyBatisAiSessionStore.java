@@ -98,8 +98,7 @@ public class MyBatisAiSessionStore implements AiSessionStore {
      * 写成静态方法就得另找一个时区来源（比如硬编码 {@code Asia/Shanghai}），
      * 那会给"时区"造出第二处定义——而两处一旦分叉，同一行数据的两个时间列会用不同时区换算。
      */
-    private AiSessionSummary toSummary(AiSessionSummaryRow row) {
-        return new AiSessionSummary(
+    private AiSessionSummary toSummary(AiSessionSummaryRow row) {        return new AiSessionSummary(
                 row.sessionId(),
                 row.userId(),
                 row.scene(),
@@ -111,6 +110,18 @@ public class MyBatisAiSessionStore implements AiSessionStore {
                 toOffsetDateTime(row.lastActivityAt()),
                 toOffsetDateTime(row.createdAt()),
                 row.version());
+    }
+
+    @Override
+    public boolean update(long sessionId, int version, String title, boolean favorite) {
+        return mapper.update(sessionId, version, title, favorite) > 0;
+    }
+
+    @Override
+    public boolean softDelete(
+            long sessionId, int version, OffsetDateTime deletedAt, OffsetDateTime purgeAfter) {
+        return mapper.softDelete(
+                sessionId, version, toLocalDateTime(deletedAt), toLocalDateTime(purgeAfter)) > 0;
     }
 
     private OffsetDateTime toOffsetDateTime(LocalDateTime value) {

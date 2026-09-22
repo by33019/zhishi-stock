@@ -38,7 +38,14 @@ public enum AiTaskErrorCode {
      */
     REPORT_NOT_FOUND("AI_REPORT_NOT_FOUND", 404),
     /** 会话已不是 {@code ACTIVE}（追问要求活动会话）。 */
-    SESSION_READ_ONLY("AI_SESSION_READ_ONLY", 409);
+    SESSION_READ_ONLY("AI_SESSION_READ_ONLY", 409),
+    /**
+     * 会话的 {@code If-Match} 版本已过期（契约 §HIS-03 / §HIS-04）。
+     *
+     * <p>409 而不是 400：请求本身没有语法问题，是**这份资源在你读取之后被别人改过了**。
+     * 前端据此重新拉一次再提交，而不是把用户输入丢掉。同 {@code WATCHLIST_VERSION_CONFLICT}。
+     */
+    SESSION_VERSION_CONFLICT("AI_SESSION_VERSION_CONFLICT", 409);
 
     private final String externalCode;
     private final int httpStatus;
