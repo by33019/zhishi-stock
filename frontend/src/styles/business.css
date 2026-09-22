@@ -777,3 +777,105 @@
 .component-unavailable {
   padding: 1.25rem;
 }
+
+/* ---------------------------------------------------------------------------
+   分析历史（HIS-01 / HIS-02 / HIS-05）
+   --------------------------------------------------------------------------- */
+
+/* 列表行原本是三列（日期｜内容｜操作）。接真实接口后没有可用的行级操作
+   （重命名/收藏/删除属 HIS-03/04，尚未实现），去掉操作列而不是留一个空列。 */
+.history-main .report-list article {
+  grid-template-columns: 75px minmax(0, 1fr);
+  cursor: pointer;
+}
+
+.history-main .report-list article.selected {
+  background: var(--paper-muted);
+}
+
+/* 列表标题做成按钮：它要能点，但从视觉上仍是一行标题而不是一个按钮。 */
+.link-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  color: var(--gold);
+  text-decoration: underline;
+}
+
+/* 状态/空/错误提示行。刻意用同一套样式：三者在版面上是同一类东西，
+   给错误单独一套配色会让"还没有记录"看起来也像出了问题。 */
+.state-note {
+  padding: 12px 20px;
+  color: var(--ink-faint);
+  font-size: var(--text-caption);
+}
+
+.state-note--error {
+  color: var(--down);
+}
+
+.history-pager {
+  display: flex;
+  gap: 8px;
+  padding: 12px 20px;
+}
+
+.history-detail {
+  margin-top: 8px;
+  padding: 20px;
+  border-top: 1px solid var(--line);
+}
+
+.history-detail h3 {
+  margin: 18px 0 6px;
+  font-size: 0.9rem;
+}
+
+.history-detail h3:first-child {
+  margin-top: 0;
+}
+
+.target-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: var(--text-caption);
+}
+
+.target-list em {
+  margin-left: 6px;
+  color: var(--ink-faint);
+  font-style: normal;
+}
+
+.message-block {
+  margin-bottom: 12px;
+}
+
+.message-block header {
+  display: flex;
+  gap: 10px;
+  color: var(--ink-faint);
+  font-size: var(--text-caption);
+}
+
+/* 结论是服务端渲染好的 Markdown，这里按纯文本展示：
+   不引入 Markdown 渲染库，也不把 Markdown 语法当成能直接显示的 HTML。 */
+.message-block pre {
+  margin: 6px 0 0;
+  padding: 12px;
+  border-radius: 6px;
+  background: var(--paper-muted);
+  font-family: inherit;
+  font-size: var(--text-caption);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+

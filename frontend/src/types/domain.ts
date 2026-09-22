@@ -726,3 +726,121 @@ export interface NewsQuery {
   page?: number
   size?: number
 }
+
+// ---------------------------------------------------------------------------
+// AI 会话历史（契约 §13.3 HIS-01 / HIS-02 / HIS-05、§4.4 AiTaskSummary）
+//
+// 字段名一律照契约，包括 `isFavorite` / `isLimited`：后端用 `@JsonProperty` 对齐过，
+// 前端这里也按契约写，两边都改才叫"对齐"，只有一边改是漂移。
+// ---------------------------------------------------------------------------
+
+/** 场景码，与后端 `AiScene` 枚举同集合。 */
+export type AiScene = 'MARKET' | 'SECTOR' | 'STOCK' | 'STOCK_RISK' | 'COMPARE'
+
+/** 会话状态。只声明前端会走到的取值；服务端新增状态时 UI 落到默认分支而不是编译失败。 */
+export type AiSessionStatus = 'ACTIVE' | 'DELETED'
+
+/** 会话内最近任务的精简视图（HIS-01 列表用）。 */
+export interface AiSessionLastTask {
+  taskId: string
+  status: string
+}
+
+/** HIS-01 列表项。 */
+export interface AiSessionSummary {
+  sessionId: string
+  scene: AiScene
+  title: string
+  status: AiSessionStatus
+  isFavorite: boolean
+  /** 从未跑过任务时为 `null`——据此渲染"还没有分析"，而不是"状态未知"。 */
+  lastTask: AiSessionLastTask | null
+  lastActivityAt: string
+  createdAt: string
+  version: number
+}
+
+/**
+ * HIS-01 查询参数。
+ *
+ * `keyword` **只匹配会话标题**（服务端实现口径）。所以界面的提示语必须说"搜索标题"，
+ * 不能写成"搜索问题、标的或报告内容"——那会让用户以为能搜正文。
+ */
+export interface AiSessionQuery {
+  scene?: AiScene | ''
+  keyword?: string
+  favorite?: boolean
+  startAt?: string
+  endAt?: string
+  page?: number
+  size?: number
+}
+
+/** 分析目标。`targetId` 是可解析的对外标识（`sim-600519`），不是数据库代理键。 */
+export interface AiContextTarget {
+  targetType: string
+  targetId: string
+  targetCode: string
+  targetName: string
+  targetRole: string
+}
+
+/** 任务摘要（契约 §4.4）。HIS-02 的 `lastTask` 用它。 */
+export interface AiTaskSummary {
+  taskId: string
+  sessionId: string
+  scene: AiScene
+  status: string
+  targets: AiContextTarget[]
+  question: string | null
+  progressStage: string
+  createdAt: string
+  firstChunkAt: string | null
+  completedAt: string | null
+  reportId: string | null
+  error: { category: string; code: string; message: string; retryable: boolean } | null
+}
+
+/** 报告摘要（HIS-02 的 `lastReport`）。六章节正文属 HIS-06，这里只给"是哪份、质量如何"。 */
+export interface AiReportBrief {
+  reportId: string
+  qualityStatus: string
+  isLimited: boolean
+  generatedAt: string
+}
+
+/** HIS-02 会话详情。 */
+export interface AiSessionDetail {
+  sessionId: string
+  scene: AiScene
+  title: string
+  status: AiSessionStatus
+  isFavorite: boolean
+  targets: AiContextTarget[]
+  lastTask: AiTaskSummary | null
+  lastReport: AiReportBrief | null
+  lastActivityAt: string
+  createdAt: string
+  version: number
+}
+
+export type AiMessageRole = 'USER' | 'ASSISTANT' | 'SYSTEM'
+
+/**
+ * HIS-05 消息。
+ *
+ * 服务端已按契约排除 `SYSTEM` 行，因此前端拿不到内部 Prompt；保留该取值只是让类型
+ * 穷尽后端枚举，渲染时对未知角色不输出任何内容。
+ *
+ * 契约 §HIS-05 还列了 `contentFormat` / `status`，但 `ai_message` 表没有这两列，
+ * 服务端刻意不返回（不编造）。因此这里也没有它们——哪天补上，类型要一起改。
+ */
+export interface AiMessage {
+  messageId: string
+  taskId: string | null
+  roleType: AiMessageRole
+  sequenceNo: number
+  content: string
+  dataCutoffAt: string | null
+  createdAt: string
+}
