@@ -1,16 +1,22 @@
 package cn.zhishi.stock.ai.application;
 
+import cn.zhishi.stock.ai.domain.AiContextTarget;
 import cn.zhishi.stock.ai.domain.AiMessage;
 import cn.zhishi.stock.ai.domain.AiMessageStore;
+import cn.zhishi.stock.ai.domain.AiReport;
+import cn.zhishi.stock.ai.domain.AiReportStore;
 import cn.zhishi.stock.ai.domain.AiScene;
 import cn.zhishi.stock.ai.domain.AiSession;
 import cn.zhishi.stock.ai.domain.AiSessionQuery;
 import cn.zhishi.stock.ai.domain.AiSessionStore;
 import cn.zhishi.stock.ai.domain.AiSessionSummary;
+import cn.zhishi.stock.ai.domain.AiTask;
+import cn.zhishi.stock.ai.domain.AiTaskStore;
 import cn.zhishi.stock.common.api.PageData;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 
 /**
  * 会话历史（契约 §HIS-01 / §HIS-05）。
@@ -38,10 +44,21 @@ public class AiHistoryService {
 
     private final AiSessionStore sessions;
     private final AiMessageStore messages;
+    private final AiTaskStore tasks;
+    private final AiReportStore reports;
+    private final AiTargetHydrator targetHydrator;
 
-    public AiHistoryService(AiSessionStore sessions, AiMessageStore messages) {
+    public AiHistoryService(
+            AiSessionStore sessions,
+            AiMessageStore messages,
+            AiTaskStore tasks,
+            AiReportStore reports,
+            AiTargetHydrator targetHydrator) {
         this.sessions = sessions;
         this.messages = messages;
+        this.tasks = tasks;
+        this.reports = reports;
+        this.targetHydrator = targetHydrator;
     }
 
     /** 本人会话历史（契约 §HIS-01），按最后活动时间倒序。 */
@@ -72,6 +89,39 @@ public class AiHistoryService {
                 total,
                 totalPages,
                 effectivePage < totalPages);
+    }
+
+    /**
+     * 会话详情（契约 §HIS-02）：会话摘要 + 目标摘要 + 最近任务与报告摘要。
+     *
+     * <h2>目标必须经 {@code targetHydrator} 还原</h2>
+     * 从库里读回来的目标只有 bigint 代理键（{@code ai_task_target} 不存 {@code sim-600519}
+     * 那种对外标识）。直出的话前端拿到的跳转主键解析不了，而页面只会显示"打不开"——
+     * M3-07 的集成测试踩过同一个坑（那次的表现是每个任务都失败）。
+     *
+     * <h2>报告摘要允许缺失，且这不表示"没有报告"以外的任何意思</h2>
+     * 任务失败 / 超时 / 仍在运行都不会产出报告，此时 {@code lastReport} 为 {@code null}。
+     * 不去"猜"一个更友好的说法（比如把运行中显示成"报告生成中"）：那是把
+     * {@code lastTask.status} 已经表达过的事实再说一遍，而两处说法必然分叉。
+     */
+    public AiSessionDetail getSession(long sessionId, long userId) {
+        AiSession session = requireOwnedSession(sessionId, userId);
+        if (session.lastTaskId() == null) {
+            return AiSessionDetail.of(session, List.of(), null, null);
+        }
+        Optional<AiTask> found = tasks.find(session.lastTaskId());
+        if (found.isEmpty()) {
+            // last_task_id 指向的行已不在（数据不一致）：按"没有任务"处理而不是抛错。
+            return AiSessionDetail.of(session, List.of(), null, null);
+        }
+        AiTask task = found.get();
+        List<AiContextTarget> targets = targetHydrator.hydrate(task.targets());
+        Optional<AiReport> report = reports.findByTask(task.taskId());
+        return AiSessionDetail.of(
+                session,
+                targets,
+                AiTaskSummary.from(task, targets, report.map(AiReport::reportId).orElse(null)),
+                report.map(AiSessionDetail.ReportBrief::from).orElse(null));
     }
 
     /**

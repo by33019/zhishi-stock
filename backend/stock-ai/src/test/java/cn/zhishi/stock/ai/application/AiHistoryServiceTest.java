@@ -11,14 +11,23 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import cn.zhishi.stock.ai.domain.AiContextTarget;
 import cn.zhishi.stock.ai.domain.AiMessage;
 import cn.zhishi.stock.ai.domain.AiMessageRole;
 import cn.zhishi.stock.ai.domain.AiMessageStore;
+import cn.zhishi.stock.ai.domain.AiReport;
+import cn.zhishi.stock.ai.domain.AiReportQuality;
+import cn.zhishi.stock.ai.domain.AiReportStore;
 import cn.zhishi.stock.ai.domain.AiScene;
 import cn.zhishi.stock.ai.domain.AiSession;
 import cn.zhishi.stock.ai.domain.AiSessionQuery;
 import cn.zhishi.stock.ai.domain.AiSessionStore;
 import cn.zhishi.stock.ai.domain.AiSessionSummary;
+import cn.zhishi.stock.ai.domain.AiTargetRole;
+import cn.zhishi.stock.ai.domain.AiTargetType;
+import cn.zhishi.stock.ai.domain.AiTask;
+import cn.zhishi.stock.ai.domain.AiTaskStatus;
+import cn.zhishi.stock.ai.domain.AiTaskStore;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -45,8 +54,12 @@ class AiHistoryServiceTest {
 
     private final AiSessionStore sessions = mock(AiSessionStore.class);
     private final AiMessageStore messages = mock(AiMessageStore.class);
+    private final AiTaskStore tasks = mock(AiTaskStore.class);
+    private final AiReportStore reports = mock(AiReportStore.class);
+    private final AiTargetHydrator targetHydrator = mock(AiTargetHydrator.class);
 
-    private final AiHistoryService service = new AiHistoryService(sessions, messages);
+    private final AiHistoryService service =
+            new AiHistoryService(sessions, messages, tasks, reports, targetHydrator);
 
     // ---------- HIS-01：会话历史列表 ----------
 
@@ -145,6 +158,85 @@ class AiHistoryServiceTest {
         assertThat(service.listSessions(USER_ID, null, null, null, null, null, 1, 20).items()).isEmpty();
     }
 
+    // ---------- HIS-02：会话详情 ----------
+
+    @Test
+    @DisplayName("详情带出目标、最近任务与报告摘要，且目标经 hydrator 还原对外标识")
+    void detailCarriesTargetsTaskAndReport() {
+        when(sessions.find(SESSION_ID)).thenReturn(Optional.of(session("ACTIVE", USER_ID)));
+        when(tasks.find(TASK_ID)).thenReturn(Optional.of(completedTask()));
+        when(targetHydrator.hydrate(any())).thenReturn(List.of(hydratedTarget()));
+        when(reports.findByTask(TASK_ID)).thenReturn(Optional.of(validReport()));
+
+        AiSessionDetail detail = service.getSession(SESSION_ID, USER_ID);
+
+        assertThat(detail.sessionId()).isEqualTo("6001");
+        assertThat(detail.favorite()).isFalse();
+        assertThat(detail.version()).isEqualTo(1);
+        // 目标必须过 hydrator：库里只有 bigint 代理键，直出会让前端跳转主键解析不了
+        verify(targetHydrator).hydrate(any());
+        assertThat(detail.targets()).hasSize(1);
+        assertThat(detail.targets().get(0).targetId()).isEqualTo("sim-600519");
+        assertThat(detail.lastTask()).isNotNull();
+        assertThat(detail.lastTask().status()).isEqualTo(AiTaskStatus.COMPLETED);
+        assertThat(detail.lastTask().reportId()).isEqualTo("8001");
+        assertThat(detail.lastReport()).isNotNull();
+        assertThat(detail.lastReport().reportId()).isEqualTo("8001");
+        assertThat(detail.lastReport().qualityStatus()).isEqualTo("VALID");
+    }
+
+    @Test
+    @DisplayName("从未跑过任务：目标为空数组、两个摘要都是 null，且不去查任务表")
+    void detailWithoutAnyTask() {
+        when(sessions.find(SESSION_ID)).thenReturn(Optional.of(session("ACTIVE", USER_ID, null)));
+
+        AiSessionDetail detail = service.getSession(SESSION_ID, USER_ID);
+
+        assertThat(detail.targets()).isEmpty();
+        assertThat(detail.lastTask()).isNull();
+        assertThat(detail.lastReport()).isNull();
+        verify(tasks, never()).find(anyLong());
+    }
+
+    @Test
+    @DisplayName("last_task_id 悬空（数据不一致）：按「没有任务」处理，不抛错也不报 500")
+    void detailToleratesDanglingLastTask() {
+        when(sessions.find(SESSION_ID)).thenReturn(Optional.of(session("ACTIVE", USER_ID)));
+        when(tasks.find(TASK_ID)).thenReturn(Optional.empty());
+
+        AiSessionDetail detail = service.getSession(SESSION_ID, USER_ID);
+
+        assertThat(detail.lastTask()).isNull();
+        assertThat(detail.lastReport()).isNull();
+    }
+
+    @Test
+    @DisplayName("任务完成但报告缺失（失败/取消/超时）：lastReport 为 null，lastTask 仍带出")
+    void detailWithoutReportStillCarriesTask() {
+        when(sessions.find(SESSION_ID)).thenReturn(Optional.of(session("ACTIVE", USER_ID)));
+        when(tasks.find(TASK_ID)).thenReturn(Optional.of(completedTask()));
+        when(targetHydrator.hydrate(any())).thenReturn(List.of());
+        when(reports.findByTask(TASK_ID)).thenReturn(Optional.empty());
+
+        AiSessionDetail detail = service.getSession(SESSION_ID, USER_ID);
+
+        assertThat(detail.lastTask()).isNotNull();
+        assertThat(detail.lastTask().reportId()).isNull();
+        assertThat(detail.lastReport()).isNull();
+    }
+
+    @Test
+    @DisplayName("不属于本人的会话：404，且不查任务与报告")
+    void detailRequiresOwnership() {
+        when(sessions.find(SESSION_ID)).thenReturn(Optional.of(session("ACTIVE", OTHER_USER)));
+
+        assertThatThrownBy(() -> service.getSession(SESSION_ID, USER_ID))
+                .isInstanceOf(AiTaskException.class);
+
+        verify(tasks, never()).find(anyLong());
+        verify(reports, never()).findByTask(anyLong());
+    }
+
     // ---------- HIS-05：会话消息 ----------
 
     @Test
@@ -217,9 +309,46 @@ class AiHistoryServiceTest {
     }
 
     private static AiSession session(String status, long userId) {
+        return session(status, userId, TASK_ID);
+    }
+
+    /** {@code lastTaskId} 为 {@code null} 表示"从未跑过任务"。 */
+    private static AiSession session(String status, long userId, Long lastTaskId) {
         return new AiSession(
                 SESSION_ID, userId, AiScene.STOCK, "贵州茅台分析", status, false,
-                TASK_ID, NOW, 1, NOW);
+                lastTaskId, NOW, 1, NOW);
+    }
+
+    /**
+     * 一个终态任务。
+     *
+     * <p>库里的目标只有 bigint 代理键（{@code 600519L}），对外标识由 hydrator 还原——
+     * 这里刻意存代理键，才能证明服务层真的调了 hydrator。
+     */
+    private static AiTask completedTask() {
+        return new AiTask(
+                TASK_ID, "req-7001", SESSION_ID, USER_ID, null, AiScene.STOCK,
+                "这只股票怎么样？", null, null, AiTaskStatus.COMPLETED, false, 1, 2,
+                "DASHSCOPE", "qwen3.8-max-0902", "trace-7001",
+                NOW, NOW, NOW, NOW, NOW, NOW, NOW, NOW,
+                null, null, null, 2,
+                List.of(new AiContextTarget(
+                        AiTargetType.SECURITY, null, "600519", "模拟证券600519",
+                        AiTargetRole.PRIMARY, 600519L)));
+    }
+
+    private static AiContextTarget hydratedTarget() {
+        return new AiContextTarget(
+                AiTargetType.SECURITY, "sim-600519", "600519", "模拟证券600519",
+                AiTargetRole.PRIMARY, 600519L);
+    }
+
+    private static AiReport validReport() {
+        return new AiReport(
+                8001L, TASK_ID, SESSION_ID, 5002L,
+                "核心结论", "量价依据", null, null, "风险", "不构成投资建议。",
+                "# 报告", AiReportQuality.VALID, null, "v1", "p2",
+                "DASHSCOPE", "qwen3.8-max-0902", NOW, NOW, "a".repeat(64), NOW);
     }
 
     private static AiMessage userMessage() {

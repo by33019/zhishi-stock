@@ -2,6 +2,7 @@ package cn.zhishi.stock.backend.web;
 
 import cn.zhishi.stock.ai.application.AiHistoryService;
 import cn.zhishi.stock.ai.application.AiMessageView;
+import cn.zhishi.stock.ai.application.AiSessionDetail;
 import cn.zhishi.stock.ai.application.AiSessionSummaryView;
 import cn.zhishi.stock.ai.application.InvalidAiHistoryQueryException;
 import cn.zhishi.stock.common.api.ApiResponse;
@@ -73,6 +74,21 @@ public class AiSessionController {
                         page,
                         size),
                 request);
+    }
+
+    /**
+     * HIS-02：会话详情。
+     *
+     * <p>路径与 HIS-01 的 {@code /sessions} 只差一个路径变量，Spring 按精确匹配优先，
+     * 不会与列表接口冲突。
+     */
+    @GetMapping("/sessions/{sessionId}")
+    public ApiResponse<AiSessionDetail> getSession(
+            Authentication authentication,
+            @PathVariable long sessionId,
+            HttpServletRequest request) {
+        long userId = principal(authentication).userId();
+        return success(history.getSession(sessionId, userId), request);
     }
 
     /** HIS-05：获取本人会话消息（不含 {@code SYSTEM} 内部 Prompt）。 */

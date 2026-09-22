@@ -23,6 +23,51 @@
 
 ---
 
+## 2026-09-22 — HIS-02 会话详情
+
+### 新增
+
+- **HIS-02 `GET /api/v1/ai/sessions/{sessionId}`**（`USER`）：会话摘要 + **目标摘要** +
+  最近任务与报告摘要 + `version`。
+- `stock-ai/application/AiSessionDetail`（含嵌套 `ReportBrief`）。
+- `AiHistoryService.getSession(...)`；`AiHistoryService` 新增 `AiTaskStore` / `AiReportStore` /
+  `AiTargetHydrator` 三个依赖，`BackendConfiguration` 的 Bean 同步。
+- 测试：`AiHistoryServiceTest` 由 9 增至 **14** 项、`AiSessionControllerContractTest` 由 8 增至 **10** 项。
+
+### 关键设计取舍
+
+1. **目标必须经 `AiTargetHydrator` 还原**。从库里读回来的目标只有 bigint 代理键
+   （`ai_task_target` 不存 `sim-600519` 那种对外标识），直出会让前端拿到的跳转主键
+   解析不了——而页面只会显示"打不开"。M3-07 的集成测试踩过同一个坑。
+   **验证方式**：把响应里的 `targetId` 原样拿去调 `GET /securities/{id}/quote`，
+   返回 200 才说明它真的是对外标识（未还原的代理键会 404）。
+2. **报告摘要允许缺失，且不替换说法**。任务失败 / 超时 / 运行中都不会产出报告，
+   此时 `lastReport` 为 `null`。不把"运行中"渲染成"报告生成中"：那是把
+   `lastTask.status` 已经表达过的事实再说一遍，两处说法必然分叉。
+3. **`ReportBrief` 只给"是哪份、质量如何、何时生成"**。完整六章节正文属 HIS-06，
+   塞进会话详情会让列表页的每次点击都拖回几百字 Markdown。
+4. **`last_task_id` 悬空按"没有任务"处理**，不抛错：数据不一致时让一个只读页面
+   变成 500 没有意义。
+5. `isFavorite` 与 `lastReport.isLimited` 均显式 `@JsonProperty` 对齐（record 的 JSON
+   名取自组件名）。契约测试对两处都断言了"正确字段名存在且错误字段名不存在"。
+
+### 验证
+
+真实端到端（Docker 全栈 + 真实会话）：
+200 且 `isFavorite` / `isLimited` 字段名正确；`targets[0].targetId = sim-600519`
+**且用它调个股接口返回 200**；`lastTask` 带真实 `taskId` + `COMPLETED` + `reportId`；
+`lastReport` 的 `qualityStatus=LIMITED` 与 HIS-06 对同一份报告的说法一致；
+不存在的会话 → 404；未登录 → 401。
+单测：`stock-ai` 196 项、`stock-backend` 47 项全绿。
+
+### 不在本轮范围
+
+- **HIS-03**（改名 / 收藏，需 `If-Match`）、**HIS-04**（软删，需 `If-Match` + `purgeAfter`）、
+  **HIS-07**（证据数组 + `ai_evidence` 落库）仍属 M3-08。
+  HIS-03/04 是写路径上的并发控制，HIS-07 需改动 `AiTaskExecutionService` 的报告定稿链路。
+
+---
+
 ## 2026-09-22 — HIS-01 / HIS-05 会话历史（读取路径）
 
 ### 新增

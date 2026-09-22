@@ -13,11 +13,17 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import cn.zhishi.stock.ai.application.AiHistoryService;
 import cn.zhishi.stock.ai.application.AiMessageView;
+import cn.zhishi.stock.ai.application.AiSessionDetail;
 import cn.zhishi.stock.ai.application.AiSessionSummaryView;
 import cn.zhishi.stock.ai.application.AiTaskException;
+import cn.zhishi.stock.ai.application.AiTaskSummary;
 import cn.zhishi.stock.ai.application.InvalidAiHistoryQueryException;
+import cn.zhishi.stock.ai.domain.AiContextTarget;
 import cn.zhishi.stock.ai.domain.AiMessageRole;
 import cn.zhishi.stock.ai.domain.AiScene;
+import cn.zhishi.stock.ai.domain.AiTargetRole;
+import cn.zhishi.stock.ai.domain.AiTargetType;
+import cn.zhishi.stock.ai.domain.AiTaskStatus;
 import cn.zhishi.stock.common.api.PageData;
 import cn.zhishi.stock.system.auth.AccessTokenPrincipal;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -191,6 +197,58 @@ class AiSessionControllerContractTest {
                 .getResponse()
                 .getStatus();
         assertThat(status).isNotEqualTo(200);
+    }
+
+    @Test
+    @DisplayName("HIS-02 返回 200：目标、最近任务与报告摘要齐备，isFavorite / isLimited 字段名正确")
+    void sessionDetailUsesContractFieldNames() throws Exception {
+        when(history.getSession(anyLong(), anyLong())).thenReturn(sessionDetail());
+
+        mvc().perform(get("/api/v1/ai/sessions/" + SESSION_ID).principal(authentication()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.sessionId").value(SESSION_ID))
+                .andExpect(jsonPath("$.data.scene").value("STOCK"))
+                .andExpect(jsonPath("$.data.title").value("贵州茅台分析"))
+                .andExpect(jsonPath("$.data.isFavorite").value(true))
+                .andExpect(jsonPath("$.data.version").value(3))
+                .andExpect(jsonPath("$.data.targets[0].targetId").value("sim-600519"))
+                .andExpect(jsonPath("$.data.targets[0].targetType").value("SECURITY"))
+                .andExpect(jsonPath("$.data.targets[0].targetRole").value("PRIMARY"))
+                .andExpect(jsonPath("$.data.lastTask.taskId").value("7001"))
+                .andExpect(jsonPath("$.data.lastTask.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.data.lastReport.reportId").value("8001"))
+                .andExpect(jsonPath("$.data.lastReport.isLimited").value(true))
+                .andExpect(jsonPath("$.data.lastReport.qualityStatus").value("LIMITED"));
+    }
+
+    @Test
+    @DisplayName("HIS-02 他人的会话 → 404 AI_SESSION_NOT_FOUND")
+    void sessionDetailOfOtherUserIsNotFound() throws Exception {
+        when(history.getSession(anyLong(), anyLong()))
+                .thenThrow(AiTaskException.sessionNotFound(Long.parseLong(SESSION_ID)));
+
+        mvc().perform(get("/api/v1/ai/sessions/" + SESSION_ID).principal(authentication()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("AI_SESSION_NOT_FOUND"));
+    }
+
+    private static AiSessionDetail sessionDetail() {
+        return new AiSessionDetail(
+                SESSION_ID,
+                AiScene.STOCK,
+                "贵州茅台分析",
+                "ACTIVE",
+                true,
+                List.of(new AiContextTarget(
+                        AiTargetType.SECURITY, "sim-600519", "600519", "模拟证券600519",
+                        AiTargetRole.PRIMARY, 600519L)),
+                new AiTaskSummary(
+                        "7001", SESSION_ID, AiScene.STOCK, AiTaskStatus.COMPLETED,
+                        List.of(), "这只股票怎么样？", "已完成", NOW, NOW, NOW, "8001", null),
+                new AiSessionDetail.ReportBrief("8001", "LIMITED", true, NOW),
+                NOW,
+                NOW,
+                3);
     }
 
     private static AiSessionSummaryView sessionItem() {
