@@ -23,10 +23,18 @@ import org.slf4j.LoggerFactory;
  * 删除一个作业就是删一个目录，不会误伤别的作业；
  * 而"按 {@code exportId} 前缀匹配文件名"的做法在 id 互为前缀时会删错（{@code 12} 与 {@code 123}）。
  *
- * <h2>{@code exportId} 必须过白名单才允许拼进路径</h2>
- * id 由服务端生成，理论上只含数字。但路径拼接是**唯一**能把外部输入变成文件系统操作的地方，
- * 所以这里仍然只接受 {@code [A-Za-z0-9_-]}，其余一律拒绝。
+ * <h2>{@code exportId} 与 {@code fileName} 都必须过白名单才允许拼进路径</h2>
+ * 路径拼接是**唯一**能把外部输入变成文件系统操作的地方，所以两个片段都按字符集白名单收口：
+ * id 只接受 {@code [A-Za-z0-9_-]}，文件名只接受以字母/数字开头、其余为 {@code [A-Za-z0-9._-]}。
  * 少了这道门，一个含 {@code ../} 的 id 就能让"删除我的导出"变成"删除任意目录"。
+ *
+ * <h2>为什么判据是字符集，而不是"解析后是否仍在目录内"</h2>
+ * {@code normalize()} + {@code startsWith()} 看起来更"正统"，但它随平台给不同答案：
+ * {@code "..\escape.xlsx"} 在 Windows 上会被 {@code \} 拆成穿越，在 Linux 上却只是一个
+ * 普通文件名——同一份输入，一边被挡住、一边被放行。守卫的答案随操作系统变，就等于没有守卫，
+ * 而且这种差异在开发机（Windows）与 CI（Linux）之间不会自己暴露出来。
+ * 按字符集判，两个平台一致；代价是零，因为文件名由 {@code ExportJobService} 按固定模板拼出
+ * （{@code stock-ranking-<榜单>-<时间戳>.xlsx}），本来就不含分隔符。
  *
  * <h2>删除失败要抛，而不是吞掉</h2>
  * "文件不存在"是成功的（幂等），但真实的 IO 失败必须抛出去：
@@ -39,6 +47,14 @@ public class VolumeExportFileStore implements ExportFileStore {
 
     /** {@code exportId} 的允许字符集。**只有这一处**定义它。 */
     private static final String SAFE_ID_PATTERN = "[A-Za-z0-9_-]+";
+
+    /**
+     * {@code fileName} 的允许字符集：字母/数字开头，其余可含 {@code . _ -}。
+     *
+     * <p>要求首字符是字母或数字，是为了顺手挡掉 {@code .}、{@code ..}、{@code .hidden}——
+     * 只写"不含分隔符"的话，{@code ..} 本身就能通过。
+     */
+    private static final String SAFE_FILE_NAME_PATTERN = "[A-Za-z0-9][A-Za-z0-9._-]*";
 
     private final Path root;
 
@@ -54,16 +70,14 @@ public class VolumeExportFileStore implements ExportFileStore {
     @Override
     public void write(String exportId, String fileName, byte[] content) {
         Path directory = directoryOf(exportId);
+        // 先校验、再落笔。clearDirectory 会清掉该作业已有文件，若把校验放在它后面，
+        // 一个非法文件名会先毁掉上一份好文件、再抛异常——"重建"于是变成"两头空"。
+        Path target = directory.resolve(requireSafeFileName(fileName));
         try {
             Files.createDirectories(directory);
             // 先清空该作业目录再写：同一个作业理论上只写一次，但生成失败后重建过就会
             // 出现第二个文件名（名字里带时间戳）。留着旧的那份，会让"文件在哪"有两个答案。
             clearDirectory(directory);
-            Path target = directory.resolve(fileName).normalize();
-            if (!target.startsWith(directory)) {
-                // fileName 也参与路径拼接，同样要挡住穿越（它由服务端拼出，但仍不例外）。
-                throw new IllegalArgumentException("非法导出文件名：" + fileName);
-            }
             Files.write(target, content,
                     StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
         } catch (IOException exception) {
@@ -134,14 +148,29 @@ public class VolumeExportFileStore implements ExportFileStore {
         }
     }
 
+    /**
+     * 校验片段后原样返回，调用方直接拿去 {@code resolve}。
+     *
+     * <p>只判字符集，不做 {@code normalize}/{@code startsWith}：原因见类注释——
+     * "解析后是否仍在目录内"这个判据随平台变，而白名单不随平台变。
+     */
+    private static String requireSafeFileName(String fileName) {
+        if (fileName == null || !fileName.matches(SAFE_FILE_NAME_PATTERN)) {
+            throw new IllegalArgumentException("非法导出文件名：" + fileName);
+        }
+        return fileName;
+    }
+
+    /**
+     * 作业目录。
+     *
+     * <p>每次调用都重新过一遍白名单，而不是只在入口校验一次：{@code read} / {@code delete}
+     * 也走这里，任何一条都可能是外部输入的落点。
+     */
     private Path directoryOf(String exportId) {
         if (exportId == null || !exportId.matches(SAFE_ID_PATTERN)) {
             throw new IllegalArgumentException("非法导出标识：" + exportId);
         }
-        Path directory = root.resolve(exportId).normalize();
-        if (!directory.startsWith(root)) {
-            throw new IllegalArgumentException("非法导出标识：" + exportId);
-        }
-        return directory;
+        return root.resolve(exportId);
     }
 }

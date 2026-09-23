@@ -120,33 +120,48 @@ class VolumeExportFileStoreTest {
   }
 
   /**
-   * {@code fileName} 也参与路径拼接，虽然由服务端拼出，但仍不例外。
+   * {@code fileName} 也参与路径拼接，虽然由 {@code ExportJobService} 按固定模板拼出，
+   * 但仍不例外。
    *
-   * <p>要区分两种"带斜杠"，它们**失败的原因不同**：
-   * <ul>
-   *   <li>{@code ../escape.xlsx} 会把落笔位置挪出作业目录 → 被路径守卫直接拒绝；</li>
-   *   <li>{@code a/b.xlsx} 只是作业目录里的一个子路径，并没有跑出作业目录，
-   *       它失败是因为中间目录不存在——这是 IO 失败，不是越权被挡。</li>
-   * </ul>
-   * 真正的不变量是"**作业目录之外永远不会多出东西**"，所以除了断言各自的失败原因，
-   * 还要核对目录本身没被写出别的东西。
+   * <p>这里断言的是"**作业目录之外永远不会多出东西**"这条不变量本身，
+   * <b>而不是某个平台对 {@code \} 的处理</b>：{@code ..\escape.xlsx} 在 Windows 上会被
+   * {@code \} 拆成穿越，在 Linux 上却只是一个普通文件名——同一条用例在两个平台上会得出
+   * 相反结论（本仓库正是这样在 Linux CI 上挂的）。所以改用一批**两种平台都认得是越权**的
+   * 名字，把平台差异挡在断言之外。
    */
   @Test
   void rejectsFileNamesThatWouldEscapeTheExportDirectory() {
     VolumeExportFileStore store = new VolumeExportFileStore(root);
 
-    for (String name : List.of("../escape.xlsx", "..\\escape.xlsx", "../../escape.xlsx")) {
+    for (String name : List.of(
+        "../escape.xlsx", "..\\escape.xlsx", "../../escape.xlsx", "1/../../escape.xlsx",
+        "a/b.xlsx", "..", ".hidden.xlsx")) {
       assertThatThrownBy(() -> store.write("1", name, new byte[0]))
-          .as("越出作业目录的 fileName=%s 应被路径守卫拒绝", name)
+          .as("非法 fileName=%s 应被路径守卫拒绝", name)
           .isInstanceOf(IllegalArgumentException.class);
     }
 
-    assertThatThrownBy(() -> store.write("1", "a/b.xlsx", new byte[0]))
-        .as("子路径文件名会因缺少中间目录而写入失败")
-        .isInstanceOf(IllegalStateException.class);
-
+    // 磁盘上不该留下任何痕迹：作业目录之外没有逃逸出来的文件，
+    // 作业目录本身也不该被建出来（校验前置于落笔，见 VolumeExportFileStore#write）。
     assertThat(root.resolve("escape.xlsx")).doesNotExist();
-    assertThat(entryNamesIn(root)).containsExactly("1");
+    assertThat(entryNamesIn(root)).isEmpty();
+  }
+
+  /**
+   * 校验必须发生在清理之前。
+   *
+   * <p>否则一次非法的重建请求会先把上一份好文件删掉、再抛异常，
+   * 用户看到的是"重新生成把原来那份也弄没了"——而失败本该是**不动存量**的。
+   */
+  @Test
+  void anIllegalFileNameDoesNotDestroyTheExistingFile() {
+    VolumeExportFileStore store = new VolumeExportFileStore(root);
+    store.write("1", "good.xlsx", "好文件".getBytes(UTF_8));
+
+    assertThatThrownBy(() -> store.write("1", "../escape.xlsx", new byte[0]))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    assertThat(store.read("1", "good.xlsx")).contains("好文件".getBytes(UTF_8));
   }
 
   private static List<String> entryNamesIn(Path directory) {
