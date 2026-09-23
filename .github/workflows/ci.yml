@@ -33,8 +33,44 @@ jobs:
       # InfrastructureIntegrationTest 依赖 Testcontainers，需要 Docker。
       # ubuntu-latest 运行器自带 Docker，无需额外配置。
       # 该测试会以真实 MySQL 8.4 执行 Flyway V1–V8 并断言 8 条成功迁移。
+      #
+      # 输出 tee 进日志文件：失败时下面的诊断步骤要按文件解析，否则 CI 只给一行
+      # "Process completed with exit code 1"，连是哪条用例挂了都看不出来。
+      # `set -o pipefail` 不能省——否则管道右侧的 tee 成功会掩盖 mvn 的退出码。
       - name: 运行后端测试
-        run: mvn -B -ntp -f backend/pom.xml verify
+        run: |
+          set -o pipefail
+          mvn -B -ntp -f backend/pom.xml verify 2>&1 | tee backend-mvn.log
+
+      # 失败诊断写进 Job Summary：公开仓库的 check-run output 匿名可读，
+      # 推送者不必点开几百行日志，手机上也能看到是哪条用例、什么断言挂了。
+      - name: 失败时输出诊断
+        if: failure()
+        run: |
+          {
+            echo "## 后端测试失败诊断"
+            echo
+            echo "### 失败 / 出错的测试类（surefire 汇总）"
+            echo
+            for f in backend/*/target/surefire-reports/*.txt; do
+              if grep -qE "Failures: [1-9]|Errors: [1-9]" "$f" 2>/dev/null; then
+                echo "#### \`$(basename "$f")\`"
+                echo '```'
+                cat "$f"
+                echo '```'
+                echo
+              fi
+            done
+            echo "### Maven 输出中的 ERROR 段"
+            echo '```'
+            grep -E "^\[ERROR\]" backend-mvn.log | head -60
+            echo '```'
+            echo
+            echo "### 各模块用例数"
+            echo '```'
+            grep -E "^\[INFO\] Tests run: [0-9]+, Failures" backend-mvn.log | tail -20
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 上传测试报告
         if: always()
