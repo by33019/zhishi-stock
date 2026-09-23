@@ -10,6 +10,9 @@ import cn.zhishi.stock.ai.application.InvalidAiFeedbackException;
 import cn.zhishi.stock.ai.application.InvalidAiHistoryQueryException;
 import cn.zhishi.stock.ai.application.InvalidAiTargetException;
 import cn.zhishi.stock.common.api.ApiResponse;
+import cn.zhishi.stock.export.application.ExportErrorCode;
+import cn.zhishi.stock.export.application.ExportException;
+import cn.zhishi.stock.export.application.InvalidExportRequestException;
 import cn.zhishi.stock.market.application.InvalidKlineParameterException;
 import cn.zhishi.stock.market.application.InvalidRankingQueryException;
 import cn.zhishi.stock.market.application.InvalidSecurityQueryException;
@@ -41,6 +44,7 @@ import org.springframework.web.bind.MissingRequestCookieException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -393,6 +397,50 @@ public class GlobalExceptionHandler {
                         OffsetDateTime.now(clock)));
     }
 
+    /**
+     * 导出域的业务失败（契约 §9.2 的异常清单）。
+     *
+     * <p>HTTP 状态取自 {@link ExportErrorCode} 而不是在这里 switch，与 {@code AiTaskException}
+     * 同一条理由：同一个域里 400 / 404 / 409 / 422 / 429 / 503 都有，
+     * 在 handler 里推断会让"新增一个业务码"必须同时改两处。
+     *
+     * <h2>三个"拿不到文件"的码为什么都是 409</h2>
+     * {@code EXPORT_NOT_READY} / {@code EXPORT_FAILED} / {@code EXPORT_EXPIRED} 的
+     * HTTP 状态相同、业务码不同，是刻意的：三者都是"作业当前的状态做不到你要的事"，
+     * 而前端给出的下一步完全不同——等一会儿、重新发起、或重新发起并注意保留期。
+     * 合并成一个码会把提示变成一句废话。
+     */
+    @ExceptionHandler(ExportException.class)
+    public ResponseEntity<ApiResponse<Void>> exportFailure(
+            ExportException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.status(exception.code().httpStatus()).body(ApiResponse.failure(
+                exception.code().externalCode(),
+                exception.getMessage(),
+                null,
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
+    /**
+     * 导出请求本身不合法（400）。
+     *
+     * <p>业务码由异常携带（当前只有 {@code INVALID_REQUEST}）：它表达的是"请求写错了，
+     * 改一改再发"，与上面的"请求没问题但当前状态不允许"是两件事，
+     * 前端据此决定是就地标红表单还是给一个可重试的提示。
+     */
+    @ExceptionHandler(InvalidExportRequestException.class)
+    public ResponseEntity<ApiResponse<Void>> invalidExportRequest(
+            InvalidExportRequestException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.badRequest().body(ApiResponse.failure(
+                exception.code(),
+                exception.getMessage(),
+                null,
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
     @ExceptionHandler(AuthException.class)
     public ResponseEntity<ApiResponse<Void>> authentication(
             AuthException exception,
@@ -510,6 +558,44 @@ public class GlobalExceptionHandler {
                 "请求体格式无效",
                 null,
                 TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
+    /**
+     * 请求了一个**不存在的接口路径**（契约 §23.1：404 = 资源不存在）。
+     *
+     * <h2>为什么必须单独处理，不能落进兜底的 500</h2>
+     * Spring 在没有匹配的控制器时会把它交给静态资源处理器，后者找不到文件就抛
+     * {@link NoResourceFoundException}。不单独接住它，它就会被下面的
+     * {@code @ExceptionHandler(Exception.class)} 归成"未处理的接口异常"，
+     * 对外报 **500 {@code INTERNAL_ERROR}「服务暂时不可用」**。那是个**谎报**：
+     * 服务好得很，是路径写错了，而"服务暂时不可用"会让调用方去重试一个永远不可能成功的请求。
+     *
+     * <h2>它同时是"镜像/版本不一致"的探针</h2>
+     * 本地联调最常见的故障是**容器里的 jar 比工作区代码旧**（改了接口没重新构建），
+     * 表现就是新接口 500。报成 404 之后，一眼就能看出"这个路径在运行的版本里不存在"，
+     * 而不是怀疑服务崩了。
+     *
+     * <h2>记 WARN 而非 ERROR，且不打堆栈</h2>
+     * 路径写错、老前端残留、扫描器探测都会走到这里，这是**客户端侧的日常事件**，
+     * 不是服务端故障。按 ERROR 打整条堆栈，会把真正的 500 淹在噪声里——
+     * 这正是本方法被加进来的直接原因。
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> endpointNotFound(
+            NoResourceFoundException exception,
+            HttpServletRequest request) {
+        String traceId = TraceIdFilter.current(request);
+        LOGGER.warn(
+                "请求的接口路径不存在：traceId={}，method={}，uri={}",
+                traceId,
+                request.getMethod(),
+                request.getRequestURI());
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.failure(
+                "NOT_FOUND",
+                "接口不存在，请确认请求路径；若刚刚新增/修改过接口，请确认服务已重新构建部署",
+                null,
+                traceId,
                 OffsetDateTime.now(clock)));
     }
 
