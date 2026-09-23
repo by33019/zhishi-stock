@@ -1,11 +1,14 @@
-import { apiRequest } from './apiClient'
+import { apiRequest, apiStream } from './apiClient'
+import type { StreamHandle } from './apiClient'
 import type {
+  AiCancelResult,
   AiContextPreview,
   AiContextTarget,
   AiReportDetail,
   AiReportEvidence,
   AiScene,
   AiSceneDefinition,
+  AiStreamEvent,
   AiTaskAccepted,
   AiTaskQuota,
   AiTaskSummary,
@@ -103,4 +106,135 @@ export function getReportEvidence(reportId: string, evidenceType?: string) {
  */
 export function getMyAiQuota() {
   return apiRequest<AiTaskQuota>('/users/me/ai-quota')
+}
+
+/**
+ * AI-06：请求取消本人任务。
+ *
+ * 与 AI-07 / AI-08 不同，这里**不是 202**：取消要么立即生效、要么因任务已是终态
+ * 而无效，没有"稍后完成"的语义。`effectiveImmediately=false` 要原样告知用户。
+ */
+export function cancelTask(taskId: string, idempotencyKey: string) {
+  return apiRequest<AiCancelResult>(`/ai/tasks/${encodeURIComponent(taskId)}/cancel`, {
+    method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
+  })
+}
+
+/**
+ * AI-07：对 FAILED / TIMED_OUT 的任务创建**新任务**（202）。
+ *
+ * 旧任务与旧用量不动；响应是全新的 `AiTaskAccepted`（含新的 `streamUrl`），
+ * 调用方拿到后应该像刚创建任务一样接上事件流。
+ */
+export function retryTask(taskId: string, idempotencyKey: string, question?: string) {
+  return apiRequest<AiTaskAccepted>(`/ai/tasks/${encodeURIComponent(taskId)}/retry`, {
+    method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify({ question }),
+  })
+}
+
+/**
+ * AI-08：在本人活动会话里追问（202）。
+ *
+ * 会话 id 来自任务摘要（`AiTaskSummary.sessionId`）。会话若已被删除，
+ * 服务端会拒绝——页面把错误文案如实显示即可，不需要前端预判。
+ */
+export function createFollowUpTask(
+  sessionId: string,
+  request: { question: string; analysisStartAt?: string; analysisEndAt?: string },
+  idempotencyKey: string,
+) {
+  return apiRequest<AiTaskAccepted>(
+    `/ai/sessions/${encodeURIComponent(sessionId)}/follow-up-tasks`,
+    {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(request),
+    },
+  )
+}
+
+/**
+ * AI-05：订阅任务事件流。
+ *
+ * 这里只做**解码**（event 名 → `AiStreamEvent`），连接、鉴权与重连都在
+ * `apiStream` 里。未知的事件名与解析失败的载荷被**跳过而不是抛错**：
+ * 契约升级多出一个新事件时，旧前端应当照常工作；半截 JSON 重试一次就好。
+ */
+export function streamTaskEvents(
+  streamUrl: string,
+  onEvent: (event: AiStreamEvent) => void,
+  onError: (error: Error) => void,
+): StreamHandle {
+  return apiStream(streamUrl, {
+    onMessage: (message) => {
+      const event = decodeStreamEvent(message.event, message.data)
+      if (event) onEvent(event)
+    },
+    onError,
+  })
+}
+
+function decodeStreamEvent(eventName: string, data: string): AiStreamEvent | null {
+  let payload: Record<string, unknown>
+  try {
+    payload = JSON.parse(data) as Record<string, unknown>
+  } catch {
+    return null
+  }
+  switch (eventName) {
+    case 'snapshot':
+      return {
+        kind: 'snapshot',
+        task: payload.task as AiTaskSummary,
+        lastSequence: Number(payload.lastSequence ?? 0),
+        partialContent:
+          typeof payload.partialContent === 'string' ? payload.partialContent : undefined,
+      }
+    case 'status':
+      return {
+        kind: 'status',
+        taskId: String(payload.taskId),
+        status: String(payload.status),
+        progressStage: String(payload.progressStage),
+        sequence: Number(payload.sequence ?? 0),
+      }
+    case 'chunk':
+      return {
+        kind: 'chunk',
+        taskId: String(payload.taskId),
+        section: String(payload.section),
+        delta: String(payload.delta),
+        sequence: Number(payload.sequence ?? 0),
+      }
+    case 'report':
+      return {
+        kind: 'report',
+        taskId: String(payload.taskId),
+        reportId: String(payload.reportId),
+        qualityStatus: String(payload.qualityStatus),
+        isLimited: Boolean(payload.isLimited),
+        sequence: Number(payload.sequence ?? 0),
+      }
+    case 'error':
+      return {
+        kind: 'error',
+        taskId: String(payload.taskId),
+        errorCode: String(payload.errorCode),
+        message: String(payload.message),
+        retryable: Boolean(payload.retryable),
+        sequence: Number(payload.sequence ?? 0),
+      }
+    case 'done':
+      return {
+        kind: 'done',
+        taskId: String(payload.taskId),
+        finalStatus: String(payload.finalStatus),
+        sequence: Number(payload.sequence ?? 0),
+      }
+    default:
+      return null
+  }
 }

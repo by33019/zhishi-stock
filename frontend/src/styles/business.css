@@ -453,6 +453,14 @@
 .question-composer button { min-height: 40px; display: flex; align-items: center; gap: 6px; padding: 0 13px; border: 0; border-radius: 7px; background: var(--nav); color: var(--white); font-size: var(--text-body); font-weight: 750; cursor: pointer; }
 .question-composer button:disabled { opacity: 0.65; }
 
+/* 追问输入区（AI-08）。与 question-composer 同一套视觉，但挂在报告尾部，
+   语义是"基于这份报告继续问"，因此弱化边框、去掉整卡背景。 */
+.follow-up-composer { margin-top: 18px; padding: 11px; border: 1px dashed var(--line); border-radius: 10px; }
+.follow-up-composer textarea { width: 100%; resize: none; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: var(--text-body); line-height: 1.65; }
+.follow-up-composer > div { display: flex; justify-content: flex-end; }
+.follow-up-composer button { min-height: 36px; padding: 0 13px; border: 0; border-radius: 7px; background: var(--nav); color: var(--white); font-size: var(--text-caption); font-weight: 750; cursor: pointer; }
+.follow-up-composer button:disabled { opacity: 0.65; }
+
 .report-empty,
 .report-generating { min-height: 490px; display: grid; place-content: center; justify-items: center; text-align: center; }
 .report-empty > span,
@@ -848,6 +856,68 @@
   color: var(--ink);
   font-size: var(--text-caption);
   font-weight: 700;
+}
+
+/* 多选场景（SECURITY_MULTI）的已选标签。标签即事实清单：每一枚都对应
+   提交体里的一项，移除走标签上的 ×，而不是"清空重选"。 */
+.selected-targets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.target-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: var(--text-caption);
+}
+
+.chip-remove {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-faint);
+  cursor: pointer;
+}
+
+.chip-remove:hover {
+  color: var(--down);
+}
+
+/* 生成中的临时文本（SSE chunk 逐段到达）。用 pre 保留换行，
+   长文自动滚动——不滚动的话生成区会把整页越撑越高。 */
+.streaming-text {
+  max-height: 260px;
+  margin: 12px 0 0;
+  padding: 12px 16px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: var(--text-caption);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-align: left;
+}
+
+.run-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 14px;
 }
 
 .history-pager {

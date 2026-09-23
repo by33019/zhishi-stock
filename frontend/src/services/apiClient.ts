@@ -1,3 +1,4 @@
+import { extractSseMessages } from '@/services/sseParser'
 import type { ApiResponse, ExportDownload } from '@/types/domain'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
@@ -107,6 +108,159 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
  */
 export async function apiDownload(path: string, init: RequestInit = {}): Promise<ExportDownload> {
   return download(path, init, true)
+}
+
+// ---------- SSE 通道（AI-05）----------
+
+export interface StreamMessage {
+  event: string
+  id: string | null
+  data: string
+}
+
+export interface StreamHandle {
+  /** 停止接收并关闭连接。幂等。 */
+  close(): void
+}
+
+export interface StreamHandlers {
+  onMessage: (message: StreamMessage) => void
+  /** 重连次数用尽仍无法建立流时回调一次，之后本句柄不再产生任何事件。 */
+  onError: (error: ApiError) => void
+}
+
+/**
+ * 打开一条 SSE 流。
+ *
+ * <h2>为什么不用 {@code EventSource}</h2>
+ * 原生 {@code EventSource} 带不上 {@code Authorization} 头，而本站的访问令牌
+ * 只存在内存里（刷新令牌走 HttpOnly Cookie）。用 fetch 自己读流是唯一能
+ * 复用同一套 401 → 刷新 → 重试语义的方式。
+ *
+ * <h2>断线重连</h2>
+ * 服务端把连接关掉（含 120 秒 emitter 超时）或网络中断时，带 `Last-Event-ID`
+ * 重连，最多 {@link STREAM_RECONNECT_MAX} 次；服务端会先回 snapshot 补状态、
+ * 再回放缺口片段，因此重连是幂等的，调用方按 `sequence` 去重即可。
+ * **正常收到 `done` 的流不会走这里**——调用方（AI 层）在 `done` 时 close 本句柄，
+ * 关闭的句柄不再重连。
+ *
+ * <h2>刻意不设请求超时</h2>
+ * 流本来就是长时间静默的：10 秒超时会把一条健康的流杀掉。
+ * 收尾靠服务端的 emitter 超时与 `done` 事件，不靠前端计时器。
+ */
+export function apiStream(path: string, handlers: StreamHandlers): StreamHandle {
+  const controller = new AbortController()
+  void streamLoop(path, handlers, controller)
+  return {
+    close: () => controller.abort(),
+  }
+}
+
+const STREAM_RECONNECT_MAX = 3
+
+async function streamLoop(path: string, handlers: StreamHandlers, controller: AbortController) {
+  // AI-03 返回的 streamUrl 是带 `/api/v1` 前缀的完整路径，与 JSON 通道的
+  // 相对路径不同。归一成相对路径，避免拼出 `/api/v1/api/v1/...`。
+  const suffix = path.startsWith(`${API_BASE_URL}/`) ? path.slice(API_BASE_URL.length) : path
+  const url = `${API_BASE_URL}${suffix}`
+
+  let lastEventId: string | null = null
+  let failures = 0
+  // 整个句柄只允许刷新一次令牌：刷新后再收到 401 说明登录态真的没了，
+  // 必须走失败路径收尾，否则"401 → 刷新 → 401"会变成没有退避的死循环。
+  let refreshedOnce = false
+
+  while (!controller.signal.aborted) {
+    try {
+      const tokenUsed = accessToken
+      const headers = new Headers({ Accept: 'text/event-stream' })
+      if (tokenUsed) headers.set('Authorization', `Bearer ${tokenUsed}`)
+      // 浏览器原生 EventSource 会在重连时自动回传 id；这里由我们自己维护。
+      if (lastEventId) headers.set('Last-Event-ID', lastEventId)
+
+      const response = await fetch(url, {
+        headers,
+        credentials: 'include',
+        signal: controller.signal,
+      })
+
+      if (response.status === 401 && !refreshedOnce) {
+        refreshedOnce = true
+        try {
+          if (!accessToken || accessToken === tokenUsed) await refreshOnce()
+          continue // 刷新后立刻重试，不计入失败次数
+        } catch (error) {
+          clearAccessToken()
+          authenticationFailureHandler?.()
+          throw error
+        }
+      }
+
+      if (!response.ok) {
+        throw toApiError(response.status, await parseEnvelope<never>(response))
+      }
+
+      failures = 0
+      for await (const message of readSseStream(response, controller.signal)) {
+        if (message.id) lastEventId = message.id
+        if (controller.signal.aborted) return
+        handlers.onMessage(message)
+      }
+      // 走到这里说明服务端关闭了连接；交给循环顶部的重连判断。
+    } catch (error) {
+      if (controller.signal.aborted) return
+      failures += 1
+      if (failures > STREAM_RECONNECT_MAX) {
+        handlers.onError(toStreamError(error))
+        return
+      }
+    }
+    await delay(1000 * failures, controller.signal)
+  }
+}
+
+async function* readSseStream(
+  response: Response,
+  signal: AbortSignal,
+): AsyncGenerator<StreamMessage> {
+  const reader = response.body?.getReader()
+  if (!reader) throw new ApiError('INVALID_RESPONSE', '服务返回的流不可读', response.status)
+
+  const decoder = new TextDecoder()
+  let buffer = ''
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) return
+      buffer += decoder.decode(value, { stream: true })
+      const extracted = extractSseMessages(buffer)
+      buffer = extracted.rest
+      for (const message of extracted.messages) yield message
+    }
+  } finally {
+    reader.releaseLock()
+    // signal 只用于终止外层循环；这里确保底层连接也一起释放。
+    if (signal.aborted) void reader.cancel().catch(() => {})
+  }
+}
+
+function toStreamError(error: unknown): ApiError {
+  if (error instanceof ApiError) return error
+  return new ApiError('NETWORK_ERROR', '实时数据流连接失败', 0)
+}
+
+function delay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(resolve, ms)
+    signal.addEventListener(
+      'abort',
+      () => {
+        window.clearTimeout(timer)
+        resolve()
+      },
+      { once: true },
+    )
+  })
 }
 
 async function download(

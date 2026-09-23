@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { Search, Sparkles } from '@lucide/vue'
+import { Search, Sparkles, X } from '@lucide/vue'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import PageHeader from '@/components/PageHeader.vue'
 import { useRemoteData } from '@/composables/useRemoteData'
 import {
+  cancelTask,
+  createFollowUpTask,
   createTask,
   getMyAiQuota,
   getReport,
@@ -12,34 +14,40 @@ import {
   getScenes,
   getTask,
   previewContext,
+  retryTask,
+  streamTaskEvents,
 } from '@/services/aiApi'
+import { getSectorRankings } from '@/services/sectorApi'
 import { searchSecurities } from '@/services/securityApi'
+import type { StreamHandle } from '@/services/apiClient'
 import type {
   AiContextPreview,
   AiContextTarget,
   AiReportDetail,
   AiReportEvidence,
   AiScene,
+  AiStreamEvent,
+  AiTaskAccepted,
   AiTaskQuota,
   AiTaskSummary,
+  SectorQuote,
 } from '@/types/domain'
 import { formatDateTime } from '@/utils/format'
 
 /**
- * AI 研究工作台（契约 AI-01 / AI-02 / AI-03 / AI-04 + HIS-06 + HIS-07）。
+ * AI 研究工作台（契约 AI-01~08 + HIS-06 + HIS-07 + USER-07）。
  *
- * 这一页此前是纯静态原型：写死的场景下拉、写死的标的「浦发银行 SH.600000」、
- * 写死的「今日剩余 18 次分析」、写死的"已纳入实时行情与授权资讯"，
- * 以及一个 180 毫秒后塞进一份**编造报告**的 `generateReport()`。
+ * ## 运行期走 SSE（AI-05），轮询只是兜底
  *
- * ## 本轮范围与边界（都在界面上有交代，不留"点了没反应"的入口）
+ * 建流后状态与临时文本实时到达（snapshot / status / chunk / report / error / done）。
+ * 流连不上（网关不支持、网络问题）时**退回每 3 秒轮询**：闭环不能因为
+ * 一条流挂掉就整体不可用，而轮询的 AI-04 本来就能表达同样的状态机。
  *
- * - **走轮询而不是 SSE**：AI-04 已能表达"排队中 / 运行中 / 已完成"，
- *   而 SSE（AI-05）要额外维护断线重连与 `Last-Event-ID` 续传，与"先把闭环跑通"
- *   不是同一件事，留作独立增量。
- * - **只支持单标的场景**：证券走 STK-01 检索；市场用契约文档写明的对外标识 `CN`。
- *   板块与多标的对比需要各自的检索与多选交互，**界面直接说明并不给提交入口**。
- * - 取消 / 重试 / 追问（AI-06 / AI-07 / AI-08）未接入。
+ * ## 场景与目标的支撑范围
+ *
+ * 五个场景全部可提交，目标选择随 AI-01 的定义走：
+ * MARKET 用契约写明的对外标识 `CN`；SECURITY 走 STK-01 检索（单选或 2~3 只多选）；
+ * SECTOR 走 SEC-02 榜单取候选（该接口一次返回全部板块行情，取首页后本地过滤）。
  */
 
 const { data: scenes, error: scenesError, reload: reloadScenes } = useRemoteData(getScenes)
@@ -51,26 +59,66 @@ const sceneDefinition = computed(() =>
   scenes.value?.find((definition) => definition.scene === scene.value),
 )
 
-/** 本轮支持的场景：恰好一个 SECURITY 或 MARKET 目标。 */
-const sceneSupported = computed(() => {
-  const definition = sceneDefinition.value
-  if (!definition) return false
-  if (definition.minTargets !== 1 || definition.maxTargets !== 1) return false
-  const types = definition.allowedTargetTypes
-  return types.length === 1 && (types[0] === 'SECURITY' || types[0] === 'MARKET')
-})
+/**
+ * 目标选择形态。由场景定义推导，不在前端硬编码场景清单：
+ * 服务端新增一个场景时，只要它的目标类型是这三种之一，界面就自动可用。
+ */
+type TargetMode = 'MARKET' | 'SECURITY_SINGLE' | 'SECURITY_MULTI' | 'SECTOR'
 
-const needsSecuritySearch = computed(
-  () => sceneDefinition.value?.allowedTargetTypes[0] === 'SECURITY',
-)
+const targetMode = computed<TargetMode | null>(() => {
+  const definition = sceneDefinition.value
+  if (!definition || definition.allowedTargetTypes.length !== 1) return null
+  switch (definition.allowedTargetTypes[0]) {
+    case 'MARKET':
+      return 'MARKET'
+    case 'SECURITY':
+      return definition.minTargets > 1 || definition.maxTargets > 1
+        ? 'SECURITY_MULTI'
+        : 'SECURITY_SINGLE'
+    case 'SECTOR':
+      return 'SECTOR'
+    default:
+      return null
+  }
+})
 
 // ---------- 目标选择 ----------
 
 const targetQuery = ref('')
 const targetResults = ref<AiContextTarget[]>([])
+/** 单选场景（MARKET / SECURITY_SINGLE / SECTOR）选中的目标。 */
 const target = ref<AiContextTarget | null>(null)
+/** 多选场景（SECURITY_MULTI）选中的目标，2~3 只。 */
+const selectedTargets = ref<AiContextTarget[]>([])
 const searching = ref(false)
 const searchError = ref('')
+
+/** 检索框上方标签随场景变化；多选场景顺带显示进度。 */
+const targetLabel = computed(() => {
+  switch (targetMode.value) {
+    case 'SECURITY_MULTI':
+      return `对比标的（${selectedTargets.value.length} / ${sceneDefinition.value?.maxTargets ?? 3}）`
+    case 'SECTOR':
+      return '分析板块'
+    case 'MARKET':
+      return '分析市场'
+    default:
+      return '分析标的'
+  }
+})
+
+/** 当前场景下将要提交的目标集合。 */
+const currentTargets = computed<AiContextTarget[]>(() =>
+  targetMode.value === 'SECURITY_MULTI' ? selectedTargets.value : target.value ? [target.value] : [],
+)
+
+/** 目标数量是否达到场景要求的区间——没达到就不给提交。 */
+const targetsValid = computed(() => {
+  const definition = sceneDefinition.value
+  if (!definition) return false
+  const count = currentTargets.value.length
+  return count >= definition.minTargets && count <= definition.maxTargets
+})
 
 /**
  * 市场场景的目标是固定的市场代码。
@@ -112,17 +160,84 @@ async function searchTargets() {
 }
 
 function chooseTarget(candidate: AiContextTarget) {
-  target.value = candidate
-  targetResults.value = []
-  targetQuery.value = ''
+  if (targetMode.value === 'SECURITY_MULTI') {
+    // 已选就忽略（移除走标签上的 ×）；选满后不再加，并说明原因。
+    const exists = selectedTargets.value.some((item) => item.targetId === candidate.targetId)
+    const max = sceneDefinition.value?.maxTargets ?? 3
+    if (exists) return
+    if (selectedTargets.value.length >= max) {
+      searchError.value = `该场景最多对比 ${max} 只证券。`
+      return
+    }
+    selectedTargets.value = [...selectedTargets.value, candidate]
+    targetResults.value = []
+    targetQuery.value = ''
+  } else {
+    target.value = candidate
+    targetResults.value = []
+    targetQuery.value = ''
+  }
   // 换了目标就丢掉上一次的预览：它描述的是旧目标的取数结果，留着会误导
+  preview.value = undefined
+}
+
+function removeSelectedTarget(targetId: string) {
+  selectedTargets.value = selectedTargets.value.filter((item) => item.targetId !== targetId)
+  preview.value = undefined
+}
+
+// ---------- 板块候选（SECTOR 场景）----------
+
+const sectorCandidates = ref<SectorQuote[]>([])
+const loadingSectors = ref(false)
+
+/**
+ * 板块候选来自 SEC-02 榜单：它一次返回同一快照下的全部板块行情，
+ * 取一大页后按关键字本地过滤即可，不需要后端新增检索接口。
+ * 榜单按成交额排，冷门板块可能不在首页——筛不到时如实说，不假装搜过了。
+ */
+async function searchSectors() {
+  loadingSectors.value = true
+  searchError.value = ''
+  try {
+    const result = await getSectorRankings({ page: 1, size: 100 })
+    const query = targetQuery.value.trim().toLowerCase()
+    const items = query
+      ? result.items.filter(
+          (item) =>
+            item.sectorName.toLowerCase().includes(query) ||
+            item.sectorCode.toLowerCase().includes(query),
+        )
+      : result.items
+    sectorCandidates.value = items.slice(0, 8)
+    if (sectorCandidates.value.length === 0) searchError.value = '没有匹配的板块。'
+  } catch (cause) {
+    const failure = cause as { message?: string }
+    searchError.value = failure.message ?? '板块检索失败，请稍后重试。'
+  } finally {
+    loadingSectors.value = false
+  }
+}
+
+function chooseSector(item: SectorQuote) {
+  target.value = {
+    targetType: 'SECTOR',
+    targetId: item.sectorId,
+    targetCode: item.sectorCode,
+    targetName: item.sectorName,
+    targetRole: 'PRIMARY',
+  }
+  sectorCandidates.value = []
+  targetQuery.value = ''
   preview.value = undefined
 }
 
 /** 场景一换，目标与预览都失效——不同场景接受的标的类型不同。 */
 watch(scene, () => {
-  target.value = needsSecuritySearch.value ? null : marketTarget()
+  target.value = targetMode.value === 'MARKET' ? marketTarget() : null
+  selectedTargets.value = []
   targetResults.value = []
+  sectorCandidates.value = []
   preview.value = undefined
   searchError.value = ''
 })
@@ -134,11 +249,14 @@ const previewError = ref('')
 const previewing = ref(false)
 
 async function runPreview() {
-  if (!target.value) return
+  if (currentTargets.value.length === 0) return
   previewing.value = true
   previewError.value = ''
   try {
-    preview.value = await previewContext({ scene: scene.value, targets: [target.value] })
+    preview.value = await previewContext({
+      scene: scene.value,
+      targets: currentTargets.value,
+    })
   } catch (cause) {
     const failure = cause as { message?: string; traceId?: string }
     previewError.value = failure.message ?? '预览失败，请稍后重试。'
@@ -147,7 +265,7 @@ async function runPreview() {
   }
 }
 
-// ---------- 提交与轮询（AI-03 / AI-04 / HIS-06）----------
+// ---------- 提交与运行期（AI-03 / AI-04 / AI-05 / HIS-06）----------
 
 const submitting = ref(false)
 const submitError = ref('')
@@ -155,6 +273,10 @@ const task = ref<AiTaskSummary>()
 const quota = ref<AiTaskQuota>()
 const quotaError = ref('')
 const report = ref<AiReportDetail>()
+/** SSE 正在推送的临时文本；报告就位后由报告视图取代。 */
+const streamingText = ref('')
+/** SSE 不可用、已退回轮询的提示。 */
+const pollingFallbackNote = ref('')
 
 /**
  * USER-07：打开页面就取一次"今天还剩几次"。
@@ -180,12 +302,20 @@ const TERMINAL = new Set(['COMPLETED', 'FAILED', 'TIMED_OUT', 'CANCELED'])
 const POLL_TIMEOUT_MS = 180_000
 let pollTimer: ReturnType<typeof setInterval> | undefined
 let pollStartedAt = 0
+let streamHandle: StreamHandle | undefined
+/** 已应用到界面的事件序号：重连补发时用它去重，避免把同一段文本拼两遍。 */
+let appliedSequence = 0
 
 function stopPolling() {
   if (pollTimer) {
     clearInterval(pollTimer)
     pollTimer = undefined
   }
+}
+
+function stopStream() {
+  streamHandle?.close()
+  streamHandle = undefined
 }
 
 async function pollOnce(taskId: string) {
@@ -200,9 +330,7 @@ async function pollOnce(taskId: string) {
       return
     }
     stopPolling()
-    if (latest.status === 'COMPLETED' && latest.reportId) {
-      report.value = await getReport(latest.reportId)
-    }
+    if (latest.status === 'COMPLETED' && latest.reportId) await loadReport(latest.reportId)
   } catch (cause) {
     stopPolling()
     const failure = cause as { message?: string }
@@ -210,28 +338,108 @@ async function pollOnce(taskId: string) {
   }
 }
 
+function subscribeStream(streamUrl: string) {
+  pollingFallbackNote.value = ''
+  streamHandle = streamTaskEvents(streamUrl, handleStreamEvent, () => {
+    // 流不可用（网关不支持、网络断、重连次数用尽）：退回轮询，闭环不断。
+    // 这里不把它当错误展示——对用户来说"能等到结果"比"知道流挂了"重要。
+    streamHandle = undefined
+    if (!task.value) return
+    pollingFallbackNote.value = '实时流不可用，已改为每 3 秒刷新一次状态。'
+    pollStartedAt = Date.now()
+    stopPolling()
+    pollTimer = setInterval(() => void pollOnce(task.value!.taskId), 3000)
+    void pollOnce(task.value.taskId)
+  })
+}
+
+function handleStreamEvent(event: AiStreamEvent) {
+  switch (event.kind) {
+    case 'snapshot':
+      // snapshot 是建连/重连那一刻的完整状态，直接取代本地累积的文本。
+      task.value = event.task
+      appliedSequence = event.lastSequence
+      streamingText.value = event.partialContent ?? ''
+      break
+    case 'status':
+      if (task.value) {
+        task.value = { ...task.value, status: event.status, progressStage: event.progressStage }
+      }
+      break
+    case 'chunk':
+      if (event.sequence <= appliedSequence) return
+      appliedSequence = event.sequence
+      streamingText.value += event.delta
+      break
+    case 'report':
+      void loadReport(event.reportId)
+      break
+    case 'error':
+      // 失败详情任务摘要里也会带（task.error），这里只补一条即时提示。
+      submitError.value = `${event.message}（${event.errorCode}）`
+      break
+    case 'done':
+      stopStream()
+      void syncTaskAfterDone(event.taskId, event.finalStatus)
+      break
+  }
+}
+
+async function loadReport(reportId: string) {
+  if (report.value?.reportId === reportId) return
+  report.value = await getReport(reportId)
+}
+
+/** done 之后以 AI-04 的任务摘要为准对齐一次（status 事件可能只是中间态）。 */
+async function syncTaskAfterDone(taskId: string, finalStatus: string) {
+  try {
+    const latest = await getTask(taskId)
+    task.value = latest
+    if (finalStatus === 'COMPLETED' && latest.reportId) await loadReport(latest.reportId)
+  } catch (cause) {
+    const failure = cause as { message?: string }
+    submitError.value = failure.message ?? '确认任务结果失败。'
+  }
+}
+
+function startRun(accepted: AiTaskAccepted) {
+  task.value = accepted.task
+  quota.value = accepted.quota
+  report.value = undefined
+  streamingText.value = ''
+  appliedSequence = 0
+  submitError.value = ''
+  stopPolling()
+  stopStream()
+  if (accepted.streamUrl) {
+    subscribeStream(accepted.streamUrl)
+  } else {
+    // 没有流入口就不假装有：直接走轮询。
+    pollingFallbackNote.value = '以每 3 秒刷新一次状态。'
+    pollStartedAt = Date.now()
+    pollTimer = setInterval(() => void pollOnce(accepted.task.taskId), 3000)
+    void pollOnce(accepted.task.taskId)
+  }
+}
+
 async function submit() {
-  if (!target.value) return
+  if (!targetsValid.value) return
   submitting.value = true
   submitError.value = ''
   report.value = undefined
   task.value = undefined
+  streamingText.value = ''
   try {
     const accepted = await createTask(
       {
         scene: scene.value,
-        targets: [target.value],
+        targets: currentTargets.value,
         question: question.value.trim() || undefined,
       },
       // 键的语义是"一次用户意图"：这里一次点击只提交一次，所以每次点击都是新意图
       crypto.randomUUID(),
     )
-    task.value = accepted.task
-    quota.value = accepted.quota
-    pollStartedAt = Date.now()
-    stopPolling()
-    pollTimer = setInterval(() => void pollOnce(accepted.task.taskId), 3000)
-    void pollOnce(accepted.task.taskId)
+    startRun(accepted)
   } catch (cause) {
     const failure = cause as { message?: string; code?: string; traceId?: string }
     submitError.value = failure.message ?? '提交失败，请稍后重试。'
@@ -240,12 +448,88 @@ async function submit() {
   }
 }
 
+// ---------- 取消 / 重试 / 追问（AI-06 / AI-07 / AI-08）----------
+
+const canceling = ref(false)
+const cancelNote = ref('')
+
+async function cancelRun() {
+  if (!task.value || !running.value) return
+  canceling.value = true
+  cancelNote.value = ''
+  try {
+    const result = await cancelTask(task.value.taskId, crypto.randomUUID())
+    cancelNote.value = result.effectiveImmediately
+      ? '已请求取消。'
+      : '任务已经完成，取消未生效。'
+  } catch (cause) {
+    const failure = cause as { message?: string }
+    cancelNote.value = failure.message ?? '取消失败，请稍后重试。'
+  } finally {
+    canceling.value = false
+  }
+}
+
+/** 契约只允许对 FAILED / TIMED_OUT 重试；CANCELED 与 COMPLETED 没有"再来一次"的语义。 */
+const retryable = computed(() =>
+  Boolean(task.value && ['FAILED', 'TIMED_OUT'].includes(task.value.status)),
+)
+
+const retrying = ref(false)
+
+async function retryRun() {
+  if (!task.value || !retryable.value) return
+  retrying.value = true
+  cancelNote.value = ''
+  try {
+    const accepted = await retryTask(
+      task.value.taskId,
+      crypto.randomUUID(),
+      question.value.trim() || undefined,
+    )
+    startRun(accepted)
+  } catch (cause) {
+    const failure = cause as { message?: string }
+    submitError.value = failure.message ?? '重试失败，请稍后重试。'
+  } finally {
+    retrying.value = false
+  }
+}
+
+const followUpQuestion = ref('')
+const followUpSubmitting = ref(false)
+
+async function submitFollowUp() {
+  const current = task.value
+  const text = followUpQuestion.value.trim()
+  if (!current || !text) return
+  followUpSubmitting.value = true
+  cancelNote.value = ''
+  try {
+    const accepted = await createFollowUpTask(
+      current.sessionId,
+      { question: text },
+      crypto.randomUUID(),
+    )
+    followUpQuestion.value = ''
+    startRun(accepted)
+  } catch (cause) {
+    const failure = cause as { message?: string }
+    submitError.value = failure.message ?? '追问提交失败，请稍后重试。'
+  } finally {
+    followUpSubmitting.value = false
+  }
+}
+
 // `useRemoteData` 只提供 reload，不会自动执行——不挂载时调一次，页面会永远停在"加载中"。
 onMounted(() => {
   void reloadScenes()
   void loadQuota()
 })
-onUnmounted(stopPolling)
+onUnmounted(() => {
+  stopPolling()
+  stopStream()
+})
 
 const running = computed(() => Boolean(task.value) && !TERMINAL.has(task.value!.status))
 
@@ -367,21 +651,45 @@ const sections = computed(() => {
         </label>
         <p v-if="sceneDefinition" class="state-note">{{ sceneDefinition.description }}</p>
 
-        <template v-if="sceneSupported">
-          <label v-if="needsSecuritySearch">
-            分析标的
+        <!-- 市场场景：目标是固定的 CN，不需要检索 -->
+        <p v-if="targetMode === 'MARKET'" class="selected-target">已选：中国 A 股（CN）</p>
+
+        <template v-else>
+          <label>
+            {{ targetLabel }}
             <span class="inline-search">
               <Search :size="15" />
               <input
                 v-model="targetQuery"
                 type="search"
-                placeholder="输入代码或名称，回车检索"
-                @keyup.enter="searchTargets"
+                :placeholder="targetMode === 'SECTOR' ? '输入板块名称过滤，回车检索' : '输入代码或名称，回车检索'"
+                @keyup.enter="targetMode === 'SECTOR' ? searchSectors() : searchTargets()"
               />
             </span>
           </label>
-          <p v-if="searching" class="state-note">正在检索…</p>
+
+          <!-- 多选场景：已选目标以标签呈现，可单独移除 -->
+          <ul v-if="selectedTargets.length" class="selected-targets">
+            <li v-for="item in selectedTargets" :key="item.targetId" class="target-chip">
+              {{ item.targetName }}（{{ item.targetCode }}）
+              <button
+                class="chip-remove"
+                type="button"
+                :aria-label="`移除 ${item.targetName}`"
+                @click="removeSelectedTarget(item.targetId)"
+              >
+                <X :size="12" />
+              </button>
+            </li>
+          </ul>
+
+          <p v-if="target && targetMode !== 'SECURITY_MULTI'" class="selected-target">
+            已选：{{ target.targetName }}（{{ target.targetCode }}）
+          </p>
+
+          <p v-if="searching || loadingSectors" class="state-note">正在检索…</p>
           <p v-else-if="searchError" class="state-note state-note--error">{{ searchError }}</p>
+
           <ul v-if="targetResults.length" class="target-candidates">
             <li v-for="candidate in targetResults" :key="candidate.targetId">
               <button class="link-button" type="button" @click="chooseTarget(candidate)">
@@ -389,22 +697,20 @@ const sections = computed(() => {
               </button>
             </li>
           </ul>
-          <p v-if="target" class="selected-target">
-            已选：{{ target.targetName }}（{{ target.targetCode }}）
-          </p>
-          <p v-else-if="!needsSecuritySearch" class="selected-target">已选：中国 A 股（CN）</p>
+          <ul v-if="sectorCandidates.length" class="target-candidates">
+            <li v-for="item in sectorCandidates" :key="item.sectorId">
+              <button class="link-button" type="button" @click="chooseSector(item)">
+                {{ item.sectorName }}（{{ item.sectorCode }}）
+              </button>
+            </li>
+          </ul>
         </template>
-        <!-- 不支持就不给入口：一个点了没反应的按钮比禁用更糟。 -->
-        <p v-else-if="sceneDefinition" class="state-note state-note--warn">
-          该场景本轮尚未接入标的检索（板块需板块检索，多标的对比需多选），因此不能在此提交。
-          已有结果可到「分析历史」查看。
-        </p>
 
         <div class="setup-divider" />
         <button
           class="secondary-button"
           type="button"
-          :disabled="!target || previewing"
+          :disabled="currentTargets.length === 0 || previewing"
           @click="runPreview"
         >
           预览将使用的数据
@@ -454,7 +760,7 @@ const sections = computed(() => {
             <span>提交前请先预览数据；未预览也可以直接提交</span>
             <button
               type="button"
-              :disabled="!target || submitting || running || preview?.canGenerate === false"
+              :disabled="!targetsValid || submitting || running || preview?.canGenerate === false"
               @click="submit"
             >
               <Sparkles :size="15" /> {{ running ? '分析进行中' : '开始分析' }}
@@ -467,7 +773,23 @@ const sections = computed(() => {
         <div v-if="running" class="report-generating">
           <span class="ai-orbit"><Sparkles :size="22" /></span>
           <h2>{{ task?.progressStage || '正在分析' }}</h2>
-          <p>任务 {{ task?.taskId }} · 每 3 秒刷新一次状态</p>
+          <p>
+            任务 {{ task?.taskId }} ·
+            {{ pollingFallbackNote ? pollingFallbackNote : '实时接收生成内容' }}
+          </p>
+          <!-- 生成中的临时文本：SSE 的 chunk 逐段到达；轮询兜底时它保持为空 -->
+          <pre v-if="streamingText" class="streaming-text">{{ streamingText }}</pre>
+          <div class="run-actions">
+            <button
+              class="secondary-button"
+              type="button"
+              :disabled="canceling"
+              @click="cancelRun"
+            >
+              {{ canceling ? '正在取消…' : '取消本次分析' }}
+            </button>
+          </div>
+          <p v-if="cancelNote" class="state-note">{{ cancelNote }}</p>
         </div>
 
         <article v-else-if="task && task.status !== 'COMPLETED'" class="ai-report">
@@ -478,6 +800,16 @@ const sections = computed(() => {
               <h2>本次分析未产出报告</h2>
               <p>任务状态：{{ task.status }}</p>
               <p v-if="task.error">{{ task.error.message }}（{{ task.error.code }}）</p>
+              <div v-if="retryable" class="run-actions">
+                <button
+                  class="secondary-button"
+                  type="button"
+                  :disabled="retrying"
+                  @click="retryRun"
+                >
+                  {{ retrying ? '正在创建重试…' : '重试本次分析' }}
+                </button>
+              </div>
             </div>
           </section>
         </article>
@@ -525,6 +857,24 @@ const sections = computed(() => {
               {{ report.promptVersion }}）
             </p>
           </footer>
+          <!-- AI-08：在本次任务的会话里追问。问题非空才可提交。 -->
+          <div class="follow-up-composer">
+            <textarea
+              v-model="followUpQuestion"
+              rows="2"
+              :maxlength="sceneDefinition?.questionMaxLength ?? 500"
+              placeholder="针对这份报告继续追问，例如：把风险部分展开成可核对的检查清单？"
+            />
+            <div>
+              <button
+                type="button"
+                :disabled="!followUpQuestion.trim() || followUpSubmitting"
+                @click="submitFollowUp"
+              >
+                {{ followUpSubmitting ? '正在提交追问…' : '追问' }}
+              </button>
+            </div>
+          </div>
         </article>
 
         <div v-else class="report-empty">

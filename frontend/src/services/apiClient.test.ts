@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { apiDownload, apiRequest, clearAccessToken, refreshAccessToken, setAccessToken } from './apiClient'
+import { apiDownload, apiRequest, apiStream, clearAccessToken, refreshAccessToken, setAccessToken } from './apiClient'
 
 function response(status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -189,5 +189,155 @@ describe('二进制下载（EXP-03）', () => {
     )
     // 下载不能被内容协商卡住：问服务端要 JSON 的话，成功响应的 xlsx 会被拒收。
     expect(new Headers(retry?.[1]?.headers).get('Accept')).toBe('*/*')
+  })
+})
+
+/**
+ * SSE 通道（AI-05）。它的一切故障都表现为"前端安静地收不到事件"，
+ * 所以这里把每一类失败都显式走一遍：帧解析、重连带游标、401 刷新、重连上限。
+ */
+describe('SSE 通道（AI-05）', () => {
+  afterEach(() => {
+    clearAccessToken()
+    vi.unstubAllGlobals()
+  })
+
+  function sseResponse(frames: string) {
+    return new Response(frames, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    })
+  }
+
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+  // 断言要读 mock.calls[*][1] 的请求头，签名必须带上 init 参数，否则元组里没有第二项。
+  type FetchImpl = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+
+  it('解析事件帧并派发；Accept 必须是 text/event-stream', async () => {
+    setAccessToken('token-1')
+    // 首次响应耗尽后，传输层会按设计自动重连；让后续连接挂起，保证断言确定。
+    const fetchMock = vi
+      .fn<FetchImpl>()
+      .mockResolvedValueOnce(
+        sseResponse('event: snapshot\ndata: {"task":1}\n\nevent: chunk\ndata: {"delta":"你好"}\n\n'),
+      )
+      .mockImplementation(() => new Promise<Response>(() => {}))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const messages: Array<{ event: string; data: string }> = []
+    const handle = apiStream('/api/v1/ai/tasks/1/stream', {
+      onMessage: (message) => messages.push({ event: message.event, data: message.data }),
+      onError: () => {},
+    })
+    await vi.waitFor(() => expect(messages).toHaveLength(2))
+    handle.close()
+
+    expect(messages).toEqual([
+      { event: 'snapshot', data: '{"task":1}' },
+      { event: 'chunk', data: '{"delta":"你好"}' },
+    ])
+    const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers)
+    expect(headers.get('Accept')).toBe('text/event-stream')
+    expect(headers.get('Authorization')).toBe('Bearer token-1')
+  })
+
+  it('服务端关流后带 Last-Event-ID 重连，收过的事件不重复派发', async () => {
+    const fetchMock = vi
+      .fn<FetchImpl>()
+      .mockResolvedValueOnce(sseResponse('id: 5\nevent: status\ndata: {"s":1}\n\n'))
+      .mockImplementation(() => new Promise<Response>(() => {}))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const messages: string[] = []
+    const handle = apiStream('/api/v1/ai/tasks/1/stream', {
+      onMessage: (message) => messages.push(`${message.event}:${message.data}`),
+      onError: () => {},
+    })
+    await tick()
+    await tick()
+    await tick()
+    handle.close()
+
+    expect(messages).toEqual(['status:{"s":1}'])
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get('Last-Event-ID')).toBe('5')
+  })
+
+  it('streamUrl 带 /api/v1 前缀时不会被拼成 /api/v1/api/v1', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => sseResponse('event: done\ndata: {}\n\n')),
+    )
+
+    const handle = apiStream('/api/v1/ai/tasks/1/stream', {
+      onMessage: () => {},
+      onError: () => {},
+    })
+    await tick()
+    handle.close()
+
+    const fetchMock = vi.mocked(globalThis.fetch)
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('/api/v1/ai/tasks/1/stream')
+  })
+
+  it('401 时刷新一次令牌再连，不消耗重连次数', async () => {
+    setAccessToken('expired-token')
+    let streamCalls = 0
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+      if (String(input).endsWith('/auth/token/refresh')) {
+        return response(200, {
+          success: true,
+          code: 'SUCCESS',
+          message: '刷新成功',
+          data: { accessToken: 'fresh-token', permissions: [] },
+          traceId: 'trace-refresh',
+          timestamp: '2026-09-23T10:00:00+08:00',
+        })
+      }
+      streamCalls += 1
+      if (streamCalls === 1) {
+        return response(401, { success: false, code: 'UNAUTHORIZED', traceId: 'trace-401' })
+      }
+      // 连接建立后挂起：避免"流耗尽 → 重连"干扰断言（重连语义由上面的用例覆盖）。
+      return new Promise<Response>(() => {})
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const handle = apiStream('/api/v1/ai/tasks/1/stream', {
+      onMessage: () => {},
+      onError: () => {},
+    })
+    await vi.waitFor(() => expect(streamCalls).toBe(2))
+    handle.close()
+
+    // 3 次调用 = 401 的流请求 + 刷新 + 换新令牌后的流请求；刷新不计失败次数。
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    const retryHeaders = new Headers(fetchMock.mock.calls[2]?.[1]?.headers)
+    expect(retryHeaders.get('Authorization')).toBe('Bearer fresh-token')
+  })
+
+  it('重连次数用尽后回调 onError，且不再重试', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', vi.fn(async () => response(503, {
+      success: false,
+      code: 'SERVICE_UNAVAILABLE',
+      message: '服务暂时不可用',
+      traceId: 'trace-503',
+      timestamp: '2026-09-23T10:00:00+08:00',
+    })))
+
+    const onError = vi.fn()
+    apiStream('/api/v1/ai/tasks/1/stream', { onMessage: () => {}, onError })
+
+    // 1+2+3 秒退避覆盖全部 4 次尝试；第 4 次失败即回调。
+    await vi.advanceTimersByTimeAsync(6_000)
+
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(onError.mock.calls[0]?.[0]).toMatchObject({ code: 'SERVICE_UNAVAILABLE' })
+    // 关键断言是"之后不再重试"：再推进 10 秒，连接数不得增长。
+    const callsAtError = vi.mocked(globalThis.fetch).mock.calls.length
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(vi.mocked(globalThis.fetch).mock.calls).toHaveLength(callsAtError)
   })
 })

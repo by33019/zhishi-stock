@@ -2,7 +2,10 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import AiWorkspacePage from './AiWorkspacePage.vue'
+import type { StreamHandle } from '@/services/apiClient'
 import {
+  cancelTask,
+  createFollowUpTask,
   createTask,
   getMyAiQuota,
   getReport,
@@ -10,12 +13,16 @@ import {
   getScenes,
   getTask,
   previewContext,
+  retryTask,
+  streamTaskEvents,
 } from '@/services/aiApi'
+import { getSectorRankings } from '@/services/sectorApi'
 import { searchSecurities } from '@/services/securityApi'
 import type {
   AiReportDetail,
   AiReportEvidence,
   AiSceneDefinition,
+  AiStreamEvent,
   AiTaskAccepted,
   AiTaskSummary,
 } from '@/types/domain'
@@ -28,10 +35,53 @@ vi.mock('@/services/aiApi', () => ({
   getReport: vi.fn(),
   getReportEvidence: vi.fn(),
   getMyAiQuota: vi.fn(),
+  cancelTask: vi.fn(),
+  retryTask: vi.fn(),
+  createFollowUpTask: vi.fn(),
+  streamTaskEvents: vi.fn(),
 }))
 vi.mock('@/services/securityApi', () => ({ searchSecurities: vi.fn() }))
+vi.mock('@/services/sectorApi', () => ({ getSectorRankings: vi.fn() }))
+
+/**
+ * streamTaskEvents 的桩：页面拿到的是 handle，测试拿到的是 handlers，
+ * 于是可以按 SSE 的事件顺序手动驱动页面（snapshot → chunk → … → done）。
+ */
+function capturedStream() {
+  let handlers: { onEvent: (event: AiStreamEvent) => void; onError: (error: Error) => void } | undefined
+  const handle: StreamHandle = { close: vi.fn() }
+  vi.mocked(streamTaskEvents).mockImplementation((_url, onEvent, onError) => {
+    handlers = { onEvent, onError }
+    return handle
+  })
+  return {
+    emit: (event: AiStreamEvent) => handlers?.onEvent(event),
+    fail: () => handlers?.onError(new Error('流不可用')),
+    handle: () => handle,
+  }
+}
 
 const NOW = '2026-09-22T15:00:00+08:00'
+
+/** 每次挂载前重建的 SSE 桩；测试用它按事件顺序驱动页面。 */
+let stream: ReturnType<typeof capturedStream>
+
+function acceptedFor(taskId: string): AiTaskAccepted {
+  return {
+    task: { ...task('QUEUED'), taskId },
+    statusUrl: `/api/v1/ai/tasks/${taskId}`,
+    streamUrl: `/api/v1/ai/tasks/${taskId}/stream`,
+    quota: {
+      date: '2026-09-22',
+      dailyLimit: 20,
+      usedCount: 1,
+      remainingCount: 19,
+      runningCount: 1,
+      concurrentLimit: 2,
+      resetsAt: '2026-09-23T00:00:00+08:00',
+    },
+  }
+}
 
 function scene(overrides: Partial<AiSceneDefinition> = {}): AiSceneDefinition {
   return {
@@ -115,9 +165,11 @@ function mountPage() {
 }
 
 beforeEach(() => {
+  stream = capturedStream()
   vi.mocked(getScenes).mockResolvedValue([
     scene(),
     scene({ scene: 'COMPARE', name: '多标的对比', allowedTargetTypes: ['SECURITY'], minTargets: 2, maxTargets: 3 }),
+    scene({ scene: 'SECTOR', name: '板块研究', allowedTargetTypes: ['SECTOR'], minTargets: 1, maxTargets: 1 }),
   ])
   vi.mocked(searchSecurities).mockResolvedValue({
     items: [
@@ -138,7 +190,53 @@ beforeEach(() => {
         matchedField: 'CODE',
         highlight: '600519',
       },
+      {
+        security: {
+          securityId: 'sim-000001',
+          fullSymbol: 'SZ000001',
+          securityCode: '000001',
+          securityName: '模拟证券000001',
+          exchangeCode: 'SZ',
+          securityType: 'STOCK',
+          boardCode: 'MAIN',
+          listingStatus: 'LISTED',
+          isSt: false,
+          isSuspended: false,
+          priceScale: 2,
+        },
+        matchedField: 'CODE',
+        highlight: '000001',
+      },
     ],
+  })
+  vi.mocked(getSectorRankings).mockResolvedValue({
+    items: [
+      {
+        sectorId: 'bk-ai',
+        sectorCode: 'BKAI',
+        sectorName: '人工智能',
+        sectorType: 'CONCEPT',
+        companyCount: 50,
+        averagePrice: '10.00',
+        changeRate: '0.02',
+        tradeVolume: '1000',
+        tradeAmount: '2000',
+        leadingStock: null,
+        laggingStock: null,
+        dataTime: NOW,
+        dataStatus: 'REALTIME',
+      },
+    ],
+    page: 1,
+    size: 100,
+    total: 1,
+    totalPages: 1,
+    hasNext: false,
+    sectorType: null,
+    rankingType: 'GAINERS',
+    snapshotVersion: 'v1',
+    dataTime: NOW,
+    dataStatus: 'REALTIME',
   })
   vi.mocked(previewContext).mockResolvedValue({
     targets: [],
@@ -147,24 +245,18 @@ beforeEach(() => {
     newsCount: 0,
     limitations: ['模拟证券600519 在分析区间内没有可用资讯，报告将为受限分析'],
   })
-  const accepted: AiTaskAccepted = {
-    task: task('QUEUED'),
-    statusUrl: '/api/v1/ai/tasks/7001',
-    streamUrl: '/api/v1/ai/tasks/7001/stream',
-    quota: {
-      date: '2026-09-22',
-      dailyLimit: 20,
-      usedCount: 1,
-      remainingCount: 19,
-      runningCount: 1,
-      concurrentLimit: 2,
-      resetsAt: '2026-09-23T00:00:00+08:00',
-    },
-  }
-  vi.mocked(createTask).mockResolvedValue(accepted)
+  vi.mocked(createTask).mockResolvedValue(acceptedFor('7001'))
   vi.mocked(getTask).mockResolvedValue(task('COMPLETED', '8001'))
   vi.mocked(getReport).mockResolvedValue(report())
   vi.mocked(getReportEvidence).mockResolvedValue([evidence()])
+  vi.mocked(cancelTask).mockResolvedValue({
+    taskId: '7001',
+    status: 'CANCELING',
+    cancelRequested: true,
+    effectiveImmediately: true,
+  })
+  vi.mocked(retryTask).mockResolvedValue(acceptedFor('7002'))
+  vi.mocked(createFollowUpTask).mockResolvedValue(acceptedFor('7003'))
   // USER-07：进页面就取一次配额。给一个与提交后**不同**的数，用来证明
   // 页面上显示的是 AI-03 覆盖后的值，而不是这个初始值。
   vi.mocked(getMyAiQuota).mockResolvedValue({
@@ -178,7 +270,7 @@ beforeEach(() => {
   })
 })
 
-/** 走一遍"检索标的 → 选标的 → 提交 → 轮询到完成"的最短路径。 */
+/** 走一遍"检索标的 → 选标的 → 提交 → SSE 到完成"的最短路径。 */
 async function runAnalysis(wrapper: ReturnType<typeof mountPage>) {
   await flushPromises()
   await wrapper.get('.inline-search input').setValue('600519')
@@ -188,6 +280,29 @@ async function runAnalysis(wrapper: ReturnType<typeof mountPage>) {
   await flushPromises()
   await wrapper.get('.question-composer button').trigger('click')
   await flushPromises()
+  driveStreamToDone()
+  await flushPromises()
+}
+
+/** 按真实 SSE 的事件顺序把任务推到完成：快照 → 状态 → 片段 → 报告 → 完成。 */
+function driveStreamToDone(taskId = '7001') {
+  stream.emit({
+    kind: 'snapshot',
+    task: { ...task('RUNNING'), taskId },
+    lastSequence: 0,
+    partialContent: '',
+  })
+  stream.emit({ kind: 'status', taskId, status: 'RUNNING', progressStage: '正在生成', sequence: 1 })
+  stream.emit({ kind: 'chunk', taskId, section: 'coreConclusion', delta: '第一段。', sequence: 2 })
+  stream.emit({
+    kind: 'report',
+    taskId,
+    reportId: '8001',
+    qualityStatus: 'LIMITED',
+    isLimited: true,
+    sequence: 3,
+  })
+  stream.emit({ kind: 'done', taskId, finalStatus: 'COMPLETED', sequence: 4 })
 }
 
 describe('AI 研究工作台', () => {
@@ -248,7 +363,7 @@ describe('AI 研究工作台', () => {
     expect(wrapper.text()).toContain('没有可用资讯')
   })
 
-  it('提交后轮询到完成，渲染六章节、受限原因与免责声明', async () => {
+  it('提交后经 SSE 收到临时文本与报告，渲染六章节、受限原因与免责声明', async () => {
     const wrapper = mountPage()
     await flushPromises()
     await wrapper.get('.inline-search input').setValue('600519')
@@ -263,9 +378,42 @@ describe('AI 研究工作台', () => {
     expect(createTask).toHaveBeenCalledOnce()
     // Idempotency-Key 由调用方生成：键的语义是"一次用户意图"
     expect(vi.mocked(createTask).mock.calls[0][1]).toMatch(/[0-9a-f-]{36}/)
-    expect(getTask).toHaveBeenCalledWith('7001')
-    expect(getReport).toHaveBeenCalledWith('8001')
+    expect(streamTaskEvents).toHaveBeenCalledWith(
+      '/api/v1/ai/tasks/7001/stream',
+      expect.any(Function),
+      expect.any(Function),
+    )
 
+    // 生成中：状态与临时文本实时到达，不去轮询
+    stream.emit({
+      kind: 'snapshot',
+      task: task('RUNNING'),
+      lastSequence: 0,
+      partialContent: '',
+    })
+    stream.emit({ kind: 'status', taskId: '7001', status: 'RUNNING', progressStage: '正在生成', sequence: 1 })
+    stream.emit({ kind: 'chunk', taskId: '7001', section: 'coreConclusion', delta: '第一段。', sequence: 2 })
+    await flushPromises()
+    expect(wrapper.get('.streaming-text').text()).toContain('第一段。')
+    expect(getTask).not.toHaveBeenCalled()
+
+    // 重连补发的重复片段按 sequence 去重，不会拼两遍
+    stream.emit({ kind: 'chunk', taskId: '7001', section: 'coreConclusion', delta: '第一段。', sequence: 2 })
+    await flushPromises()
+    expect(wrapper.get('.streaming-text').text().match(/第一段。/g)).toHaveLength(1)
+
+    stream.emit({
+      kind: 'report',
+      taskId: '7001',
+      reportId: '8001',
+      qualityStatus: 'LIMITED',
+      isLimited: true,
+      sequence: 3,
+    })
+    stream.emit({ kind: 'done', taskId: '7001', finalStatus: 'COMPLETED', sequence: 4 })
+    await flushPromises()
+
+    expect(getReport).toHaveBeenCalledWith('8001')
     expect(wrapper.text()).toContain('核心结论')
     expect(wrapper.text()).toContain('行情与量价依据')
     expect(wrapper.text()).toContain('风险与不确定性')
@@ -274,6 +422,29 @@ describe('AI 研究工作台', () => {
     expect(wrapper.text()).toContain('不构成投资建议')
     // 配额只在提交后才有权威来源
     expect(wrapper.text()).toContain('今日剩余 19 / 20 次')
+  })
+
+  it('SSE 不可用时退回每 3 秒轮询，闭环不断', async () => {
+    // 第一次轮询仍在运行：此时提示文案必须可见；任务终态后它随运行视图一起退场。
+    vi.mocked(getTask).mockResolvedValueOnce(task('RUNNING'))
+    const wrapper = mountPage()
+    await flushPromises()
+    await wrapper.get('.inline-search input').setValue('600519')
+    await wrapper.get('.inline-search input').trigger('keyup.enter')
+    await flushPromises()
+    await wrapper.get('.target-candidates button').trigger('click')
+    await flushPromises()
+    await wrapper.get('.question-composer button').trigger('click')
+    await flushPromises()
+
+    stream.fail()
+    await flushPromises()
+
+    // 退回轮询：AI-04 被调用，并如实告知用户
+    expect(getTask).toHaveBeenCalledWith('7001')
+    expect(wrapper.text()).toContain('实时流不可用')
+
+    wrapper.unmount()
   })
 
   it('核心行情缺失时禁用提交，不让用户白跑一次', async () => {
@@ -299,15 +470,180 @@ describe('AI 研究工作台', () => {
     expect(wrapper.get('.question-composer button').attributes('disabled')).toBeDefined()
   })
 
-  it('多标的对比场景不给提交入口，并写明原因（而不是留一个点了没反应的按钮）', async () => {
+  it('多标的对比场景：选满 2 只才给提交，提交体带上全部已选', async () => {
     const wrapper = mountPage()
     await flushPromises()
 
     await wrapper.get('select').setValue('COMPARE')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('尚未接入标的检索')
+    // 未达 minTargets：按钮禁用
     expect(wrapper.get('.question-composer button').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('对比标的（0 / 3）')
+
+    // 第一只
+    await wrapper.get('.inline-search input').setValue('600519')
+    await wrapper.get('.inline-search input').trigger('keyup.enter')
+    await flushPromises()
+    await wrapper.get('.target-candidates button').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('对比标的（1 / 3）')
+    expect(wrapper.get('.question-composer button').attributes('disabled')).toBeDefined()
+
+    // 第二只
+    await wrapper.get('.inline-search input').setValue('000001')
+    await wrapper.get('.inline-search input').trigger('keyup.enter')
+    await flushPromises()
+    await wrapper.get('.target-candidates li:nth-child(2) button').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('对比标的（2 / 3）')
+
+    await wrapper.get('.question-composer button').trigger('click')
+    await flushPromises()
+
+    expect(createTask).toHaveBeenCalledOnce()
+    const [request] = vi.mocked(createTask).mock.calls[0]
+    expect(request.scene).toBe('COMPARE')
+    expect(request.targets.map((item) => item.targetId)).toEqual(['sim-600519', 'sim-000001'])
+  })
+
+  it('板块场景：候选来自 SEC-02 榜单，本地按名称过滤', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await wrapper.get('select').setValue('SECTOR')
+    await flushPromises()
+    await wrapper.get('.inline-search input').setValue('人工')
+    await wrapper.get('.inline-search input').trigger('keyup.enter')
+    await flushPromises()
+
+    expect(getSectorRankings).toHaveBeenCalledWith({ page: 1, size: 100 })
+    await wrapper.get('.target-candidates button').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('已选：人工智能（BKAI）')
+
+    await wrapper.get('.question-composer button').trigger('click')
+    await flushPromises()
+    const [request] = vi.mocked(createTask).mock.calls[0]
+    expect(request.targets).toEqual([
+      {
+        targetType: 'SECTOR',
+        targetId: 'bk-ai',
+        targetCode: 'BKAI',
+        targetName: '人工智能',
+        targetRole: 'PRIMARY',
+      },
+    ])
+  })
+
+  // ---------- 取消 / 重试 / 追问（AI-06 / AI-07 / AI-08）----------
+
+  it('取消进行中的任务（AI-06）：带上幂等键，生效与否如实告知', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+    await wrapper.get('.inline-search input').setValue('600519')
+    await wrapper.get('.inline-search input').trigger('keyup.enter')
+    await flushPromises()
+    await wrapper.get('.target-candidates button').trigger('click')
+    await flushPromises()
+    await wrapper.get('.question-composer button').trigger('click')
+    await flushPromises()
+    stream.emit({
+      kind: 'snapshot',
+      task: task('RUNNING'),
+      lastSequence: 0,
+      partialContent: '',
+    })
+    await flushPromises()
+
+    await wrapper.get('.run-actions button').trigger('click')
+    await flushPromises()
+
+    expect(cancelTask).toHaveBeenCalledWith('7001', expect.stringMatching(/[0-9a-f-]{36}/))
+    expect(wrapper.text()).toContain('已请求取消。')
+    wrapper.unmount()
+  })
+
+  it('取消未生效（任务已终态）时说"未生效"，不说"已取消"', async () => {
+    vi.mocked(cancelTask).mockResolvedValue({
+      taskId: '7001',
+      status: 'COMPLETED',
+      cancelRequested: false,
+      effectiveImmediately: false,
+    })
+    const wrapper = mountPage()
+    await flushPromises()
+    await wrapper.get('.inline-search input').setValue('600519')
+    await wrapper.get('.inline-search input').trigger('keyup.enter')
+    await flushPromises()
+    await wrapper.get('.target-candidates button').trigger('click')
+    await flushPromises()
+    await wrapper.get('.question-composer button').trigger('click')
+    await flushPromises()
+    stream.emit({
+      kind: 'snapshot',
+      task: task('RUNNING'),
+      lastSequence: 0,
+      partialContent: '',
+    })
+    await flushPromises()
+
+    await wrapper.get('.run-actions button').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('任务已经完成，取消未生效。')
+    wrapper.unmount()
+  })
+
+  it('失败任务可重试（AI-07）：创建新任务并接上它的事件流', async () => {
+    vi.mocked(getTask).mockResolvedValue(task('FAILED'))
+    const wrapper = mountPage()
+    await flushPromises()
+    await wrapper.get('.inline-search input').setValue('600519')
+    await wrapper.get('.inline-search input').trigger('keyup.enter')
+    await flushPromises()
+    await wrapper.get('.target-candidates button').trigger('click')
+    await flushPromises()
+    await wrapper.get('.question-composer button').trigger('click')
+    await flushPromises()
+    stream.emit({ kind: 'done', taskId: '7001', finalStatus: 'FAILED', sequence: 1 })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('本次分析未产出报告')
+
+    await wrapper.get('.run-actions button').trigger('click')
+    await flushPromises()
+
+    expect(retryTask).toHaveBeenCalledWith('7001', expect.stringMatching(/[0-9a-f-]{36}/), undefined)
+    // 新任务接上了自己的流（第二次订阅，streamUrl 指向新任务）
+    expect(streamTaskEvents).toHaveBeenLastCalledWith(
+      '/api/v1/ai/tasks/7002/stream',
+      expect.any(Function),
+      expect.any(Function),
+    )
+    wrapper.unmount()
+  })
+
+  it('报告就位后可追问（AI-08）：在同一会话里创建新任务', async () => {
+    const wrapper = mountPage()
+    await runAnalysis(wrapper)
+
+    await wrapper.get('.follow-up-composer textarea').setValue('把风险部分展开成检查清单')
+    await wrapper.get('.follow-up-composer button').trigger('click')
+    await flushPromises()
+
+    expect(createFollowUpTask).toHaveBeenCalledWith(
+      '6001',
+      { question: '把风险部分展开成检查清单' },
+      expect.stringMatching(/[0-9a-f-]{36}/),
+    )
+    // 追问产生的新任务同样接上事件流
+    expect(streamTaskEvents).toHaveBeenLastCalledWith(
+      '/api/v1/ai/tasks/7003/stream',
+      expect.any(Function),
+      expect.any(Function),
+    )
+    wrapper.unmount()
   })
 
   it('提交失败时显示后端文案，不显示编造的报告', async () => {

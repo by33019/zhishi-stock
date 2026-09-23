@@ -920,13 +920,57 @@ export interface AiTaskQuota {
   resetsAt: string
 }
 
-/** AI-03 的响应（HTTP 202）。`streamUrl` 是 SSE 入口，本轮界面走轮询，不用它。 */
+/**
+ * AI-03 的响应（HTTP 202）。`streamUrl` 是 SSE（AI-05）的入口。
+ */
 export interface AiTaskAccepted {
   task: AiTaskSummary
   statusUrl: string
   streamUrl: string
   quota: AiTaskQuota
 }
+
+/**
+ * AI-06 的响应。
+ *
+ * `effectiveImmediately=false` 不代表失败：任务在请求到达前已进入终态，
+ * 完成就是完成，前端要如实告诉用户"取消没生效"，而不是把它说成"已取消"。
+ */
+export interface AiCancelResult {
+  taskId: string
+  status: string
+  cancelRequested: boolean
+  effectiveImmediately: boolean
+}
+
+/**
+ * AI-05 的六类事件（契约 §13.4）。
+ *
+ * 字段名与后端 `AiTaskEventPayloads` 一一对应；`sequence` 是全事件流的单调序号，
+ * 也是 SSE 帧 `id:` 的值——重连补发时调用方靠它去重，避免把同一段临时文本拼两遍。
+ */
+export type AiStreamEvent =
+  | { kind: 'snapshot'; task: AiTaskSummary; lastSequence: number; partialContent?: string }
+  | { kind: 'status'; taskId: string; status: string; progressStage: string; sequence: number }
+  | { kind: 'chunk'; taskId: string; section: string; delta: string; sequence: number }
+  | {
+      kind: 'report'
+      taskId: string
+      reportId: string
+      qualityStatus: string
+      isLimited: boolean
+      sequence: number
+    }
+  | {
+      kind: 'error'
+      taskId: string
+      errorCode: string
+      message: string
+      retryable: boolean
+      sequence: number
+    }
+  | { kind: 'done'; taskId: string; finalStatus: string; sequence: number }
+
 
 /**
  * HIS-06 的报告正文。

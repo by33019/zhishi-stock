@@ -23,6 +23,66 @@
 
 ---
 
+## 2026-09-23 — M3-10：前端 AI 工作台全量接入（SSE 流式 + 取消/重试/追问 + 标的检索）
+
+`/ai` 工作台从「轮询 + 仅单标的场景」补齐为契约 AI-01~08 全量；
+`/history` 的三个写操作（改名/收藏/两步删除）补上浏览器级验收。
+**M3 至此仅剩 M3-11（后台 admin 最小集）。**
+
+### 新增
+
+**SSE 通道（AI-05）**
+
+- `services/sseParser.ts`：WHATWG event-stream 最小子集（event / id / data / 注释行）。
+  独立成字符串进、字符串出的纯函数——解析器的一切错误都表现为
+  "前端安静地收不到事件"，只有纯函数才能在单测里钉住分帧边界
+  （半帧拼接、CRLF 混用、多行 data、注释行）。
+- `apiClient.apiStream`：自建 fetch 流通道，不用 `EventSource`
+  （它带不上只存在内存里的 `Authorization` 头）。`Last-Event-ID` 断线续传；
+  401 刷新令牌**一次**（刷新后再 401 必须走失败路径，
+  否则"401 → 刷新 → 401"是没有退避的死循环）；重连上限 3 次后回调 `onError`；
+  **刻意不设请求超时**——流本来就长时间静默，10 秒超时会把健康的流杀掉。
+- `aiApi.streamTaskEvents`：只做解码（event 名 → `AiStreamEvent`）。
+  未知事件名与解析失败的载荷**跳过而不是抛错**——契约升级多出新事件时旧前端照常工作。
+- `nginx.conf` 新增 `/api/v1/ai/` 专用 location：`proxy_buffering off`
+  （否则事件被攒进缓冲区，"逐字出现"变成几分钟后的"一次性倾泻"）+
+  `proxy_read_timeout 300s` + HTTP/1.1 长连接。
+
+**AI 工作台（`/ai`）**
+
+- 运行期从轮询切到 SSE：snapshot / status / chunk / report / error / done 六类事件
+  实时驱动界面，生成中的临时文本逐段渲染；按 `sequence` 去重，
+  重连补发不会把同一段文本拼两遍；`done` 之后以 AI-04 的任务摘要为准再对齐一次。
+- **轮询降级为兜底**：流不可用（网关不支持 / 重连次数用尽）时退回 3 秒轮询 AI-04，
+  页面如实提示"实时流不可用"——闭环不能因为一条流挂掉就整体不可用。
+- 取消（AI-06）：`effectiveImmediately=false` 时如实说"任务已经完成，取消未生效"，
+  不说"已取消"。
+- 重试（AI-07）：仅 FAILED / TIMED_OUT 可重试；重试是创建**新任务**，
+  拿到新 `streamUrl` 后像刚创建一样接上事件流。
+- 追问（AI-08）：报告就位后在同一会话里追问，`follow-up-tasks` 202 后同样走 SSE。
+- 标的检索全量落地：目标选择形态由 AI-01 的场景定义推导（不硬编码场景清单）——
+  MARKET 固定 `CN`；SECURITY 走 STK-01（单选或 2~3 只多选，标签可单独移除）；
+  SECTOR 走 SEC-02 榜单取候选后本地过滤（一次返回全部板块行情，不需要后端新增检索接口）。
+  目标数量不满足场景定义的 min/max 时不给提交，不把这个判断推给服务端 400。
+
+**浏览器级验收 `e2e/ai-workspace.real.mjs`（31 项全通过）**
+
+- 覆盖 /ai 真实提交全链路（AI-01/02/03/05/08 + HIS-06/07 + USER-07）
+  与 /history 三个写操作（HIS-03/04），并**直接查库**逐项核对：
+  `ai_task` 落库且 COMPLETED、`market_data_cutoff_at` 是真实行情批次（15:00:00）、
+  页面免责声明与库中逐字一致、`ai_message` 有问答记录、
+  改名/收藏/软删全部落库。
+- 记录两个环境坑：本机 Node 的 `spawnSync` 一律 EBUSY（查库必须用异步 `execFile`）；
+  Chrome 把主动 `close()` 的 SSE 分块响应记为 `ERR_INCOMPLETE_CHUNKED_ENCODING`
+  控制台噪声（按白名单过滤并注明原因，流健康由内容与查库证明）。
+
+### 变更
+
+- 前端测试 193 → **211**（+18：sseParser 7、apiClient SSE 通道 5、AI 工作台新增/改写 6）；
+  `npm run typecheck` 0 错误；`vite build` 成功。
+
+---
+
 ## 2026-09-23 — M3-12：行情榜单 Excel 导出（第 10 个模块 `stock-export`，EXP-01~04 端到端可用）
 
 榜单页的「导出 Excel」此前是 `disabled title="Excel 导出待接入（M3-12）"`——按钮在，
