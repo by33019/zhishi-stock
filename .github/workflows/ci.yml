@@ -42,8 +42,9 @@ jobs:
           set -o pipefail
           mvn -B -ntp -f backend/pom.xml verify 2>&1 | tee backend-mvn.log
 
-      # 失败诊断写进 Job Summary：公开仓库的 check-run output 匿名可读，
-      # 推送者不必点开几百行日志，手机上也能看到是哪条用例、什么断言挂了。
+      # 失败诊断写进 Job Summary；同时切成块以 `::error::` 注解发出——
+      # 注解在公开仓库上**匿名可读**（Actions log 与 artifact 都要登录才能取），
+      # 手机上打开 Actions 页也能直接看到是哪条用例、什么断言挂了。
       - name: 失败时输出诊断
         if: failure()
         run: |
@@ -65,19 +66,35 @@ jobs:
             echo '```'
             grep -E "^\[ERROR\]" backend-mvn.log | head -60
             echo '```'
-            echo
-            echo "### 各模块用例数"
-            echo '```'
-            grep -E "^\[INFO\] Tests run: [0-9]+, Failures" backend-mvn.log | tail -20
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          } > ci-diagnostics.md 2>&1 || true
+
+          # 注解单条有长度上限，切成 ~800 字符的块逐条发出（上限 8 条）。
+          rm -f diag_*
+          split -b 800 -d ci-diagnostics.md diag_ 2>/dev/null || true
+          n=0
+          for p in diag_*; do
+            [ -e "$p" ] || continue
+            n=$((n + 1))
+            if [ "$n" -gt 8 ]; then
+              echo "::error::诊断超过 8 条已截断，完整内容见 backend-surefire-reports 工件"
+              break
+            fi
+            echo "::error::诊断 $n :: $(tr '\n' ' ' < "$p" | tr -s ' ' | cut -c1-780)"
+            rm -f "$p"
+          done
+          if [ "$n" -eq 0 ]; then
+            echo "::error::没有收集到任何诊断信息（surefire 目录可能尚未生成，见 backend-mvn.log 工件）"
+          fi
 
       - name: 上传测试报告
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: backend-surefire-reports
-          path: backend/*/target/surefire-reports/
+          path: |
+            backend/*/target/surefire-reports/
+            backend-mvn.log
+            ci-diagnostics.md
           if-no-files-found: ignore
 
   frontend:
