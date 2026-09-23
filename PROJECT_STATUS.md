@@ -1,6 +1,6 @@
 # PROJECT_STATUS.md — 知势平台项目状态
 
-> 最后更新：2026-09-21（M3-07 完成：AI 任务编排 + SSE 流式契约，新增第 9 个模块 `stock-ai-worker`，V6 六张表从零行到有真实数据）
+> 最后更新：2026-09-23（M3-12 完成：行情榜单 Excel 导出，新增第 10 个模块 `stock-export`；EXP-01~04 端到端通过；顺带修复"未匹配路径谎报 500"）
 > 任务清单见 `TASKS.md`，路线图见 `docs/superpowers/plans/2026-09-19-mvp-delivery-roadmap.md`。
 
 ---
@@ -27,19 +27,22 @@
 | 能力 | 状态 | 证据 |
 | --- | --- | --- |
 | `mvn`（Git Bash） | ✅ 已修复 | `mvn -v` → Maven 3.9.10（需 `JAVA_HOME` 用 Windows 路径，如 `D:/idea/JDK17`） |
-| 后端全量测试 | ✅ **890 测试通过** | common 1 / market 156 / news 103 / system 89 / **ai 159** / integration 127 / backend 225 / job 12 / **ai-worker 18**，0 失败 0 错误。本机 Docker 已启动，`InfrastructureIntegrationTest`（Testcontainers 真实 MySQL 8.4 + Redis）与 `AiWorkerIntegrationTest`（完整上下文 + 真库 + 真 Redis）**本轮实测通过**，不再是"CI 覆盖" |
+| 后端全量测试 | ✅ **1,025 测试通过** | common 1 / market 159 / news 103 / system 89 / **ai 218** / **export 72** / integration 127 / backend 226 / job 12 / **ai-worker 18**，0 失败 0 错误。本机 Docker 已启动，`InfrastructureIntegrationTest`（Testcontainers 真实 MySQL 8.4 + Redis）与 `AiWorkerIntegrationTest`（完整上下文 + 真库 + 真 Redis）**本轮实测通过**，不再是"CI 覆盖" |
 | 后端 Flyway 迁移（空库路径） | ✅ 已在真实 MySQL 8.4 验证 | 集成测试断言 `flyway_schema_history` 有 8 条成功迁移 |
 | 后端 Flyway 迁移（旧库升级路径） | ✅ **首次验证通过** | baseline v1 → V2–V8 → `now at version v8`，退出码 0 |
 | 迁移后完整性校验 | ✅ 通过 | `post_migration_validation.sql` 无异常明细，`foreign_key_count = 0` |
-| 前端类型检查 + 测试 + 构建 | ✅ 通过 | **20 文件 / 150 测试**（默认时区与 `TZ=UTC` 下均全绿）；`npm run typecheck` 0 错误；`vite build` 成功 |
+| 前端类型检查 + 测试 + 构建 | ✅ 通过 | **23 文件 / 193 测试**（默认时区与 `TZ=UTC` 下均全绿）；`npm run typecheck` 0 错误；`vite build` 成功 |
 | 本地 dev 联调（Vite 代理） | ✅ 已打通 | dev server 下 `GET /api/v1/markets/overview` 返回真实 JSON |
 | 自选闭环端到端 | ✅ **M3-03 实测通过** | 本机 Docker 起 MySQL 8.4 + Redis + `stock-backend`（dev profile），空库 Flyway V1→V8，按前端**完全相同的请求形状**走完 WAT-01/02/03/04/07/09/10/11 并逐字段核对；由此查出 2 个单测发现不了的缺陷（空自选编造快照、停牌算成平盘），均已修复 |
 | 资讯域端到端 | ✅ **M3-04 实测通过** | 本机 Docker 起 MySQL 8.4 + Redis 8.2 + `stock-api` + `stock-job`，空库 Flyway V1→V8；**库里数据全部由真实定时任务采集而来（非夹具）**：5 来源 / 9 稿件（8 ORIGINAL + 1 DUPLICATE）/ 8 关联（6 CONFIRMED + 2 CANDIDATE）。第二轮采集（+120s）**零新增行** ⇒ 来源 ID 幂等生效；停用来源 `SIM_MEDIA_C` 的 `last_success_at` 始终 `NULL`；重复稿折叠到主记录且库里关联数为 0；只有 CANDIDATE 关联的稿件在 NEWS-02 与 SEC-07 里都不可见；六个接口 + WAT-11 的 `newsSince` 逐字段核对通过，6 种非法输入全部 400、4 种不存在资源全部 404 |
 | 资讯页端到端 | ✅ **M3-05 实测通过** | Docker 全栈（`mysql` / `redis` / `flyway` / `stock-api` / `stock-job` / `frontend`） + Playwright 无头浏览器打开 `http://127.0.0.1:8088/news`，脚本 `frontend/e2e/news.real.mjs`。实测：首屏**恰好 2 个请求**（`/news/options` + `/news?page=1&size=20`）；类型标签 5 个全部来自 NEWS-04；切换类型**只新增 1 个请求**且带 `newsTypes`，options 累计仍 1 次；关键字搜索**保留当前筛选条件**（`newsTypes=ANNOUNCEMENT&keyword=银行`）；关联标签里 `CN` 无链接、`002343` → `/stocks/sim-002343`；侧栏渲染「尚未实现」、页面上没有 `286` / `42`；**原文链接 8 条全部可点** |
 | AI 域端到端 | ✅ **M3-06 实测通过** | Docker 全栈（`stock-api` Healthy） + `frontend/e2e/ai.real.mjs`。实测：未登录时 AI-01 / AI-02 均 401；AI-01 返回 5 个场景且**不泄露内部 Prompt**；AI-02 的 `QUOTE` 截止时间 = `2026-09-18T15:00:00+08:00`（**真实行情批次，不是「现在」**）；`COMPARE` 的多标的与单标的行情截止时间一致；7 种非法请求全部 400 且业务码正确。另做**受控实验**验证 `allow_ai_analysis`：临时关闭 `SIM_MEDIA_A` 的授权后，`/news` 列表 `total` 仍为 1，而 AI-02 的 `newsCount` 由 1 变 0、`dataCategories` 由 `[QUOTE, NEWS]` 变 `[QUOTE]`，恢复后复原 |
 | AI 任务端到端 | ✅ **M3-07 实测通过** | Docker 全栈 **7 容器**（`mysql` / `redis` / `flyway` / `stock-api` / `stock-job` / **`stock-ai-worker`** / `frontend`） + `frontend/e2e/ai-task.real.mjs`。10 项全通过：未登录 6 个端点全部 401；AI-03 返回 202；同 `Idempotency-Key` 重发回放**同一个 `taskId`** 且不重复消耗额度；状态推进 `QUEUED → PREPARING → RUNNING → COMPLETED`；SSE 收齐 `snapshot`/`status`/`chunk`/`report`/`done`（17 个 chunk，`section` 全部属于六章节）；`Last-Event-ID=2` 只补发 `id>2` 的 20 条；查库五张表都有真实行（`task=1 target=1 snapshot=1 message=2 report=1`）；报告的 `market_data_cutoff_at` 来自真实行情批次（`2026-09-21 15:00:00`）；取消已完成任务状态不变；并发上限触发 429 |
+| 导出端到端 | ✅ **M3-12 实测通过** | Docker 全栈（`mysql` @ **3308** / `redis` / `flyway` / `stock-api` / `stock-job` / `stock-ai-worker` / `frontend`），**经 nginx `:8088` 与浏览器完全同路径**：登录 → EXP-01 返回 **202** → 同 `Idempotency-Key` 重发**回放同一个 `exportId`** → EXP-02 `COMPLETED`（成交额榜 + 沪市筛选，**2,574 行**）→ EXP-03 下载 **200,634 字节** xlsx。解包核对说明区（数据截止时间 15:00:00+08:00 / 榜单类型 / 交易所 / ST 与停牌口径 / 行数上限）、13 列表头、`pane ySplit=13` 冻结、`autoFilter A13:M2587` 恰好覆盖数据行；查别人的作业 id → 404 `EXPORT_NOT_FOUND`（与"不存在"同一句话） |
+| 未知路径行为 | ✅ **M3-12 修复并实测** | 修复前：未匹配路径落进兜底的 `Exception` handler，报 **500「服务暂时不可用」**（谎报）。修复后（已登录）→ **404 `NOT_FOUND`**。未登录时仍是 401（Security 先拦），符合 §23.1"404 = 资源不存在**或出于安全隐藏**" |
+| MySQL 宿主机端口 | ✅ 已改 **3308** | 本机 3306 被原生 MySQL 占用。`MYSQL_PORT` **只影响宿主机映射**（容器间走服务名 `mysql:3306`），`flyway` / `stock-api` / `stock-job` / `stock-ai-worker` 零改动；实测 `host.docker.internal:3308` 可连、41 张表、其它容器自愈无 500 |
 | CI | 🟢 **已在 GitHub 实际运行** | `.github/workflows/ci.yml`（**4 作业**，含旧库升级路径）；前端作业曾因时区依赖持续失败，已修复（`3fd970c`） |
-| 全栈 Compose 端到端 | ✅ **已通过** | 6 容器全部启动、无 ERROR；`npm run e2e:real` 通过 |
+| 全栈 Compose 端到端 | ✅ **已通过** | 7 容器全部启动、无 ERROR；`npm run e2e:real` 通过 |
 | 容器镜像构建 | ✅ 稳定可重复 | 修复容器内依赖下载中断后，6 镜像连续构建成功 |
 | 数据库迁移在真实库执行 | ✅ 空库 + 旧库升级两条路径均已完成 | 见上 |
 | preflight 脚本 | ✅ 已在真实旧库验证（含负向用例） | 9 段查询可执行；注入违规数据后 3 项 blocking 全部检出 |
@@ -50,7 +53,7 @@
 | --- | --- | --- |
 | M1 | 合流与工程地基 | 🟢 15/16 完成（仅 M1-07 的「GitHub 分支保护」需用户操作） |
 | M2 | 市场域纵向补全（游客主流程全真实） | ✅ **11/11 完成**（M2-01 交易日历与市场状态、M2-02 市场广度、M2-03 成交趋势、M2-04 证券主数据与搜索建议、M2-05 个股快照与日/周/月 K 线、M2-06 榜单、M2-07 板块排行/详情/成分股、M2-08 前端四页接入真实接口、M2-09 全局搜索接真实接口、M2-10 市场状态真实化、M2-11 总览板块预览真实化） |
-| M3 | 用户态闭环与 AI 研究编排 | 🟡 **9/12 完成**（M3-01 自选分组 CRUD、M3-02 自选项 CRUD + 排序 + 行情概览、M3-03 前端 `/watchlist` 接真实 API、M3-04 资讯域（第 7 个模块 `stock-news`）+ 六个接口 + 定时采集落库、M3-05 前端 `/news` 接真实资讯接口、M3-06 AI Provider 抽象（第 8 个模块 `stock-ai`）+ AI-01/AI-02 两个接口、**M3-07 AI 任务编排 + SSE 流式契约（第 9 个模块 `stock-ai-worker`）+ AI-03~AI-08 六个端点**、**M3-08 报告/证据/反馈持久化收口（HIS-01~HIS-09 共 9 个端点全部完成）**、**M3-09 AI 配额与用量统计（`ai_usage` 写入侧 + USER-07 `GET /users/me/ai-quota`）**；**自选闭环、资讯域、AI 上下文预览、AI 任务全链路、AI 历史与报告读回五条链路都已端到端可用，且仓库里不再有 mock 通路**） |
+| M3 | 用户态闭环与 AI 研究编排 | 🟡 **10/12 完成**（M3-01 自选分组 CRUD、M3-02 自选项 CRUD + 排序 + 行情概览、M3-03 前端 `/watchlist` 接真实 API、M3-04 资讯域（第 7 个模块 `stock-news`）+ 六个接口 + 定时采集落库、M3-05 前端 `/news` 接真实资讯接口、M3-06 AI Provider 抽象（第 8 个模块 `stock-ai`）+ AI-01/AI-02 两个接口、**M3-07 AI 任务编排 + SSE 流式契约（第 9 个模块 `stock-ai-worker`）+ AI-03~AI-08 六个端点**、**M3-08 报告/证据/反馈持久化收口（HIS-01~HIS-09 共 9 个端点全部完成）**、**M3-09 AI 配额与用量统计（`ai_usage` 写入侧 + USER-07）**、**M3-12 行情榜单 Excel 导出（第 10 个模块 `stock-export`，EXP-01~04）**；未完成的 M3-10 已接入 `/ai` 与 `/history`（未接 SSE 与取消/重试/追问）、M3-11（后台 admin 最小集）未开工） |
 
 ## 5. 已完成能力盘点
 
@@ -58,9 +61,9 @@
 | --- | --- | --- |
 | 设计文档 | ✅ 100% | PRD 86KB、Architecture 53KB、RESTful-API 79KB + superpowers specs/plans |
 | 数据库迁移 | ✅ 结构 100% / 两条路径均验证 | Flyway V1–V8；旧库样本 149KB（原 24MB） |
-| 前端原型 | ✅ 页面 100% / 真实接入 10/11 | 11 路由全部有页面；`/market`、`/login`、`/rankings`、`/sectors`、`/sectors/:id`、`/stocks/:id`、`/watchlist`、`/news` 接真实 API；**顶栏全局搜索框已接 STK-01、顶栏市场状态与侧栏数据源已接 MKT-02**（两者都是非路由的全局组件）；`/ai`（AI-01~04 + HIS-06/07，走轮询）与 `/history`（HIS-01~05，含改名/收藏/两步删除）已接真实接口；`/admin` 仍是本地演示数据的静态页面（M3-11）；**`services/mockApi.ts` 已随 M3-05 删除**，仓库里不再有 mock 通路 |
-| 后端 | 🟡 8/9 域 | 认证闭环 ✅、市场总览（MKT-01~04）🟡、证券主数据与个股行情（STK-01/02/04/07）🟡、榜单（QTE-01）🟡、板块（SEC-01/02/03/04/06/**07**）🟡、**自选中心（WAT-01~WAT-12）✅ 后端完整**、**资讯域（NEWS-01~04 + STK-10 + SEC-07）✅ 后端完整且落库**、**AI 域（AI-01~AI-08 + HIS-01~HIS-09 + USER-07）✅ 全链路可用**——任务编排、SSE 中继、报告与来源证据落库、调用用量台账都已端到端验证；**V6 的 9 张表全部已有真实数据**（`ai_feedback` 由 M3-08、`ai_usage` 由 M3-09 补上） |
-| 测试 | ✅ 1150 个 | 后端 976（9 个模块）+ 前端 174；无覆盖率门槛 |
+| 前端原型 | ✅ 页面 100% / 真实接入 10/11 | 11 路由全部有页面；`/market`、`/login`、`/rankings`、`/sectors`、`/sectors/:id`、`/stocks/:id`、`/watchlist`、`/news` 接真实 API；**顶栏全局搜索框已接 STK-01、顶栏市场状态与侧栏数据源已接 MKT-02**（两者都是非路由的全局组件）；`/ai`（AI-01~04 + HIS-06/07，走轮询）与 `/history`（HIS-01~05，含改名/收藏/两步删除）已接真实接口；**榜单页的 Excel 导出已由 M3-12 接上**（创建 → 轮询 → 下载，非路由组件）；`/admin` 仍是本地演示数据的静态页面（M3-11）；**`services/mockApi.ts` 已随 M3-05 删除**，仓库里不再有 mock 通路 |
+| 后端 | 🟡 9/10 域 | 认证闭环 ✅、市场总览（MKT-01~04）🟡、证券主数据与个股行情（STK-01/02/04/07）🟡、榜单（QTE-01）🟡、板块（SEC-01/02/03/04/06/**07**）🟡、**自选中心（WAT-01~WAT-12）✅ 后端完整**、**资讯域（NEWS-01~04 + STK-10 + SEC-07）✅ 后端完整且落库**、**AI 域（AI-01~AI-08 + HIS-01~HIS-09 + USER-07）✅ 全链路可用**——任务编排、SSE 中继、报告与来源证据落库、调用用量台账都已端到端验证；**V6 的 9 张表全部已有真实数据**（`ai_feedback` 由 M3-08、`ai_usage` 由 M3-09 补上）；**导出域（EXP-01~04）✅ 后端完整**（作业存 Redis，**未建表**） |
+| 测试 | ✅ 1218 个 | 后端 1025（10 个模块）+ 前端 193；无覆盖率门槛 |
 | 工程化 | 🟢 85% | CI 工作流 ✅、TASKS/STATUS/CHANGELOG ✅、根与模块 README ✅、容器构建稳定 ✅；分支保护待用户配置 |
 
 ## 6. 已知问题（按严重度）
@@ -92,6 +95,11 @@
 | 23 | ~~AI 域 V6 的 9 张表仍为零行零引用~~ | ✅ | **M3-07 关闭 6/9**：`ai_session` / `ai_task` / `ai_task_target` / `ai_context_snapshot` / `ai_message` / `ai_report` 已有真实数据（由 worker 真实执行写入，非夹具）。**M3-08 补 `ai_evidence` / `ai_feedback`、M3-09 补 `ai_usage` → 9/9 全部有真实数据** |
 | 24 | **契约 §13.5 的全局 30 并发上限未实现**（只做了单用户并发上限 2） | 🔵 | 全局上限需要跨实例的计数（Redis 或 DB 聚合），而本轮只验证了单实例形态。单用户闸门已实现并有测试；全局闸门按"不要按模块零散加"的原则随限流一起排期（同 #17） |
 | 25 | **`AiTaskStore.findByRequestId` 传非 ASCII 串会抛 collation 错而不是返回空**（`request_id` 是 `char(36) ascii_bin`） | 🔵 | M3-07 集成测试发现。生产路径上该参数永远是由 `(userId, Idempotency-Key)` 派生的 UUID，因此不可达；只记录，不加防御分支 |
+| 26 | ~~**改了接口但没重新构建容器，新接口以 500「服务暂时不可用」出现**~~ | ✅ | **M3-12 已显著缓解 + 根因记录**。实测：运行中的镜像构建于 09-22 10:00 UTC，而 `CurrentUserController` 的改动时间是 18:27（+08），容器内 `/app/app.jar` 里 `ExportJobController` / `AiQuota` 等条目数为 **0** ⇒ M3-09 与 M3-12 的接口在运行的版本里根本不存在。**为什么这个坑特别贵**：缺失的路径原本落进兜底的 500 分支，报"服务暂时不可用"，把排查引向"服务是不是崩了"。现在返回 **404 `NOT_FOUND`** 且文案直接写"若刚刚新增/修改过接口，请确认服务已重新构建部署"——一句话指到根因。**改完代码后必须 `docker compose build <service> && docker compose up -d`** |
+| 27 | **本机 3306 被原生 MySQL 占用**，Compose 的 MySQL 宿主映射改用 **3308** | 🔵 | `MYSQL_PORT` 只影响宿主机映射（容器间走服务名 `mysql:3306`），所以 `flyway` / `stock-api` / `stock-job` / `stock-ai-worker` **零配置改动**。`.env`（已 gitignore）为 3308，`.env.example` 保留 3306 并注明改法。**同一台机器上第二个项目再起 MySQL 时要再改一次** |
+| 28 | 未登录请求一个**不存在的路径**返回 401 而不是 404 | 🔵 | Spring Security 在过滤器链上先拦。**不是缺陷**：契约 §23.1 的措辞是"404 = 资源不存在（**或出于安全隐藏**）"，且未认证时不泄露"这个路径是否存在"是更好的行为。已记录以免被当成 bug 反复排查 |
+| 29 | **EXP-04（删除导出作业）前端没有调用方** | 🔵 | 后端已实现且有契约测试；下载后的文件由 `stock-job` 在 24h 后回收，当前没有任何界面需要"提前删除"。按"不加没有调用方的代码"处理，前端**不实现**这个 service 函数 |
+| 30 | **契约里尚未排期的端点**：`GET /stock-rankings/options`（QTE-04）、`/market-indices`（MKT-05~07）、`/trade-calendars`（MKT-08） | 🔵 | 三者都不在 `TASKS.md` 的 M2/M3 清单里，前端也未调用。M3-12 逐条核对了前端实际发起的 24 条路径，确认差异只在这三条。**要做得先在任务清单里立项**，否则会以"顺手补一下"的形式变成无验收的增量 |
 
 ### 已定位的环境故障（含根因）
 
@@ -132,9 +140,9 @@
 | 层 | 技术 |
 | --- | --- |
 | 前端 | Vue 3.5 / TypeScript 6 / Vite 8 / Vue Router 5 / Pinia 4 / ECharts 6 / Lucide；Vitest 5 + Vue Test Utils + Playwright |
-| 后端 | Spring Boot 3.5.9 / Java 17 / MyBatis-Plus 3.5.5 / jjwt 0.12.5 / Spring Security / Spring Data Redis / JdbcTemplate；Maven 多模块 **8 个**（`stock-ai` 不依赖 MyBatis，本轮不落库） |
+| 后端 | Spring Boot 3.5.9 / Java 17 / MyBatis-Plus 3.5.5 / jjwt 0.12.5 / Spring Security / Spring Data Redis / JdbcTemplate / Apache POI 5.1.0（导出）；Maven 多模块 **10 个**（`stock-common` / `stock-market` / `stock-news` / `stock-system` / `stock-ai` / **`stock-export`** / `stock-integration` / `stock-backend` / `stock-job` / `stock-ai-worker`） |
 | 数据 | MySQL 8.4（≥8.0.16）/ Redis 8.2 / Flyway V1–V8 |
-| 编排 | Docker Compose：mysql → flyway → stock-api / stock-job → frontend(nginx) |
+| 编排 | Docker Compose：mysql → flyway → stock-api / stock-job / stock-ai-worker → frontend(nginx) |
 
 ```bash
 # 前端
@@ -143,13 +151,16 @@ npm run typecheck && npx vitest --configLoader runner --run
 
 # 后端（测试需 Docker）
 export JAVA_HOME="D:/idea/JDK17"               # 必须用 Windows 路径，见环境故障 1
-mvn.cmd -s backend/settings.xml -f backend/pom.xml test
+mvn -s backend/settings.xml -f backend/pom.xml test
 
-# 全栈（空库路径）
-docker-compose up -d --build                   # 本机需用 docker-compose，非 docker compose
+# 全栈（空库路径）—— 本机 `docker compose` 子命令现已可用（2026-09-23 实测）
+docker compose up -d --build                   # 只改了后端/前端代码时：先 build 对应服务再 up -d
+
+# MySQL 从宿主机连（本机 3306 被占用，映射到 3308，见已知问题 #27）
+mysql -h 127.0.0.1 -P 3308 -ustock -p
 
 # 全栈（旧库升级路径：导入样本 + baseline）
-docker-compose -f compose.yaml -f compose.legacy.yaml -p zhishi-legacy up -d
+docker compose -f compose.yaml -f compose.legacy.yaml -p zhishi-legacy up -d
 docker exec -i zhishi-legacy-mysql-1 mysql -ustock -pstock_dev_password stock_system \
   < sql/checks/post_migration_validation.sql
 ```
@@ -207,6 +218,16 @@ docker exec -i zhishi-legacy-mysql-1 mysql -ustock -pstock_dev_password stock_sy
 AI 接口（M3-06，两个均需认证）：AI-01 `GET /ai/scenes`、AI-02 `POST /ai/context-previews` —— **前端已由 M3-10 消费**（`/ai` 工作台：场景下拉来自 AI-01，预览与数据缺口来自 AI-02）
 配额接口（M3-09，需认证）：USER-07 `GET /users/me/ai-quota` —— **前端已消费**（`/ai` 进页面即读，显示今日剩余与重置时刻）
 调用用量：`ai_usage` 每次真实 Provider 调用一行（成功与失败都记），`estimated_cost` 恒 0（无价格表，不做估算）
+导出（M3-12，需认证，四个端点全部只认本人）：
+  EXP-01 `POST /export-jobs`（202 + `Idempotency-Key`）→ ExportJobService 校验 + 限流（Redis 2/min，计数在幂等回放之后）
+         → 作业存 Redis（`export:job:*` + `export:jobs:purge` 有序集，**不建表**）→ 立即返回，生成在另一线程
+         → 取数走 StockRankingQueryService **同一条榜单路径**（StockRankingDataset 全量，上限 5,000 行）
+         → PoiExportFileWriter 写 xlsx（说明区 + 冻结表头 + autoFilter）→ VolumeExportFileStore 落 `export-files` 卷
+  EXP-02 `GET /export-jobs/{id}` 状态（`QUEUED`/`RUNNING`/`COMPLETED`/`FAILED`/`EXPIRED`）
+  EXP-03 `GET /export-jobs/{id}/download` 二进制 + `Content-Disposition`（`filename` 与 `filename*` 都给）+ `X-Data-Cutoff-At`
+  EXP-04 `DELETE /export-jobs/{id}` 删除
+  到期清理：`stock-job` 的 `ScheduledExportSweeper`（记录 48h / 文件 24h，**记录刻意多活一天**才能区分"过期"与"不存在"）
+  前端：`useRankingExport` 三段式（创建 → 1s 轮询 → 下载），`apiDownload` 是独立于 JSON 的二进制通道（超时 120s）
 ```
 
 **不可动摇的架构约束**：前端不直连任何数据源；AI 由 Spring Boot 编排第三方 LLM（不提前拆 FastAPI）；MySQL 无外键，业务写入靠应用层事务 + 乐观锁 + Outbox。
@@ -241,7 +262,7 @@ AI 接口（M3-06，两个均需认证）：AI-01 `GET /ai/scenes`、AI-02 `POST
 | `GET /news/{id}`、`GET /news/sync-status` | — | 列表页不需要：NEWS-01 已含契约 §4.3 的全部摘要字段，`dataStatus` / `lastSuccessfulSyncAt` 也与 NEWS-03 同源。**详情页未排期**，列表已能完成「看摘要 → 跳原文」 |
 | `GET /securities/{id}/news`、`GET /sectors/{id}/news` | 后续 | 个股页与板块页的资讯段，随这两页的后续工作排期 |
 
-**下一步：M3 已开工（9/12）**，按契约依赖推进：
+**下一步：M3 已开工（10/12）**，按契约依赖推进：
 
 1. ✅ M3-01 自选分组 CRUD → ✅ M3-02 自选项 CRUD + 排序 + 行情概览 → ✅ M3-03 前端 `/watchlist` 接真实 API
    —— **自选闭环已端到端可用**（后端 12 接口 + 前端页，e2e 实测）
@@ -254,9 +275,13 @@ AI 接口（M3-06，两个均需认证）：AI-01 `GET /ai/scenes`、AI-02 `POST
    AI-01 / AI-02 两个接口；e2e 实测 + 受控实验验证 `allow_ai_analysis`；本轮顺带修掉 2 个真实缺陷
    （上下文哈希对数据时间不敏感、区间不合法被报成 `AI_TARGET_INVALID`）
 5. ✅ **M3-07 AI 任务编排 + SSE 流式契约** → ✅ **M3-08 报告/证据/反馈持久化（HIS-01~HIS-09 全部收口）**
-   → ✅ **M3-09 配额与用量统计** → ⏭ M3-10 AI 工作台 + history 续作 → M3-11 后台最小集 → M3-12 热点榜单导出
-5. **STK-05 批量行情接口**（已知问题 #10）—— M2-09 遗留的搜索建议无涨跌幅依赖它；
+   → ✅ **M3-09 配额与用量统计** → ✅ **M3-12 行情榜单 Excel 导出（第 10 个模块 `stock-export`）**
+   → ⏭ **M3-10 续作**（未接：SSE AI-05、取消/重试/追问 AI-06/07/08）→ **M3-11 后台 admin 最小集**
+6. **STK-05 批量行情接口**（已知问题 #10）—— M2-09 遗留的搜索建议无涨跌幅依赖它；
    底层 `SimulatedQuoteSnapshotProvider` 已同时提供单只与整批，实现成本很低
+7. **M3 完成后回归 M2 降级字段**：市盈率、市值、业务描述（STK-08/09）、板块走势（SEC-05）、
+   搜索建议的涨跌幅（STK-05），以及 WAT-11 的 `latestNewsCount` 渲染（后端已有真实值，
+   卡在已知问题 #20 的 `null` 语义未定）
 
 **M3 也是把 M2-08 本轮降级掉的字段逐个填回来的阶段**：市盈率、市值、业务描述、所属板块（STK-08/09）、
 关联资讯（STK-10）、板块走势（SEC-05）、搜索建议的涨跌幅（STK-05），以及 WAT-11 的 `latestNewsCount`（后端已有真实值；前端因已知问题 #20 的 `null` 语义未定而仍未渲染）。

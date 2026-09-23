@@ -23,6 +23,138 @@
 
 ---
 
+## 2026-09-23 — M3-12：行情榜单 Excel 导出（第 10 个模块 `stock-export`，EXP-01~04 端到端可用）
+
+榜单页的「导出 Excel」此前是 `disabled title="Excel 导出待接入（M3-12）"`——按钮在，
+能力不在。本轮把契约 §9.2 的四个端点全部落地（后端 + 前端 + 端到端验收），
+并顺带修掉一个在联调中暴露的对外行为缺陷（未匹配路径**谎报 500**，见下节）。
+
+### 新增
+
+**第 10 个模块 `stock-export`（72 个测试）**
+
+- `domain/ExportType`：`STOCK_RANKING` / `AI_REPORT`。**后者"存在但不可用"**——
+  契约把它列为合法取值，PRD §5.3 把 AI 报告导出推到 V1.1。它留在枚举里并由
+  `supported()` 表达"认得但还不支持"，否则调用方会收到"取值不合法"，
+  把一个**尚未交付**的功能报成**拼错了**。
+- `domain/StockRankingColumn`：14 个列白名单（key / 表头 / 显示格式 / 取值函数**定义在同一常量上**）。
+  涨跌幅与换手率是小数比率，必须按 `PERCENT` 显示——写成 `0.03` 会被读成 0.03%，
+  **差 100 倍且打开文件看不出任何异常**。
+- `domain/ExportRequest` / `RankingExportFilters`：筛选条件与 QTE-01 查询参数逐项对应，
+  但**刻意不带 `page` / `size`**——导出取全量，一个恒为 null 的 page 会让
+  "这份文件到底包含多少行"变得含糊。
+- `domain/ExportPolicy`：契约数字（5,000 行上限 / 文件 24h / **记录 48h** / 2 次每分钟限流）
+  各只有一处定义。记录刻意比文件多活一天：两者相同的话，
+  "文件已过期"与"这个作业从不存在"在数据上就无法区分，而契约要求前者返回
+  `EXPORT_EXPIRED`、后者返回 404。
+- `application/ExportJobService`：创建（幂等 + 限流）→ 查询 → 下载 → 删除。
+  归属校验在用例层：**别人的作业与不存在的作业返回同一句话**（`EXPORT_NOT_FOUND`），
+  不因为多写一次判断而泄露"这个 id 存在"。
+- `infrastructure/RedisExportJobStore`：作业存 Redis（`export:job:*` + `export:jobs:purge` 有序集），
+  **没有新建数据库表**——导出按契约不是永久业务事实。
+- `infrastructure/VolumeExportFileStore` / `PoiExportFileWriter`：POI 5.1 写 xlsx。
+  文件名做路径穿越校验；工作表名清掉 Excel 非法字符；表头行冻结 + `autoFilter` 覆盖数据区。
+- `infrastructure/RedisExportRateLimiter`：2 次/分钟（契约 §22.1），
+  计数在**幂等回放之后**——重放同一次受理不消耗第二次额度。
+- `application/ExportRetentionSweeper` + `job/ScheduledExportSweeper`：到期清理，
+  挂在 `stock-job` 上；`api` 与 `job` **必须挂同一个卷**（写了要能读、要能删）。
+
+**Web 层（`stock-backend`）**
+
+- `web/ExportJobController`：EXP-01 创建（**202 而非 200**——文件此刻不存在，
+  作业只是已受理）、EXP-02 状态、EXP-03 下载（`Content-Disposition` 同时给
+  `filename` 与 `filename*`、`X-Data-Cutoff-At`）、EXP-04 删除。
+- `web/ExportAuditRecorder`：三次写操作（创建 / 下载 / 删除）各记一条审计，
+  参数摘要走**字段白名单**而不是整段请求体（契约 §22.2）。
+- `web/ExportJobRequest`：`exportType` 的解析**放在 Web 层**——只有这一层能同时看到
+  "没传字段"与"传了白名单外的值"，而这两句话对用户完全不同（少填了 / 填错了）。
+
+**前端**
+
+- `services/apiClient.ts` 新增 `apiDownload()`：二进制通道，与 JSON 通道**分开**。
+  失败响应仍是 JSON 壳（404 / 409 / 429），所以两条分支各自解析。
+  文件名优先取 `filename*`——实测服务端两个都给，而那个不带星号的
+  `filename` 是 MIME 编码字（`=?UTF-8?Q?...?=`），取它会下载到一个"问号套问号"的文件名；
+  解不出来时返回 `null` 交给调用方兜底，**不返回半解析的垃圾串**。
+  下载超时单独设为 120s（不复用 JSON 的 10s）：把"正在下载一个正常的大文件"报成超时，
+  用户只会重试、重试又超时，是个自制的死循环。
+- `services/exportApi.ts`：EXP-01~03 三个调用。`Idempotency-Key` **由调用方传入**——
+  在 service 里生成的话，`apiClient` 401 自动重发会带**新的键**，
+  一次点击变成两个作业、扣两次限流。
+- `composables/useRankingExport.ts`：创建 → 轮询 → 下载 的状态机，
+  四态文案（排队中 / 生成中 N% / 正在下载 / 导出 Excel）分别对应四句不同的话；
+  `FAILED` 与 `EXPIRED` 的兜底文案**不同**（前者"重试"，后者"重新导出"）。
+- `utils/download.ts`：object URL 触发保存，`revoke` 放到下一轮宏任务
+  （立即 revoke 会让部分浏览器来不及读取，表现是**点击毫无反应**）。
+- `pages/RankingsPage.vue`：按钮接上，导出**只带筛选条件、不带页码与每页条数**，
+  并显示失败原因与追踪编号。
+
+### 修复
+
+- **请求一个不存在的接口路径会返回 500「服务暂时不可用」，而不是 404。**
+  Spring 在没有匹配控制器时把请求交给静态资源处理器，找不到文件就抛
+  `NoResourceFoundException`，它落进兜底的 `@ExceptionHandler(Exception.class)`
+  被归成"未处理的接口异常"。这是个**谎报**：服务好得很，是路径写错了，
+  而"服务暂时不可用"会让调用方去重试一个永远不可能成功的请求。
+  现补 `GlobalExceptionHandler.endpointNotFound`：404 `NOT_FOUND`，
+  记 **WARN 且不打堆栈**（路径打错、老前端残留、扫描器探测都是客户端日常事件，
+  按 ERROR 打整条堆栈会把真正的 500 淹在噪声里）。
+  > 未登录时未知路径仍是 **401**（Spring Security 在过滤器链上先拦），
+  > 这不违反 §23.1："404 = 资源不存在（**或出于安全隐藏**）"，
+  > 且未认证时不泄露"这个路径是否存在"是更好的行为。
+- `HistoryPage.vue` 的「批量导出」提示语随本轮更新：它指导出**分析报告**
+  （`exportType=AI_REPORT`，属 V1.1），而 M3-12 交付的是榜单导出。
+  原文案"导出能力归属 M3-12"现在是错的。
+
+### 变更
+
+- `stock-market`：`StockRankingQueryService` 补全量取数口径（`StockRankingDataset`），
+  榜单查询与导出**共用同一条取数路径**——各写一份排序/筛选就会分叉，
+  而分叉的表现是"页面上第 1 名与文件里第 1 名不是同一只"，两边各自看都正常。
+- `compose.yaml`：新增 `export-files` 卷与 `STOCK_EXPORT_DIRECTORY`（api 与 job 同值同卷）。
+
+### 工程
+
+- **MySQL 容器的宿主机端口改为 3308**（`.env` 的 `MYSQL_PORT`，本机 3306 已被原生 MySQL 占用）。
+  该变量**只影响宿主机映射**：容器间通信走服务名 `mysql:3306`，
+  因此 `flyway` / `stock-api` / `stock-job` / `stock-ai-worker` **零改动**。
+  `.env.example` 保留 3306 并注明改法。
+- 排查「前端不响应后端 / 浏览器请求后端报错」的结论：**容器里的 jar 比工作区代码旧**。
+  运行中镜像构建于 09-22 10:00 UTC，而 `CurrentUserController` 的改动时间是 18:27（+08），
+  容器内 `/app/app.jar` 里 `ExportJobController` / `AiQuota` 等条目数为 0 ⇒ M3-09 与 M3-12 的
+  接口在运行的版本里**不存在**。重新构建后全部恢复。
+  > 这正是上面那个 404 修复的价值：新接口缺失时会报"这个路径在运行的版本里不存在"，
+  > 而不是让人去查"服务是不是崩了"。
+
+### 验证
+
+- 后端 **1,025 个测试通过**（10 个模块，0 失败 0 错误；`stock-export` 72 个，`stock-backend` 226 个）。
+  其中本轮新增：`StockRankingColumnTest` 12、`ExportJobServiceTest` 22、
+  `ExportRetentionSweeperTest` 6、`VolumeExportFileStoreTest` 11、`RedisExportRateLimiterTest` 6、
+  `PoiExportFileWriterTest` 15、`ExportJobControllerContractTest` 20、`UnknownEndpointHandlingTest` 1。
+- 前端 **193 个测试通过**（23 个文件）；`npm run typecheck` 0 错误。本轮新增 19 个
+  （`exportApi` 4、`useRankingExport` 8、`apiClient` 下载 4、`RankingsPage` 3）。
+- **端到端（经 nginx `:8088`，与浏览器完全同路径）**：登录 → EXP-01 返回 **202** →
+  **同 `Idempotency-Key` 重发回放同一个 `exportId`** → EXP-02 `COMPLETED`（成交额榜 + 沪市筛选，
+  2,574 行）→ EXP-03 下载 **200,634 字节**的 xlsx。解包核对：说明区含
+  "数据截止时间：2026-09-23 15:00:00+08:00 / 榜单类型：成交额榜 / 交易所：SZ /
+  ST 证券：包含 / 停牌证券：已排除 / 数据行数：2574 行（单次导出上限 5000 行）"，
+  13 列表头齐全，`pane ySplit="13"` 冻结、`autoFilter A13:M2587` 覆盖全部数据行。
+  查别人的作业 id 返回 404 `EXPORT_NOT_FOUND`（与"不存在"同一句话，不泄露存在性）。
+- 未匹配路径（已登录）实测返回 **404 `NOT_FOUND`**，文案指向"确认请求路径 / 服务是否重新构建"。
+
+### 未覆盖
+
+- **EXP-04（删除）后端已实现并有契约测试，前端没有调用方**。
+  下载后文件由 `stock-job` 的清理任务在 24h 后回收，当前没有任何界面需要"提前删除"，
+  所以前端**不实现**这个 service 函数——没有调用方的代码是死代码。
+- **`exportType=AI_REPORT` 的导出未实现**（V1.1）。服务端认得这个取值并在受理前拒绝；
+  `/history` 的「批量导出」按钮保持禁用。
+- 浏览器级验收走的是 HTTP 接口层 + 解析真实 xlsx 字节，
+  **没有**在真实浏览器里点按钮触发文件保存。
+
+---
+
 ## 2026-09-22 — M3-09：AI 配额与用量统计（`ai_usage` 写入侧 + USER-07）
 
 `ai_usage` 与 `ai_evidence` 是同一个病：V6 起表结构就绪（21 列、4 条 CHECK），

@@ -112,7 +112,11 @@
   > 未接入：SSE（AI-05）、取消/重试/追问（AI-06/07/08）、板块与多标的对比场景的标的检索。
   > 遗留：浏览器级验收尚未覆盖 /history 的三个写操作与 /ai 的真实提交流程。
 - [ ] **M3-11** P1 后台 admin 最小集 — 依赖：M3-09
-- [ ] **M3-12** P1 热点榜单 Excel 导出 — 依赖：M2-06
+- [x] **M3-12** P1 热点榜单 Excel 导出 — 依赖：M2-06 — 已完成，见下方详情
+  > 第 10 个模块 `stock-export`；契约 §9.2 EXP-01~04 四个端点全部落地，
+  > 前端榜单页按钮接上（创建 → 轮询 → 下载）。
+  > 口径：**导出取全量榜单（上限 5,000 行），不带分页参数**；
+  > 作业记录存 Redis（**不建表**），文件落 `export-files` 卷，24h 过期由 `stock-job` 清理。
 
 ## M3 之外：真实 LLM Provider 接入
 
@@ -537,7 +541,7 @@ QTE-01 的 `sectorId` 筛选还要再来一遍。代价是返回值体积大，�
 | 板块 AI 解读（PRD SEC-04） | 依赖 AI 编排（M3-06 / M3-07） |
 | 板块与成分关系落库 | 与 M2-01~M2-06 一致：模拟 Provider 内存生成，`stock_sector` / `stock_security_sector` 继续空置 |
 | 前端 `/sectors`、`/sectors/:id` 接入 | M2-08（本轮只补契约类型） |
-| 板块 Excel 导出 | M3-12 |
+| 板块 Excel 导出 | **契约里没有这种导出类型**：EXP-01 的 `exportType` 只有 `STOCK_RANKING` 与 `AI_REPORT`。M3-12 交付的是榜单导出；板块导出若要做，需先在契约里加上取值 |
 
 ---
 
@@ -549,7 +553,7 @@ QTE-01 的 `sectorId` 筛选还要再来一遍。代价是返回值体积大，�
 | 调用 | `/rankings` → `GET /stock-rankings`；`/sectors` → `GET /sector-rankings?size=100`；`/sectors/:id` → `GET /sectors/{id}` + `/sectors/{id}/constituents?size=100`；`/stocks/:id` → `GET /securities/{id}/quote` + `/securities/{id}/klines?period=` |
 | 新增 | `services/rankingApi.ts`、`services/sectorApi.ts`、`services/securityApi.ts`；`composables/useRemoteData.ts`（一次请求的三态 + 过期响应守卫）；`apiClient.toQueryString`（丢弃空值但保留 `false` / `0`） |
 | 修改 | 四个页面；`format.ts` 的 `formatDateTime` 接受 `null` 并识别非法时间；`domain.ts` 删除 `StockDetail` / `MockKlinePoint`、`MockSectorQuote` 改名 `OverviewSectorQuote`；`mockApi.ts` 删除 `getStockDetail` 与 `stockDetail` 常量 |
-| 榜单页 | 三档口径（涨幅/跌幅/成交额）驱动 `rankingType`、交易所单选驱动 `exchangeCodes`、真实分页（`page` / `totalPages` / `hasNext`）；**移除契约不存在的"换手率榜"**与**客户端关键字过滤**；导出按钮置 `disabled`（M3-12） |
+| 榜单页 | 三档口径（涨幅/跌幅/成交额）驱动 `rankingType`、交易所单选驱动 `exchangeCodes`、真实分页（`page` / `totalPages` / `hasNext`）；**移除契约不存在的"换手率榜"**与**客户端关键字过滤**；导出按钮由 M3-12 接上（创建 → 轮询 → 下载） |
 | 板块列表页 | 卡片字段全部来自 `SectorQuote`；原型里写死的"金融领涨，科技成交活跃"改为**数据驱动的客观摘要**（涨幅第一 + 成交额第一 + 上涨板块计数），并移除死的"生成板块综述"按钮 |
 | 板块详情页 | 头部取 `sector` / `parent` / `quote`；**移除假分时曲线**（SEC-05 未实现）；强度拆解只用真实成分股重算涨跌家数（停牌单列）并写明分母；成分股表格用服务端的 `contributionRank` 而非页内序号 |
 | 个股详情页 | 头部与指标条全部来自 `QuoteSnapshot`；K 线周期切换（日/周/月）真实重新请求；**移除市盈率**；公司资料 / 所属板块 / 关联资讯 / AI 速览改为"尚未实现"说明 |
@@ -614,7 +618,7 @@ QTE-01 没有 `keyword` 参数，在当前页做客户端过滤会让排名号�
 | 全局搜索接真实接口 | M2-09 |
 | 个股资料（STK-08）、所属板块（STK-09）、关联资讯（STK-10） | 后端未实现，本轮显示"尚未实现" |
 | 板块走势（SEC-05）、板块 AI 解读 | 后端未实现 / 依赖 M3-06、M3-07 |
-| 榜单 Excel 导出 | M3-12 |
+| 榜单 Excel 导出 | ✅ M3-12 已交付（EXP-01~04 + 前端按钮） |
 
 ---
 
@@ -1749,3 +1753,99 @@ Redis Stream 队列（`stream:ai:tasks`，消费组 `ai-worker`）与事件流
 - 前端：`AiWorkspacePage.test.ts` 12 → **14**（进页面即读到配额并显示重置时刻、
   读不到时如实说明而不编一个数）；`vitest` 全量 174 项、`vue-tsc` 0 错误。
 
+
+
+---
+
+## M3-12 交付详情
+
+**交付范围**：契约 §9.2 的 EXP-01~EXP-04 四个端点 + 前端榜单页的导出按钮。
+按钮此前是 `disabled title="Excel 导出待接入（M3-12）"`——**按钮在、能力不在**。
+
+| 项 | 内容 |
+| --- | --- |
+| 模块 | `stock-export`（第 10 个模块，domain / application / infrastructure 三层） |
+| 端点 | EXP-01 创建（202）· EXP-02 状态 · EXP-03 下载（二进制 + `Content-Disposition` + `X-Data-Cutoff-At`）· EXP-04 删除 |
+| 作业存储 | `RedisExportJobStore`——**不为导出建表**（契约明说导出不是永久业务事实） |
+| 文件存储 | `VolumeExportFileStore` 落 `export-files` 卷；`api` 写与下载、`job` 到期清理**必须同卷同目录** |
+| 写文件 | `PoiExportFileWriter`（POI 5.1）：说明区 + 冻结表头 + `autoFilter` 覆盖数据区 |
+| 限流 | `RedisExportRateLimiter` 2 次/分钟（契约 §22.1），计数在**幂等回放之后** |
+| 清理 | `ExportRetentionSweeper`（应用层）+ `ScheduledExportSweeper`（挂在 `stock-job`） |
+| 审计 | `ExportAuditRecorder`：创建 / 下载 / 删除各一条，参数摘要走**字段白名单**（契约 §22.2） |
+| 前端 | `apiClient.apiDownload` · `exportApi` · `composables/useRankingExport` · `utils/download` · `RankingsPage.vue` |
+| 测试 | 后端 +93（`stock-export` 72 + `ExportJobControllerContractTest` 20 + `UnknownEndpointHandlingTest` 1）；前端 +19 |
+
+### 关键设计取舍
+
+1. **创建返回 202 而不是 200。** 文件此刻并不存在，作业只是**已受理**，生成在另一个线程上跑。
+   用 200 会让调用方以为"创建完就能下载"，而它拿到的只是一个排队中的作业。
+   前端因此必须是"创建 → 轮询 → 下载"三段式，任何"点一下就当拿到文件"的实现都会失效。
+2. **作业记录（48h）刻意比文件（24h）多活一天。** 两者相同时，
+   "文件已过期"与"这个作业从不存在"在数据上无法区分，而契约要求前者返回
+   `EXPORT_EXPIRED`、后者返回 404。
+3. **导出不带 `page` / `size`。** 契约的上限是 5,000 行、取全市场。
+   把当前页的 `page` / `size` 传过去，用户会以为导出的是整份榜单，
+   而文件里只有那 20 行——**这个错在文件打开前看不出来**。
+4. **`columns` 不传，由服务端套用默认列集。** 前端抄一份列清单，
+   就意味着服务端加一列时导出文件里不会有它，而两边各自看都正常。
+5. **`Idempotency-Key` 由页面生成并持有，不在 service 里 `randomUUID()`。**
+   `apiClient` 遇到 401 会刷新令牌并**重发**同一请求；在 service 里生成键的话，
+   那一次自动重发在服务端就是**第二次导出**——用户点一次，得到两个作业、扣两次限流。
+   键的生命周期 = 一次 `run`。
+6. **前端取 `filename*`，不取 `filename`。** 实测服务端（Spring `ContentDisposition`）
+   在文件名含非 ASCII 时会把两个都给，而不带星号的那个是 MIME 编码字
+   （`=?UTF-8?Q?...?=`）。取它会下载到一个"问号套问号"的文件名；
+   解不出来时返回 `null` 让调用方兜底，**不返回半解析的垃圾串**。
+7. **下载超时 120s，与 JSON 请求的 10s 分开。** 复用 10s 会把"正在下载一个正常的大文件"
+   报成"请求超时"，用户只会重试、重试又超时。
+8. **涨跌幅 / 换手率按 `PERCENT` 写。** 它们是小数比率，写成 `0.03` 会被读成 0.03%——
+   **差 100 倍，且打开文件看不出任何异常**。
+9. **归属校验在用例层，别人的作业与不存在的作业返回同一句话**（`EXPORT_NOT_FOUND`），
+   不因为多写一次判断而泄露"这个 id 存在"（契约 §23.1）。
+10. **`AI_REPORT` 留在枚举里但 `supported()=false`。** 契约把它列为合法取值，
+    而 PRD §5.3 推到 V1.1。直接返回空会让调用方收到"取值不合法"，
+    把一个**尚未交付**的功能报成**拼错了**——两种情况的处置完全不同。
+11. **未匹配路径单独接住，返回 404 而不是落进兜底的 500。** 见下节。
+
+### 顺带修复：未匹配路径谎报 500
+
+Spring 在没有匹配控制器时把请求交给静态资源处理器，找不到文件就抛
+`NoResourceFoundException`，它落进 `@ExceptionHandler(Exception.class)`
+被归成"未处理的接口异常"，对外报 **500 `INTERNAL_ERROR`「服务暂时不可用」**。
+
+这是个**谎报**：服务好得很，是路径写错了。代价很具体——本地联调时容器里的 jar
+比工作区代码旧（改了接口没重新构建），新接口就会以 500 出现，
+把人引向"服务是不是崩了、要不要重启"，而真正要看的只有一句
+"这个路径在运行的版本里不存在"。
+
+现补 `GlobalExceptionHandler.endpointNotFound`：404 `NOT_FOUND`，
+记 **WARN 且不打堆栈**（路径打错、老前端残留、扫描器探测都是客户端日常事件，
+按 ERROR 打整条堆栈会把真正的 500 淹在噪声里）。`UnknownEndpointHandlingTest` 钉住这条行为。
+
+> 未登录时未知路径仍是 **401**：Spring Security 在过滤器链上先拦。
+> 这不违反 §23.1——"404 = 资源不存在（**或出于安全隐藏**）"，
+> 且未认证时不泄露"这个路径是否存在"是更好的行为。
+
+### 不在此轮范围
+
+- **EXP-04（删除）前端无调用方**：后端已实现并有契约测试，
+  但下载后文件由 `stock-job` 在 24h 后回收，当前没有界面需要"提前删除"。
+  前端**不实现**这个 service 函数——没有调用方的代码是死代码。
+- **`exportType=AI_REPORT` 的导出**属 V1.1；`/history` 的「批量导出」保持禁用，
+  文案随之更正（原文案"导出能力归属 M3-12"在本轮之后是错的）。
+- `GET /stock-rankings/options`（QTE-04）、`/market-indices`（MKT-05~07）、
+  `/trade-calendars`（MKT-08）仍未实现——**不在 M2/M3 任务清单里，前端也未调用**，
+  属契约里尚未排期的项。
+
+### 验证结果
+
+- **端到端（经 nginx `:8088`，与浏览器完全同路径）**：登录 → EXP-01 返回 **202** →
+  **同 `Idempotency-Key` 重发回放同一个 `exportId`**（`7332365375356932`）→
+  EXP-02 `COMPLETED`（成交额榜 + 沪市筛选，**2,574 行**）→ EXP-03 下载 **200,634 字节**的 xlsx。
+  解包核对：说明区含「数据截止时间：2026-09-23 15:00:00+08:00 / 榜单类型：成交额榜 /
+  交易所：SZ / 板块：全部 / ST 证券：包含 / 停牌证券：已排除 / 数据行数：2574 行
+  （单次导出上限 5000 行）」；13 列表头齐全；`pane ySplit="13"` 冻结、
+  `autoFilter A13:M2587` 恰好覆盖 2,574 个数据行。
+- 查别人的作业 id 返回 404 `EXPORT_NOT_FOUND`，与"不存在"同一句话。
+- 未匹配路径（已登录）返回 **404 `NOT_FOUND`**，文案指向"确认请求路径 / 服务是否重新构建"。
+- 前端 `npm run typecheck` 0 错误；`vitest` **23 文件 / 193 项全绿**。
