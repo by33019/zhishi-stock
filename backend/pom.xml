@@ -23,6 +23,7 @@
     <module>stock-market</module>
     <module>stock-news</module>
     <module>stock-ai</module>
+    <module>stock-export</module>
     <module>stock-integration</module>
     <module>stock-backend</module>
     <module>stock-job</module>
@@ -33,6 +34,7 @@
     <java.version>17</java.version>
     <mybatis-plus.version>3.5.5</mybatis-plus.version>
     <jjwt.version>0.12.5</jjwt.version>
+    <poi.version>5.1.0</poi.version>
   </properties>
 
   <dependencyManagement>
@@ -56,6 +58,18 @@
         <groupId>io.jsonwebtoken</groupId>
         <artifactId>jjwt-jackson</artifactId>
         <version>${jjwt.version}</version>
+      </dependency>
+      <!--
+        导出写出用 Apache POI 直接写，**不经 EasyExcel**。
+        导出的文件形状是「标题 / 口径说明 / 表头 / 数据 / 免责声明」五段式，
+        EasyExcel 的动态表头只覆盖中间两段，用它还得反过来操作底层 POI 的 Sheet；
+        而导出上限 5,000 行，EasyExcel 的流式写出优势在这里用不上。
+        直接依赖 POI 也让依赖集更小（EasyExcel 自己还额外带两个 jar）。
+      -->
+      <dependency>
+        <groupId>org.apache.poi</groupId>
+        <artifactId>poi-ooxml</artifactId>
+        <version>${poi.version}</version>
       </dependency>
     </dependencies>
   </dependencyManagement>

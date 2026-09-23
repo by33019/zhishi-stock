@@ -3,6 +3,7 @@ import { Download, Sparkles } from '@lucide/vue'
 import { computed, onMounted, ref, watch } from 'vue'
 
 import PageHeader from '@/components/PageHeader.vue'
+import { useRankingExport } from '@/composables/useRankingExport'
 import { useRemoteData } from '@/composables/useRemoteData'
 import { getStockRankings } from '@/services/rankingApi'
 import type { RankingType } from '@/types/domain'
@@ -85,6 +86,53 @@ function rankOf(index: number): string {
   if (!current) return '--'
   return String((current.page - 1) * current.size + index + 1).padStart(2, '0')
 }
+
+// ---------------------------------------------------------------------------
+// Excel 导出（契约 §9.2 EXP-01~EXP-03）
+// ---------------------------------------------------------------------------
+
+const {
+  phase: exportPhase,
+  progress: exportProgress,
+  failure: exportFailure,
+  busy: exportBusy,
+  run: runExport,
+} = useRankingExport()
+
+/**
+ * 导出按钮的文案。
+ *
+ * 四个阶段各给一句话，而不是笼统的"处理中"：用户对"排队中"和"正在下载"的耐心完全不同，
+ * 而一个不变的转圈图标在两种情况下都像是在卡住。
+ */
+const exportLabel = computed(() => {
+  switch (exportPhase.value) {
+    case 'QUEUED':
+      return '排队中…'
+    case 'RUNNING':
+      return `生成中 ${exportProgress.value}%`
+    case 'DOWNLOADING':
+      return '正在下载…'
+    default:
+      return '导出 Excel'
+  }
+})
+
+/**
+ * 发起导出。
+ *
+ * **只带筛选条件，不带页码和每页条数**：导出取的是全市场榜单（契约 §9.2 上限 5,000 行），
+ * 把当前页的 `page` / `size` 一起传过去，用户会以为导出的是整份榜单，
+ * 而文件里只有当前页那 20 行——这种错在文件打开前看不出来。
+ *
+ * `columns` 同理不传：由服务端套用默认列集。
+ */
+function exportRanking() {
+  runExport({
+    rankingType: rankingType.value,
+    exchangeCodes: exchange.value || undefined,
+  })
+}
 </script>
 
 <template>
@@ -102,10 +150,15 @@ function rankOf(index: number): string {
       description="用涨跌与成交额交叉识别活跃标的；榜单由服务端按全市场排序后分页返回。"
       :data-time="snapshot.dataTime ? formatDateTime(snapshot.dataTime) : ''"
     >
-      <button class="secondary-button" type="button" disabled title="Excel 导出待接入（M3-12）">
-        <Download :size="15" /> 导出 Excel
+      <button class="secondary-button" type="button" :disabled="exportBusy" @click="exportRanking">
+        <Download :size="15" /> {{ exportLabel }}
       </button>
     </PageHeader>
+
+    <p v-if="exportFailure" class="component-unavailable" role="alert" data-testid="ranking-export-error">
+      导出失败：{{ exportFailure.message }}
+      <small v-if="exportFailure.traceId">追踪编号：{{ exportFailure.traceId }}</small>
+    </p>
 
     <section class="ranking-summary">
       <div>

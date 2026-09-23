@@ -84,3 +84,16 @@ stock:
   seed:
     demo-username: ${DEMO_USERNAME:demo}
     demo-password: ${DEMO_PASSWORD:Stock@123}
+  # ---- M3-12 导出（EXP-01~EXP-04）----
+  export:
+    # 导出文件存放目录。**必须与 stock-job 指向同一个卷**（见 compose.yaml 的 export-files）：
+    # 文件由本进程写出与下载，到期由 stock-job 删除；两边看到不同目录时，
+    # 清理会把作业记录删掉而文件永远留在本进程的卷上，且不会有任何报错。
+    # 默认值 ./data/exports 与镜像的 WORKDIR /app 拼出 /app/data/exports，正是卷的挂载点。
+    directory: ${STOCK_EXPORT_DIRECTORY:./data/exports}
+    # 生成线程池。刻意用**有界队列 + 直接拒绝**：队列满时报 EXPORT_BUSY(503)，
+    # 而不是让任务在无界队列里静默堆积（内存涨、用户等到超时）。
+    threads: ${STOCK_EXPORT_THREADS:4}
+    queue-capacity: ${STOCK_EXPORT_QUEUE_CAPACITY:64}
+    # 保留期与限流次数不在这里配置：它们是与 24 小时文件保留期配套的契约数字，
+    # 定义在 ExportPolicy 一处（记录必须长于文件，否则"文件过期"与"id 不存在"就分不开）。

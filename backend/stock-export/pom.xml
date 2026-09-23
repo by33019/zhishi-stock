@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent><groupId>cn.zhishi.stock</groupId><artifactId>stock-parent</artifactId><version>0.1.0-SNAPSHOT</version></parent>
+  <artifactId>stock-export</artifactId>
+  <dependencies>
+    <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-common</artifactId><version>${project.version}</version></dependency>
+    <!--
+      榜单导出必须复用 StockRankingQueryService 的筛选与排序口径，不能自己再排一遍：
+      "页面第一名、文件里第三名"这种偏差两边各自看都正常，不会有任何测试变红。
+    -->
+    <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-market</artifactId><version>${project.version}</version></dependency>
+    <!-- 作业状态与限流计数器放 Redis（契约 §9.2 明写"可保存在 Redis"） -->
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-redis</artifactId></dependency>
+    <!-- 导出审计写 sys_log（契约 §9.2 末段 + §22.3） -->
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-jdbc</artifactId></dependency>
+    <!-- 作业记录以 JSON 存 Redis：用 Spring 已有的 ObjectMapper，不引第二个 JSON 库 -->
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-json</artifactId></dependency>
+    <!-- xlsx 写出（依赖版本在父 pom 的 dependencyManagement 里给定） -->
+    <dependency><groupId>org.apache.poi</groupId><artifactId>poi-ooxml</artifactId></dependency>
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
+  </dependencies>
+</project>

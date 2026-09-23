@@ -28,6 +28,11 @@ import java.util.Set;
  *   <li>{@code rankingType} 被静默忽略时，调用方拿到的是"榜单类型不对但看起来正常"的响应，
  *       极难排查。因此白名单外的取值直接报错，不回落默认榜单。</li>
  * </ul>
+ *
+ * <h2>两个入口，一份口径</h2>
+ * {@link #rank}（页面分页）与 {@link #dataset}（导出的全量取数）都走 {@link #resolve}。
+ * 导出若自己再排一遍，就会出现"页面第一名、文件里第三名"这类只在同值时暴露的偏差，
+ * 而两边各自看都正常、也不会有任何测试变红。
  */
 public class StockRankingQueryService {
 
@@ -38,11 +43,22 @@ public class StockRankingQueryService {
   private static final int DEFAULT_PAGE_SIZE = 20;
   private static final int MAX_PAGE_SIZE = 100;
 
-  /** 停牌证券默认排除（PRD §7.3 QTE-02「停牌和无有效价格默认排除」）。 */
-  private static final boolean DEFAULT_EXCLUDE_SUSPENDED = true;
+  /**
+   * 停牌证券默认排除（PRD §7.3 QTE-02「停牌和无有效价格默认排除」）。
+   *
+   * <p>刻意 {@code public}：导出文件的口径说明要写出**生效的**取值
+   * （"已排除停牌"而不是"未指定"）。导出侧另抄一份默认值的话，
+   * 改一处就会让文件上的口径与实际筛选不一致，且两边各自看都正常。
+   * 取值只有这一处定义。
+   */
+  public static final boolean DEFAULT_EXCLUDE_SUSPENDED = true;
 
-  /** ST 证券默认**不**排除：PRD 未给出默认值，而"是否回避 ST"是投资者的主动选择。 */
-  private static final boolean DEFAULT_EXCLUDE_ST = false;
+  /**
+   * ST 证券默认**不**排除：PRD 未给出默认值，而"是否回避 ST"是投资者的主动选择。
+   *
+   * <p>{@code public} 的理由同 {@link #DEFAULT_EXCLUDE_SUSPENDED}。
+   */
+  public static final boolean DEFAULT_EXCLUDE_ST = false;
 
   private final QuoteSnapshotBatchProvider batchProvider;
   private final SectorProvider sectorProvider;
@@ -55,6 +71,50 @@ public class StockRankingQueryService {
 
   /** 返回榜单的一页。 */
   public StockRanking rank(RankingCriteria criteria) {
+    Resolved resolved = resolve(criteria);
+    PageData<QuoteSnapshot> sliced =
+        PageData.slice(resolved.ranked(), resolved.page(), resolved.size());
+    return new StockRanking(
+        sliced.items(),
+        sliced.page(),
+        sliced.size(),
+        sliced.total(),
+        sliced.totalPages(),
+        sliced.hasNext(),
+        resolved.type().code(),
+        resolved.batch().version(),
+        resolved.batch().dataTime(),
+        resolved.batch().dataStatus());
+  }
+
+  /**
+   * 返回榜单的**全量**结果，供导出取数用（EXP-01 的 {@code STOCK_RANKING}）。
+   *
+   * <p>与 {@link #rank} 共用同一段 {@link #resolve}：筛选条件、排序口径、板块成分
+   * 与整批快照版本都**只有一份实现**。导出侧因此不可能排出与页面不同的顺序，
+   * 也不需要自己重新解析一遍 {@code rankingType}。
+   *
+   * <p>刻意不接受 {@code page} / {@code size}：导出没有分页，行数上限（5,000）
+   * 由调用方在拿到结果后判定，而不是在这里截断——静默截断会让用户以为"导全了"。
+   */
+  public StockRankingDataset dataset(RankingCriteria criteria) {
+    Resolved resolved = resolve(criteria);
+    return new StockRankingDataset(
+        resolved.ranked(),
+        resolved.type().code(),
+        resolved.batch().version(),
+        resolved.batch().dataTime(),
+        resolved.batch().dataStatus());
+  }
+
+  /**
+   * 筛选 + 排序的**唯一实现**，{@code rank} 与 {@code dataset} 都走它。
+   *
+   * <p>{@code page} / {@code size} 只在这里做校验（导出不传，于是走默认值），
+   * 但**不参与**取数：切片留在各自的入口里，这样"导出取全量"就不是靠
+   * "传一个足够大的 size" 实现的——那种做法在行数增长后会静默丢行。
+   */
+  private Resolved resolve(RankingCriteria criteria) {
     RankingCriteria effective = criteria == null ? RankingCriteria.empty() : criteria;
     RankingType type = resolveType(effective.rankingType());
     int page = validatePage(effective.page());
@@ -85,18 +145,12 @@ public class StockRankingQueryService {
         .sorted(type.order())
         .toList();
 
-    PageData<QuoteSnapshot> sliced = PageData.slice(ranked, page, size);
-    return new StockRanking(
-        sliced.items(),
-        sliced.page(),
-        sliced.size(),
-        sliced.total(),
-        sliced.totalPages(),
-        sliced.hasNext(),
-        type.code(),
-        batch.version(),
-        batch.dataTime(),
-        batch.dataStatus());
+    return new Resolved(ranked, type, batch, page, size);
+  }
+
+  /** {@link #resolve} 的产物：已排序的全量行 + 批次属性 + 已校验的分页参数。 */
+  private record Resolved(
+      List<QuoteSnapshot> ranked, RankingType type, QuoteBatch batch, int page, int size) {
   }
 
   // ---------- 筛选 ----------

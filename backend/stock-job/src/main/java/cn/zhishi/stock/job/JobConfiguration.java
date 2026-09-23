@@ -1,5 +1,12 @@
 package cn.zhishi.stock.job;
 
+import cn.zhishi.stock.export.application.ExportRetentionSweeper;
+import cn.zhishi.stock.export.domain.ExportFileStore;
+import cn.zhishi.stock.export.domain.ExportJobStore;
+import cn.zhishi.stock.export.domain.ExportPolicy;
+import cn.zhishi.stock.export.infrastructure.ExportJobJsonCodec;
+import cn.zhishi.stock.export.infrastructure.RedisExportJobStore;
+import cn.zhishi.stock.export.infrastructure.VolumeExportFileStore;
 import cn.zhishi.stock.integration.market.SimulatedLimitRuleProvider;
 import cn.zhishi.stock.integration.market.SimulatedQuoteProvider;
 import cn.zhishi.stock.integration.market.SimulatedSecurityIdentityProvider;
@@ -37,6 +44,7 @@ import cn.zhishi.stock.news.infrastructure.NewsArticleMapper;
 import cn.zhishi.stock.news.infrastructure.NewsRelationMapper;
 import cn.zhishi.stock.news.infrastructure.NewsSourceMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.ZoneId;
@@ -235,5 +243,39 @@ public class JobConfiguration {
                 relationCatalogProvider,
                 jobDatabaseIdGenerator,
                 clock);
+    }
+
+    // ---------------------------------------------------------------- 导出域（M3-12）
+    //
+    // 本模块只装配**清理**需要的那两个端口，不装配取数、写出、限流与审计：
+    // 清理不会读行情、不生成文件、不受限流约束，把整条装配链搬过来只会让
+    // "定时任务依赖什么"变得看不清（同上面资讯域"只装采集所需部分"的取舍）。
+    //
+    // 但目录与保留期这两项**必须与 stock-backend 完全一致**，否则会出现
+    // "API 写出去的文件夹在卷 A、清理删的是卷 B"——记录被删掉、文件永远留着，
+    // 且不会有任何报错。因此两处都用同一个配置键（stock.export.directory）
+    // 与同一组契约常量（ExportPolicy），不在这里另写默认值。
+
+    /** 作业记录的 JSON 编解码。与 API 侧同形，两份必须能互读（Redis 里的记录是共享事实）。 */
+    @Bean
+    ExportJobJsonCodec exportJobJsonCodec(ObjectMapper objectMapper) {
+        return new ExportJobJsonCodec(objectMapper);
+    }
+
+    @Bean
+    ExportJobStore exportJobStore(
+            StringRedisTemplate redis, ExportJobJsonCodec codec, Clock clock) {
+        return new RedisExportJobStore(redis, codec, ExportPolicy.RECORD_TTL, clock);
+    }
+
+    @Bean
+    ExportFileStore exportFileStore(
+            @Value("${stock.export.directory:./data/exports}") String directory) {
+        return new VolumeExportFileStore(Path.of(directory));
+    }
+
+    @Bean
+    ExportRetentionSweeper exportRetentionSweeper(ExportJobStore jobs, ExportFileStore files) {
+        return new ExportRetentionSweeper(jobs, files);
     }
 }

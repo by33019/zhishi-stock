@@ -8,6 +8,8 @@
   <dependencies>
     <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-market</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-news</artifactId><version>${project.version}</version></dependency>
+    <!-- 导出文件的到期清理在采集侧（见 ScheduledExportSweeper）；Web 侧只用用例，不做定时。 -->
+    <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-export</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-integration</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter</artifactId></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-redis</artifactId></dependency>

@@ -250,8 +250,18 @@ onMounted(reload)
       title="分析历史"
       description="保存每次研究的问题与结论。点击任一条可查看当次的分析目标与完整正文。"
     >
-      <!-- 导出属 M3-12，后端未实现：禁用并写明归属，可点但无反应更糟。 -->
-      <button class="secondary-button" type="button" disabled title="导出能力归属 M3-12">
+      <!--
+        这里的"批量导出"指导出**分析报告**（契约 EXP-01 的 exportType=AI_REPORT），
+        而 M3-12 交付的是榜单导出（exportType=STOCK_RANKING）。
+        AI 报告导出被 PRD §5.3 推到 V1.1，服务端认得这个取值但会拒绝——
+        所以这里保持禁用，并把"为什么不能点"写清楚：可点但没反应更糟。
+      -->
+      <button
+        class="secondary-button"
+        type="button"
+        disabled
+        title="分析报告导出属 V1.1（PRD §5.3）；当前版本支持的是榜单页的 Excel 导出"
+      >
         <Download :size="15" /> 批量导出
       </button>
     </PageHeader>

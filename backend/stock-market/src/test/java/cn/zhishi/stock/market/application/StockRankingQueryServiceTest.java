@@ -347,10 +347,58 @@ class StockRankingQueryServiceTest {
     assertThat(ranking.dataStatus()).isEqualTo(MarketOverview.DataStatus.UNAVAILABLE);
   }
 
+  // ---------- 导出取数（M3-12） ----------
+
+  /**
+   * 全量入口与分页入口必须是**同一份**筛选与排序：导出若自己再排一遍，
+   * 就会出现"页面第一名、文件里第三名"这类只在同值时暴露的偏差。
+   * 这里逐项比对两个入口的结果与批次属性。
+   */
+  @Test
+  void datasetMatchesRankOrderingAndBatchAttributes() {
+    StockRanking firstPage = rank(criteria("GAINERS"));
+    StockRankingDataset dataset = dataset(criteria("GAINERS"));
+
+    assertThat(idsOf(dataset)).isEqualTo(ids(firstPage));
+    assertThat(dataset.rankingType()).isEqualTo(firstPage.rankingType());
+    assertThat(dataset.snapshotVersion()).isEqualTo(firstPage.snapshotVersion());
+    assertThat(dataset.dataTime()).isEqualTo(firstPage.dataTime());
+    assertThat(dataset.dataStatus()).isEqualTo(firstPage.dataStatus());
+  }
+
+  /** 导出没有分页：分页入口只有一页 20 条，全量入口必须给出全部 7 行。 */
+  @Test
+  void datasetReturnsAllRowsRegardlessOfPageSize() {
+    StockRankingDataset dataset = dataset(
+        new RankingCriteria("TURNOVER", null, null, null, null, null, 2, 2));
+
+    assertThat(dataset.rowCount()).isEqualTo(7);
+    assertThat(idsOf(dataset)).containsExactly(
+        "sim-000001", "sim-600003", "sim-600000",
+        "sim-600005", "sim-600001", "sim-430001", "sim-300001");
+  }
+
+  /** 筛选条件同样共用：按板块筛选后，两个入口看到的行集合一致。 */
+  @Test
+  void datasetSharesFiltersWithPagedRanking() {
+    RankingCriteria industryOnly = new RankingCriteria(
+        "GAINERS", null, null, StubSectorProvider.INDUSTRY_ID, null, null, null, null);
+
+    assertThat(idsOf(dataset(industryOnly))).isEqualTo(ids(rank(industryOnly)));
+  }
+
   // ---------- 小工具 ----------
 
   private static StockRanking rank(RankingCriteria criteria) {
     return new StockRankingQueryService(fixedBatch(), SECTOR_PROVIDER).rank(criteria);
+  }
+
+  private static StockRankingDataset dataset(RankingCriteria criteria) {
+    return new StockRankingQueryService(fixedBatch(), SECTOR_PROVIDER).dataset(criteria);
+  }
+
+  private static List<String> idsOf(StockRankingDataset dataset) {
+    return dataset.items().stream().map(item -> item.security().securityId()).toList();
   }
 
   private static QuoteSnapshotBatchProvider fixedBatch() {

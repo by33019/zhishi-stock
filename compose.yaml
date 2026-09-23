@@ -84,6 +84,14 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       DEMO_USERNAME: ${DEMO_USERNAME:-demo}
       DEMO_PASSWORD: ${DEMO_PASSWORD:-Stock@123}
+      # 导出文件的存放目录。api 与 job **必须取同一个值**（它们挂的是同一个卷）：
+      # 文件由 api 写出与下载，到期由 job 清理；两边看到不同目录时，
+      # 清理会把 Redis 里的作业记录删掉、而文件永远留在 api 的卷上，且不会有任何报错。
+      STOCK_EXPORT_DIRECTORY: /app/data/exports
+    # 导出文件卷。挂到 api 是为了写出与下载，挂到 job 是为了到期清理——
+    # 少了任何一边，导出要么写不出去，要么永远删不掉。
+    volumes:
+      - export-files:/app/data/exports
     # 暴露后端端口到宿主机，供本地 `npm run dev` 的 Vite 代理转发（见 frontend/vite.config.ts）。
     # 容器内前后端通信走服务名（nginx 反代 /api/ → stock-api:8080），不依赖此映射。
     # 若不需要本地直连后端，可通过 API_PORT 改端口或移除本段。
@@ -109,6 +117,9 @@ services:
     environment:
       <<: *stock-environment
       SPRING_PROFILES_ACTIVE: dev
+    # 清理导出文件需要看到 api 写出来的那些文件，因此与它共用同一个卷。
+    volumes:
+      - export-files:/app/data/exports
     depends_on:
       flyway:
         condition: service_completed_successfully
@@ -150,3 +161,6 @@ services:
 volumes:
   mysql-data:
   redis-data:
+  # 导出文件（契约 §9.2 的"受控 Docker Volume"）。它是一个**跨进程共享**的卷，
+  # 不是各自私有的缓存：api 写、job 删，两边都必须挂同一个。
+  export-files:

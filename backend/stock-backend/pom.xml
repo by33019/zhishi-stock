@@ -11,6 +11,8 @@
     <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-market</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-news</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-ai</artifactId><version>${project.version}</version></dependency>
+    <!-- EXP-01~EXP-04：导出域的用例、端口与适配器都在这里，Web 层只做参数搬运与响应头 -->
+    <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-export</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-integration</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-web</artifactId></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-security</artifactId></dependency>

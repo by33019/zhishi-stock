@@ -39,7 +39,23 @@ import cn.zhishi.stock.ai.infrastructure.MyBatisAiTaskStore;
 import cn.zhishi.stock.ai.infrastructure.RedisAiTaskEventStream;
 import cn.zhishi.stock.ai.infrastructure.RedisAiTaskQueue;
 import cn.zhishi.stock.backend.security.JwtAuthenticationFilter;
+import cn.zhishi.stock.backend.web.ExportAuditRecorder;
 import cn.zhishi.stock.backend.web.TraceIdFilter;
+import cn.zhishi.stock.export.application.ExportJobService;
+import cn.zhishi.stock.export.domain.ExportAuditLog;
+import cn.zhishi.stock.export.domain.ExportDataSource;
+import cn.zhishi.stock.export.domain.ExportFileStore;
+import cn.zhishi.stock.export.domain.ExportFileWriter;
+import cn.zhishi.stock.export.domain.ExportJobStore;
+import cn.zhishi.stock.export.domain.ExportPolicy;
+import cn.zhishi.stock.export.domain.ExportRateLimiter;
+import cn.zhishi.stock.export.infrastructure.ExportJobJsonCodec;
+import cn.zhishi.stock.export.infrastructure.JdbcSysLogExportAuditLog;
+import cn.zhishi.stock.export.infrastructure.PoiExportFileWriter;
+import cn.zhishi.stock.export.infrastructure.RedisExportJobStore;
+import cn.zhishi.stock.export.infrastructure.RedisExportRateLimiter;
+import cn.zhishi.stock.export.infrastructure.StockRankingExportDataSource;
+import cn.zhishi.stock.export.infrastructure.VolumeExportFileStore;
 import cn.zhishi.stock.integration.ai.SimulatedContentHasher;
 import cn.zhishi.stock.integration.ai.LlmProviderFactory;
 import cn.zhishi.stock.integration.market.SimulatedKlineProvider;
@@ -123,13 +139,18 @@ import cn.zhishi.stock.system.watchlist.WatchlistItemMapper;
 import cn.zhishi.stock.system.watchlist.WatchlistItemRepository;
 import cn.zhishi.stock.system.watchlist.WatchlistItemService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.ZoneId;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
@@ -920,5 +941,151 @@ public class BackendConfiguration {
                 Duration.ofSeconds(taskDeadlineSeconds),
                 providerCode,
                 modelCode);
+    }
+
+    // ---------- 导出域（M3-12） ----------
+
+    /**
+     * 作业记录的 JSON 编解码。
+     *
+     * <p>用 {@code copy()} 出来的映射器而不是全局那一个：写进 Redis 的时间格式
+     * 是**存储格式的一部分**，挂在全局对象上会顺带改掉所有 HTTP 响应的日期形状。
+     */
+    @Bean
+    ExportJobJsonCodec exportJobJsonCodec(ObjectMapper objectMapper) {
+        return new ExportJobJsonCodec(objectMapper);
+    }
+
+    /**
+     * 作业仓储。
+     *
+     * <p>保留期取契约常量而不是配置项：{@code RECORD_TTL} 与文件保留期是一对
+     * （记录必须长于文件，否则"文件过期"与"这个 id 不存在"就分不开）。
+     * 把其中之一开成配置项，会出现"环境 A 能解释过期、环境 B 只报 404"这种按部署而异的行为。
+     */
+    @Bean
+    ExportJobStore exportJobStore(
+            StringRedisTemplate redis, ExportJobJsonCodec codec, Clock clock) {
+        return new RedisExportJobStore(redis, codec, ExportPolicy.RECORD_TTL, clock);
+    }
+
+    /**
+     * 导出文件的存放目录。
+     *
+     * <p>默认值指向容器里挂载的卷（见 {@code compose.yaml} 的 {@code export-files}）。
+     * 该卷**必须与 {@code stock-job} 共用**：生成与下载在 api 侧，清理在 job 侧，
+     * 两边看到不同的卷时，清理会把作业记录删掉、而文件永远留在 api 的卷上，
+     * 且不会有任何报错。
+     */
+    @Bean
+    ExportFileStore exportFileStore(
+            @Value("${stock.export.directory:./data/exports}") String directory) {
+        return new VolumeExportFileStore(Path.of(directory));
+    }
+
+    /**
+     * 取数端口。
+     *
+     * <p>复用 {@code stockRankingQueryService} 的**全量**入口（{@code dataset}）：
+     * 导出自己再排一遍，就会出现"页面第一名、文件里第三名"这种只在同值时暴露的偏差。
+     */
+    @Bean
+    ExportDataSource exportDataSource(StockRankingQueryService stockRankingQueryService, Clock clock) {
+        return new StockRankingExportDataSource(stockRankingQueryService, clock);
+    }
+
+    /** 写出端口。当前只有 POI 一种实现（见 {@code PoiExportFileWriter} 的取舍说明）。 */
+    @Bean
+    ExportFileWriter exportFileWriter() {
+        return new PoiExportFileWriter();
+    }
+
+    /** 限流。次数与窗口取契约常量（§9.2：2 次/分钟），不在这里另写一遍数字。 */
+    @Bean
+    ExportRateLimiter exportRateLimiter(StringRedisTemplate redis, Clock clock) {
+        return new RedisExportRateLimiter(
+                redis, ExportPolicy.RATE_LIMIT_PER_MINUTE, ExportPolicy.RATE_LIMIT_WINDOW, clock);
+    }
+
+    @Bean
+    ExportAuditLog exportAuditLog(
+            JdbcTemplate jdbc, LongSupplier databaseIdGenerator, Clock clock) {
+        return new JdbcSysLogExportAuditLog(jdbc, databaseIdGenerator, clock);
+    }
+
+    /** Web 层的审计补齐器：把发起人 / URI / IP / traceId 补进审计事件。 */
+    @Bean
+    ExportAuditRecorder exportAuditRecorder(ExportAuditLog exportAuditLog) {
+        return new ExportAuditRecorder(exportAuditLog);
+    }
+
+    /**
+     * 生成线程池。
+     *
+     * <p>刻意用**有界队列 + 直接拒绝**，而不是 {@code Executors.newFixedThreadPool}：
+     * 后者用的是无界队列，于是"服务忙不过来"永远表现为任务在队列里静默堆积
+     * （内存涨、用户等到超时），而 {@code RejectedExecutionException} 一次也不会发生
+     * ——{@code EXPORT_BUSY} 那条分支会变成永远走不到的死代码。
+     *
+     * <p>用守护线程：关闭时不必等它们，未完成的作业会停在 {@code QUEUED}/{@code RUNNING}
+     * 并在保留期后自行退场（契约明确不承诺重启后恢复未完成的导出）。
+     */
+    @Bean(destroyMethod = "shutdown")
+    ExecutorService exportExecutor(
+            @Value("${stock.export.threads:4}") int threads,
+            @Value("${stock.export.queue-capacity:64}") int queueCapacity) {
+        return new ThreadPoolExecutor(
+                threads,
+                threads,
+                0L,
+                TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(queueCapacity),
+                runnable -> {
+                    Thread thread = new Thread(runnable, "export-generator");
+                    thread.setDaemon(true);
+                    return thread;
+                },
+                new ThreadPoolExecutor.AbortPolicy());
+    }
+
+    /**
+     * 导出标识生成器。
+     *
+     * <p>与自选、资讯、AI 共用同一个 {@code databaseIdGenerator}，再转成字符串对外：
+     * 契约把 {@code exportId} 定义为字符串，正是因为 Snowflake 段在 JavaScript 里会丢精度。
+     */
+    @Bean
+    Supplier<String> exportIdGenerator(LongSupplier databaseIdGenerator) {
+        return () -> Long.toString(databaseIdGenerator.getAsLong());
+    }
+
+    /**
+     * 导出作业用例（EXP-01~EXP-04）。
+     *
+     * <p>生成用的 {@code ExecutorService} 与 SSE 中继的线程池**分开**：
+     * 导出是 CPU/IO 密集的批量任务，和它抢同一个池会让"有人导一份全市场榜单"变成
+     * "所有 AI 流式连接一起变慢"。
+     */
+    @Bean
+    ExportJobService exportJobService(
+            ExportJobStore exportJobStore,
+            ExportFileStore exportFileStore,
+            ExportDataSource exportDataSource,
+            ExportFileWriter exportFileWriter,
+            ExportRateLimiter exportRateLimiter,
+            ExportAuditLog exportAuditLog,
+            Supplier<String> exportIdGenerator,
+            ExecutorService exportExecutor,
+            Clock clock) {
+        return new ExportJobService(
+                exportJobStore,
+                exportFileStore,
+                exportDataSource,
+                exportFileWriter,
+                exportRateLimiter,
+                exportAuditLog,
+                exportIdGenerator,
+                exportExecutor,
+                clock);
     }
 }

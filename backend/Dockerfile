@@ -40,7 +40,12 @@ RUN --mount=type=cache,target=/root/.m2,sharing=locked \
 FROM eclipse-temurin:17-jre
 ARG APP_MODULE=stock-backend
 WORKDIR /app
-RUN useradd --system --uid 10001 stock
+RUN useradd --system --uid 10001 --user-group stock
+# 导出文件的挂载点。**必须在镜像里就以 stock 属主建出来**：
+# 容器以非 root 运行，而 Docker 首次挂载命名卷时是把镜像里该路径的内容与属主
+# 一起复制进新卷的。目录不存在的话，卷会是 root:root，导出一写就 EACCES。
+# 三个进程（api / job / ai-worker）共用这一个镜像，因此路径与属主天然一致。
+RUN install -d -o stock -g stock /app/data/exports
 COPY --from=build /workspace/backend/${APP_MODULE}/target/${APP_MODULE}-*.jar /app/app.jar
 USER stock
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]

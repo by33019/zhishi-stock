@@ -27,3 +27,12 @@ stock:
     # 架构 §"新闻/公告增量采集 每 2 分钟"。不传游标：增量判据由来源 ID 幂等承担。
     collect-initial-delay-ms: ${NEWS_COLLECT_INITIAL_DELAY_MS:1000}
     collect-delay-ms: ${NEWS_COLLECT_DELAY_MS:120000}
+  export:
+    # **必须与 stock-backend 用同一个值、且指向同一个卷**（compose.yaml 的 export-files）：
+    # 文件由 API 写出、由本进程清理，两边看到不同目录时清理会把作业记录删掉、
+    # 文件永远留在 API 的卷上，且不会有任何报错。
+    directory: ${STOCK_EXPORT_DIRECTORY:./data/exports}
+    sweep-initial-delay-ms: ${STOCK_EXPORT_SWEEP_INITIAL_DELAY_MS:60000}
+    sweep-delay-ms: ${STOCK_EXPORT_SWEEP_DELAY_MS:600000}
+    # 单轮清理上限。清理是后台任务，宁可每轮少做一点，也不要一次把整卷读一遍。
+    sweep-batch-size: ${STOCK_EXPORT_SWEEP_BATCH_SIZE:200}

@@ -1,10 +1,22 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { RankingQuery, QuoteSnapshot, StockRanking } from '@/types/domain'
+import type { ExportJobView, RankingQuery, QuoteSnapshot, StockRanking } from '@/types/domain'
 
 const rankingApi = vi.hoisted(() => ({ getStockRankings: vi.fn() }))
 vi.mock('@/services/rankingApi', () => rankingApi)
+
+const exportApi = vi.hoisted(() => ({
+  createExportJob: vi.fn(),
+  getExportJob: vi.fn(),
+  downloadExportFile: vi.fn(),
+}))
+vi.mock('@/services/exportApi', () => exportApi)
+
+// 真实的 `saveBlob` 要 `URL.createObjectURL`，jsdom 没有；这里换掉它，
+// 顺带让"文件名到底传了什么"成为可断言的事实。
+const download = vi.hoisted(() => ({ saveBlob: vi.fn() }))
+vi.mock('@/utils/download', () => download)
 
 import RankingsPage from './RankingsPage.vue'
 
@@ -71,10 +83,36 @@ function lastRankingQuery(): RankingQuery {
   return calls[calls.length - 1]![0] as RankingQuery
 }
 
+function completedJob(overrides: Partial<ExportJobView> = {}): ExportJobView {
+  return {
+    exportId: '7332',
+    exportType: 'STOCK_RANKING',
+    status: 'COMPLETED',
+    progress: 100,
+    fileName: 'stock-ranking-gainers.xlsx',
+    rowCount: 2079,
+    createdAt: '2026-09-23T09:52:37+08:00',
+    expiresAt: '2026-09-24T09:52:37+08:00',
+    error: null,
+    ...overrides,
+  }
+}
+
+function exportButton(wrapper: ReturnType<typeof mountPage>, label = '导出 Excel') {
+  return wrapper.findAll('button').find((button) => button.text().includes(label))
+}
+
 describe('行情榜单页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     rankingApi.getStockRankings.mockResolvedValue(ranking())
+    exportApi.createExportJob.mockResolvedValue({ exportId: '7332' })
+    exportApi.getExportJob.mockResolvedValue(completedJob())
+    exportApi.downloadExportFile.mockResolvedValue({
+      blob: new Blob(['xlsx']),
+      fileName: '榜单-20260923.xlsx',
+      dataCutoffAt: '2026-09-23T15:00+08:00',
+    })
   })
 
   it('按北京时间展示数据截止时间，并显示服务端返回的全市场总数', async () => {
@@ -140,6 +178,73 @@ describe('行情榜单页', () => {
     await wrapper.get('[data-testid="ranking-retry"]').trigger('click')
     await flushPromises()
 
+    expect(wrapper.text()).toContain('共 45 个标的')
+  })
+
+  it('导出把当前口径与交易所筛选发给 EXP-01，且**不带**分页参数', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+
+    await wrapper.findAll('button').find((button) => button.text() === '跌幅榜')!.trigger('click')
+    await wrapper.findAll('button').find((button) => button.text() === '深市')!.trigger('click')
+    await flushPromises()
+
+    await exportButton(wrapper)!.trigger('click')
+    await flushPromises()
+
+    const [request, idempotencyKey] = exportApi.createExportJob.mock.calls[0]!
+    expect(request.exportType).toBe('STOCK_RANKING')
+    expect(request.filters).toEqual({ rankingType: 'LOSERS', exchangeCodes: 'SZ' })
+    // `page` / `size` 出现在导出请求里，用户会以为导出的是整份榜单，
+    // 而文件里只有当前页那 20 行——这个错在文件打开前看不出来。
+    expect(request.filters).not.toHaveProperty('page')
+    expect(request.filters).not.toHaveProperty('size')
+    expect(request).not.toHaveProperty('columns')
+    // 幂等键必须由页面给出：service 里生成的话，401 自动重发会变成第二次导出。
+    expect(idempotencyKey).toEqual(expect.any(String))
+
+    expect(exportApi.downloadExportFile).toHaveBeenCalledWith('7332')
+    expect(download.saveBlob).toHaveBeenCalledWith(expect.any(Blob), '榜单-20260923.xlsx')
+  })
+
+  it('导出进行中按钮禁用并显示排队中，避免连点产生第二个作业', async () => {
+    let release: (value: ExportJobView) => void = () => {}
+    exportApi.getExportJob.mockImplementation(
+      () => new Promise<ExportJobView>((resolve) => {
+        release = resolve
+      }),
+    )
+
+    const wrapper = mountPage()
+    await flushPromises()
+    await exportButton(wrapper)!.trigger('click')
+    await flushPromises()
+
+    const busy = exportButton(wrapper, '排队中')
+    expect(busy).toBeDefined()
+    expect(busy!.attributes('disabled')).toBeDefined()
+
+    release(completedJob())
+    await flushPromises()
+    // 结束后按钮回到可点状态，否则用户第二次导出就点不动了。
+    expect(exportButton(wrapper)!.attributes('disabled')).toBeUndefined()
+  })
+
+  it('导出失败时给出原因与追踪编号，且不影响榜单本身的展示', async () => {
+    exportApi.getExportJob.mockRejectedValue({
+      code: 'EXPORT_RATE_LIMITED',
+      message: '导出过于频繁，请稍后再试',
+      traceId: 'trace-429',
+    })
+
+    const wrapper = mountPage()
+    await flushPromises()
+    await exportButton(wrapper)!.trigger('click')
+    await flushPromises()
+
+    const alert = wrapper.get('[data-testid="ranking-export-error"]')
+    expect(alert.text()).toContain('导出过于频繁，请稍后再试')
+    expect(alert.text()).toContain('trace-429')
     expect(wrapper.text()).toContain('共 45 个标的')
   })
 })

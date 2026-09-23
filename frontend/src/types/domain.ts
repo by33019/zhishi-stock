@@ -988,3 +988,99 @@ export interface AiReportEvidence {
   dataTime: string | null
   accessStatus: string
 }
+
+// ---------------------------------------------------------------------------
+// 导出（契约 §9.2 EXP-01~EXP-04）
+// ---------------------------------------------------------------------------
+
+/**
+ * 导出类型，与后端 `ExportType` 同集合。
+ *
+ * `AI_REPORT` 在契约里是**合法取值但本版本不支持**（PRD §5.3 推到 V1.1）：
+ * 服务端认得它、并在受理前拒绝。这里照样声明，界面据此显示"该能力尚未开放"，
+ * 而不是把它当成一个拼错的枚举值弹"未知的导出类型"。
+ */
+export type ExportType = 'STOCK_RANKING' | 'AI_REPORT'
+
+/**
+ * 导出作业状态。
+ *
+ * 五个取值在界面上必须有各自的落点，不能压成"进行中 / 成功 / 失败"：
+ * `QUEUED` / `RUNNING` 是"还在跑"，`COMPLETED` 是"可以下载了"，
+ * `FAILED` 是"这次没成"（可重试），`EXPIRED` 是"文件已过保留期被清掉"
+ * （重试也没用，要重新发起导出）。后两者合并会让用户对同一个按钮得到两种期望。
+ */
+export type ExportJobStatus = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'EXPIRED'
+
+/**
+ * 导出筛选条件，与 QTE-01 的查询参数**逐项对应**，但**没有** `page` / `size`：
+ * 导出取全量，分页字段出现在这里会让"这份文件到底包含了多少行"变得含糊。
+ */
+export interface RankingExportFilters {
+  rankingType?: RankingType
+  /** 逗号分隔的多值，如 `SH,SZ`。 */
+  exchangeCodes?: string
+  boardCodes?: string
+  sectorId?: string
+  excludeSt?: boolean
+  excludeSuspended?: boolean
+}
+
+/** EXP-01 请求体。`columns` 省略时由服务端套用默认列集。 */
+export interface ExportJobRequest {
+  exportType: ExportType
+  filters?: RankingExportFilters
+  columns?: string[]
+}
+
+/**
+ * EXP-01 响应（HTTP 202）。
+ *
+ * **没有** `fileName` / `rowCount`：文件此刻还不存在，作业只是已受理。
+ * 拿到 `exportId` 之后必须走 EXP-02 轮询，不能直接下载。
+ */
+export interface ExportJobAccepted {
+  exportId: string
+  exportType: ExportType
+  status: ExportJobStatus
+  createdAt: string
+  expiresAt: string
+}
+
+/**
+ * EXP-02 响应。
+ *
+ * `fileName` / `rowCount` / `error` 在未就绪时是 `null` 而不是空串或 `0`：
+ * 空串会让"文件名为空"与"还没有文件名"看起来一样，`0` 会让"零行结果"与
+ * "还没跑完"看起来一样。三种情况的处置不同，所以这里也必须保持可空。
+ */
+export interface ExportJobView {
+  exportId: string
+  exportType: ExportType
+  status: ExportJobStatus
+  /** 0 至 100。 */
+  progress: number
+  fileName: string | null
+  rowCount: number | null
+  createdAt: string
+  expiresAt: string
+  error: string | null
+}
+
+/** EXP-04 响应。重复删除是幂等成功，但 `deleted` 为 `false`。 */
+export interface DeletedExportJob {
+  deleted: boolean
+}
+
+/**
+ * EXP-03 的下载结果。
+ *
+ * 文件名与数据截止时间**从响应头取**，不自己拼：文件说明区里的"数据截止时间"
+ * 与 `X-Data-Cutoff-At` 同源（都来自服务端的 `ExportDownload`），
+ * 前端另算一份就会出现"下载提示 15:00、文件里写 14:30"这种只在跨批次时暴露的分叉。
+ */
+export interface ExportDownload {
+  blob: Blob
+  fileName: string | null
+  dataCutoffAt: string | null
+}
