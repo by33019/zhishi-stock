@@ -8,9 +8,11 @@ const ADMIN_PASSWORD = process.env.E2E_ADMIN_PASSWORD ?? 'Admin@123'
 
 /**
  * M3-11 后台管理面浏览器级验收：
- * 登录 admin → /admin 渲染总览（ADM-AI-01 + ADM-JOB-01/03 真实数据）→
- * 切换到各分区确认各自发出真实请求（用户/任务/日志/AI 用量/资讯来源）→
- * 无控制台错误、页面无原型页的编造数值。
+ * 登录 admin → /admin 各分区各自发出真实请求并渲染（总览/用户/任务/日志/AI 运营/资讯治理）→
+ * 无 401/403、无控制台错误、页面无原型页的编造数值。
+ *
+ * 时机约定：分区标题是静态渲染的，**数据是异步的**——因此每一步都用
+ * `waitForResponse` 等接口返回，而不是等标题出现（后者永远先于数据）。
  */
 
 const browser = await chromium.launch({ headless: true })
@@ -19,33 +21,53 @@ const page = await context.newPage()
 
 const apiCalls = []
 const consoleErrors = []
+let authenticated = false
 page.on('response', (response) => {
-  if (response.url().includes('/api/v1/admin')) {
+  if (response.url().includes('/api/v1/')) {
     apiCalls.push({ url: response.url(), status: response.status() })
   }
 })
+// 只收集**登录之后**的控制台错误：登录页上 auth.restore 的刷新 401 是预期游客态
+// （浏览器会把任何 4xx 响应记为一条控制台错误），与 news.real.mjs 的处置一致。
 page.on('console', (message) => {
-  if (message.type() === 'error') consoleErrors.push(message.text())
+  if (message.type() === 'error' && authenticated) consoleErrors.push(message.text())
 })
+
+/** 点击 Tab 并等待对应接口返回；返回响应状态码。 */
+async function openSection(tabName, urlPattern) {
+  const responsePromise = page.waitForResponse(
+    (response) => urlPattern.test(response.url()) && response.request().method() === 'GET',
+    { timeout: 15_000 },
+  )
+  await page.getByRole('button', { name: tabName }).click()
+  const response = await responsePromise
+  return response.status()
+}
 
 // ---------- 登录 ----------
 await page.goto(`${baseURL}/login`)
-await page.getByLabel('账号').fill(ADMIN_USERNAME)
-await page.getByLabel('密码').fill(ADMIN_PASSWORD)
+await page.getByLabel('手机号或用户名').fill(ADMIN_USERNAME)
+await page.getByLabel('登录密码').fill(ADMIN_PASSWORD)
+const loginResponse = page.waitForResponse((response) => response.url().includes('/auth/login'))
 await page.getByRole('button', { name: /登录/ }).click()
+assert.equal((await loginResponse).status(), 200, '登录接口失败')
 await page.waitForURL(/\/(market|admin)/, { timeout: 15_000 })
 console.log('登录成功')
+authenticated = true
 
-// ---------- 总览 ----------
+// ---------- /admin 总览（默认分区，随页面加载自动请求）----------
 await page.goto(`${baseURL}/admin`)
-await page.getByRole('heading', { name: '系统运营', exact: true }).waitFor()
-await page.getByRole('heading', { name: 'AI 运营总览' }).waitFor()
-await page.getByRole('heading', { name: '任务定义' }).waitFor()
-
-const overviewCalls = apiCalls.filter((call) =>
-  call.url.includes('/admin/ai/overview') || call.url.includes('/admin/job-definitions'))
-assert.ok(overviewCalls.some((call) => call.status === 200), '总览没有发出成功的后台请求')
-console.log('总览分区 OK：ADM-AI-01 + ADM-JOB-01 均为 200')
+await page.waitForURL(/\/admin/)
+const overviewResponse = await page.waitForResponse(
+  (response) => /\/api\/v1\/admin\/ai\/overview/.test(response.url()),
+  { timeout: 15_000 },
+)
+assert.equal(overviewResponse.status(), 200, 'ADM-AI-01 总览不是 200')
+assert.ok(apiCalls.some((call) => call.url.includes('/admin/job-definitions') && call.status === 200),
+  'ADM-JOB-01 任务定义不是 200')
+// 数据真实渲染（数字来自 ADM-AI-01，静态标题之外必须有内容）
+await page.getByText('任务总量').waitFor({ timeout: 10_000 })
+console.log('总览分区 OK：ADM-AI-01 + ADM-JOB-01 均 200 且已渲染')
 
 // 原型页的编造数值不得回归
 const bodyText = await page.locator('.business-page').innerText()
@@ -53,55 +75,42 @@ assert.ok(!bodyText.includes('12,680'), '出现原型页编造数值：注册用
 assert.ok(!bodyText.includes('486'), '出现原型页编造数值：在线会话 486')
 
 // ---------- 用户管理 ----------
-await page.getByRole('button', { name: '用户管理' }).click()
+const usersStatus = await openSection('用户管理', /\/api\/v1\/admin\/users\?/)
+assert.equal(usersStatus, 200, 'ADM-USR-01 不是 200')
 await page.getByRole('heading', { name: '用户列表' }).waitFor()
-await page.waitForFunction(
-  () => document.querySelectorAll('.quote-table tbody tr').length > 0,
-  { timeout: 10_000 },
-)
-console.log('用户分区 OK：admin 账号列表已渲染')
+console.log('用户分区 OK：ADM-USR-01 200')
 
 // ---------- 定时任务 ----------
-await page.getByRole('button', { name: '定时任务' }).click()
-await page.getByRole('heading', { name: '任务定义' }).waitFor()
-assert.ok(
-  apiCalls.some((call) => call.url.includes('/admin/job-executions') && call.status === 200),
-  '任务分区没有发出 ADM-JOB-03 请求',
-)
-console.log('任务分区 OK：执行历史 200')
+const executionsStatus = await openSection('定时任务', /\/api\/v1\/admin\/job-executions/)
+assert.equal(executionsStatus, 200, 'ADM-JOB-03 不是 200')
+console.log('任务分区 OK：ADM-JOB-03 200')
 
 // ---------- 操作日志 ----------
-await page.getByRole('button', { name: '操作日志' }).click()
-await page.getByRole('heading', { name: '操作日志', exact: true }).waitFor()
-console.log('日志分区 OK：页面已渲染')
+const logsStatus = await openSection('操作日志', /\/api\/v1\/admin\/operation-logs/)
+assert.equal(logsStatus, 200, 'LOG-01 不是 200')
+console.log('日志分区 OK：LOG-01 200')
 
 // ---------- AI 运营 ----------
-await page.getByRole('button', { name: 'AI 运营' }).click()
-await page.getByRole('heading', { name: '分组用量' }).waitFor()
-assert.ok(
-  apiCalls.some((call) => call.url.includes('/admin/ai/usage') && call.status === 200),
-  'AI 分区没有发出 ADM-AI-05 请求',
-)
+const usageStatus = await openSection('AI 运营', /\/api\/v1\/admin\/ai\/usage/)
+assert.equal(usageStatus, 200, 'ADM-AI-05 不是 200')
 console.log('AI 分区 OK：ADM-AI-05 200')
 
 // ---------- 资讯治理 ----------
-await page.getByRole('button', { name: '资讯治理' }).click()
-await page.getByRole('heading', { name: '资讯来源' }).waitFor()
-assert.ok(
-  apiCalls.some((call) => call.url.includes('/admin/news-sources') && call.status === 200),
-  '资讯分区没有发出 ADM-NEWS-01 请求',
-)
+const newsStatus = await openSection('资讯治理', /\/api\/v1\/admin\/news-sources/)
+assert.equal(newsStatus, 200, 'ADM-NEWS-01 不是 200')
 console.log('资讯分区 OK：ADM-NEWS-01 200')
 
 // ---------- 汇总 ----------
 const failedCalls = apiCalls.filter((call) => call.status >= 400)
-console.log('--- 非 2xx 的后台请求 ---')
+console.log('--- 非 2xx 的 /api 请求 ---')
 for (const call of failedCalls) console.log(call.status, call.url)
 console.log('--- 控制台错误 ---')
 console.log(consoleErrors.length ? consoleErrors : '（无）')
 
-// 未登录/无权限的 401/403 不应出现在已登录 admin 会话里
-const authFailures = failedCalls.filter((call) => call.status === 401 || call.status === 403)
+// 登录前的 refresh 401 属预期游客态；其余不应有 401/403
+const authFailures = failedCalls.filter(
+  (call) => (call.status === 401 || call.status === 403) && !call.url.includes('/auth/token/refresh'),
+)
 assert.equal(authFailures.length, 0, '已登录 admin 会话内出现 401/403')
 assert.equal(consoleErrors.length, 0, `出现 ${consoleErrors.length} 条控制台错误`)
 
