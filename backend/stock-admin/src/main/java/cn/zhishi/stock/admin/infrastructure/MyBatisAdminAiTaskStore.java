@@ -33,7 +33,11 @@ public class MyBatisAdminAiTaskStore implements AdminAiTaskStore {
 
     @Override
     public List<AdminAiTaskSummary> page(AdminAiTaskQuery query) {
-        List<AdminAiTaskMapper.TaskRow> rows = mapper.pageRows(query, query.size(), query.offset());
+        List<AdminAiTaskMapper.TaskRow> rows = mapper.pageRows(
+                query.taskId(), query.userId(), query.scene(), query.status(),
+                query.providerCode(), query.errorCategory(),
+                toLocalDateTime(query.startedAt()), toLocalDateTime(query.endedAt()),
+                query.size(), query.offset());
         Map<Long, List<AdminAiTaskTargetSummary>> targets = targetsOf(rows);
         return rows.stream()
                 .map(row -> new AdminAiTaskSummary(
@@ -47,7 +51,10 @@ public class MyBatisAdminAiTaskStore implements AdminAiTaskStore {
 
     @Override
     public long count(AdminAiTaskQuery query) {
-        return mapper.countRows(query);
+        return mapper.countRows(
+                query.taskId(), query.userId(), query.scene(), query.status(),
+                query.providerCode(), query.errorCategory(),
+                toLocalDateTime(query.startedAt()), toLocalDateTime(query.endedAt()));
     }
 
     @Override
@@ -101,5 +108,9 @@ public class MyBatisAdminAiTaskStore implements AdminAiTaskStore {
 
     private OffsetDateTime toOffsetDateTime(LocalDateTime value) {
         return value == null ? null : value.atZone(clock.getZone()).toOffsetDateTime();
+    }
+
+    private LocalDateTime toLocalDateTime(OffsetDateTime value) {
+        return value == null ? null : value.atZoneSameInstant(clock.getZone()).toLocalDateTime();
     }
 }

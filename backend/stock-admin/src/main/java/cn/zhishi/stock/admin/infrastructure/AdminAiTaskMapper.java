@@ -2,7 +2,6 @@ package cn.zhishi.stock.admin.infrastructure;
 
 import cn.zhishi.stock.ai.domain.AiTaskStatus;
 import cn.zhishi.stock.ai.domain.LlmErrorCategory;
-import cn.zhishi.stock.admin.domain.AdminAiTaskQuery;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -44,46 +43,69 @@ public interface AdminAiTaskMapper {
             t.trace_id         AS traceId
             """;
 
+    /**
+     * 过滤条件的参数是**扁平**的（与 {@code OperationLogMapper} 同一形态）。
+     * OGNL 读不了嵌套 record 的属性（{@code query.taskId} 没有 getter），
+     * 嵌套对象参数会在运行时炸成 MyBatisSystemException——这是 e2e 在真容器里
+     * 抓出来的 500，单测与契约测试（stub 服务）都测不到 SQL 参数绑定。
+     */
     String FILTER = """
             <where>
-              <if test="query.taskId != null">
-                AND t.id = #{query.taskId}
+              <if test="taskId != null">
+                AND t.id = #{taskId}
               </if>
-              <if test="query.userId != null">
-                AND t.user_id = #{query.userId}
+              <if test="userId != null">
+                AND t.user_id = #{userId}
               </if>
-              <if test="query.scene != null and query.scene != ''">
-                AND t.scene = #{query.scene}
+              <if test="scene != null and scene != ''">
+                AND t.scene = #{scene}
               </if>
-              <if test="query.status != null">
-                AND t.status = #{query.status}
+              <if test="status != null">
+                AND t.status = #{status}
               </if>
-              <if test="query.providerCode != null and query.providerCode != ''">
-                AND t.provider_code = #{query.providerCode}
+              <if test="providerCode != null and providerCode != ''">
+                AND t.provider_code = #{providerCode}
               </if>
-              <if test="query.errorCategory != null">
-                AND t.error_category = #{query.errorCategory}
+              <if test="errorCategory != null">
+                AND t.error_category = #{errorCategory}
               </if>
-              AND t.created_at &gt;= #{query.startedAt}
-              AND t.created_at &lt;= #{query.endedAt}
+              AND t.created_at &gt;= #{startedAt}
+              AND t.created_at &lt;= #{endedAt}
             </where>
             """;
 
     @Select("<script>SELECT " + COLUMNS + " FROM ai_task t" + FILTER
             + " ORDER BY t.created_at DESC, t.id DESC"
             + " LIMIT #{limit} OFFSET #{offset}</script>")
-    List<TaskRow> pageRows(@Param("query") AdminAiTaskQuery query,
-            @Param("limit") int limit, @Param("offset") int offset);
+    List<TaskRow> pageRows(
+            @Param("taskId") Long taskId,
+            @Param("userId") Long userId,
+            @Param("scene") String scene,
+            @Param("status") AiTaskStatus status,
+            @Param("providerCode") String providerCode,
+            @Param("errorCategory") LlmErrorCategory errorCategory,
+            @Param("startedAt") LocalDateTime startedAt,
+            @Param("endedAt") LocalDateTime endedAt,
+            @Param("limit") int limit,
+            @Param("offset") int offset);
 
     @Select("<script>SELECT COUNT(*) FROM ai_task t" + FILTER + "</script>")
-    long countRows(@Param("query") AdminAiTaskQuery query);
+    long countRows(
+            @Param("taskId") Long taskId,
+            @Param("userId") Long userId,
+            @Param("scene") String scene,
+            @Param("status") AiTaskStatus status,
+            @Param("providerCode") String providerCode,
+            @Param("errorCategory") LlmErrorCategory errorCategory,
+            @Param("startedAt") LocalDateTime startedAt,
+            @Param("endedAt") LocalDateTime endedAt);
 
     @Select("SELECT " + COLUMNS + " FROM ai_task t WHERE t.id = #{taskId}")
     TaskRow find(@Param("taskId") long taskId);
 
+    /** 列集合必须与 {@code TaskExtras} 的分量**一一同名同序**：多一列都会让自动构造映射错位。 */
     @Select("""
-            SELECT id          AS taskId,
-                   retry_of_task_id AS retryOfTaskId,
+            SELECT retry_of_task_id AS retryOfTaskId,
                    attempt_no  AS attemptNo,
                    max_attempts AS maxAttempts,
                    cancel_requested AS cancelRequested,
@@ -97,7 +119,9 @@ public interface AdminAiTaskMapper {
             """)
     TaskExtras findExtras(@Param("taskId") long taskId);
 
+    /** 动态标签（foreach）必须显式包 `<script>`，否则 `#{id}` 会被当成顶层参数解析。 */
     @Select("""
+            <script>
             SELECT task_id     AS taskId,
                    target_type AS targetType,
                    target_code AS targetCode,
@@ -109,6 +133,7 @@ public interface AdminAiTaskMapper {
               #{id}
             </foreach>
             ORDER BY task_id, sort_no
+            </script>
             """)
     List<TargetRow> targetsOfTasks(@Param("taskIds") List<Long> taskIds);
 

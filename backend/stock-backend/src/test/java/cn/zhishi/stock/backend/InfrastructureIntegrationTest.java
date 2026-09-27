@@ -11,6 +11,10 @@ import cn.zhishi.stock.admin.application.OperationLogService;
 import cn.zhishi.stock.admin.application.RetryJobCommand;
 import cn.zhishi.stock.admin.application.TriggerJobCommand;
 import cn.zhishi.stock.admin.domain.AdminNewsRelationStore;
+import cn.zhishi.stock.admin.domain.AdminAiTaskStore;
+import cn.zhishi.stock.admin.domain.AdminAiTaskQuery;
+import cn.zhishi.stock.admin.domain.AdminAiTaskSummary;
+import cn.zhishi.stock.admin.domain.AdminAiTaskDetail;
 import cn.zhishi.stock.admin.domain.AdminNewsRelationEntry;
 import cn.zhishi.stock.admin.domain.AdminNewsSourceQuery;
 import cn.zhishi.stock.admin.domain.AdminNewsSourcePatch;
@@ -2237,6 +2241,92 @@ class InfrastructureIntegrationTest {
      *       {@code COALESCE(reason_summary, 原依据)} 都是 SQL 行为。</li>
      * </ul>
      */
+    /**
+     * 后台 AI 运营（契约 §19）的仓储往返。
+     *
+     * <p>契约测试（MockMvc + stub 服务）测不到 SQL 参数绑定与行映射——
+     * OGNL 读不了嵌套 record 参数、枚举列映射这类问题只在真库上炸。
+     * 本类用真库把 ADM-AI-02 的列表链路钉住。
+     */
+    @Nested
+    class AdminAiOperations {
+
+        private static final AtomicLong IDS = new AtomicLong(9_660_000_000_000L);
+
+        @Autowired AdminAiTaskStore adminAiTasks;
+        @Autowired AiTaskStore aiTasks;
+
+        @Test
+        void pagesAndDetailsTasksThroughTheAdminStore() {
+            // AiTaskStore.insert 返回 void：插入后用手里的聚合（含主键）继续断言
+            AiTask fixture = task(AiTaskStatus.RUNNING);
+            aiTasks.insert(fixture);
+
+            AdminAiTaskQuery query = new AdminAiTaskQuery(
+                    null, null, null, AiTaskStatus.RUNNING, null, null,
+                    now().minusDays(1), now().plusMinutes(1), 1, 20);
+            long total = adminAiTasks.count(query);
+            List<AdminAiTaskSummary> page = adminAiTasks.page(query);
+
+            assertThat(total).isGreaterThanOrEqualTo(1);
+            assertThat(page).extracting(AdminAiTaskSummary::taskId)
+                    .contains(fixture.taskId());
+            AdminAiTaskSummary summary = page.stream()
+                    .filter(item -> item.taskId() == fixture.taskId())
+                    .findFirst().orElseThrow();
+            assertThat(summary.status()).isEqualTo(AiTaskStatus.RUNNING);
+            assertThat(summary.targets()).isNotEmpty();
+
+            AdminAiTaskDetail detail = adminAiTasks.find(fixture.taskId()).orElseThrow();
+            assertThat(detail.attemptNo()).isZero();
+            assertThat(detail.maxAttempts()).isEqualTo(2);
+            assertThat(detail.contextTypeCounts()).isNotNull();
+        }
+
+        // ---------- 夹具 ----------
+
+        private OffsetDateTime now() {
+            return OffsetDateTime.now(clock);
+        }
+
+        private AiTask task(AiTaskStatus status) {
+            OffsetDateTime createdAt = now();
+            return new AiTask(
+                    IDS.incrementAndGet(),
+                    java.util.UUID.randomUUID().toString(),
+                    9_670_000_000_001L,
+                    9_710_000_000_001L,
+                    null,
+                    AiScene.STOCK,
+                    "集成测试问题",
+                    createdAt.minusDays(1),
+                    createdAt,
+                    status,
+                    false,
+                    0,
+                    2,
+                    "SIMULATED",
+                    "sim-analyst-v1",
+                    "trace-admin-ai",
+                    createdAt,
+                    status == AiTaskStatus.CREATED ? null : createdAt,
+                    null,
+                    null,
+                    null,
+                    createdAt,
+                    createdAt.plusMinutes(30),
+                    null,
+                    null,
+                    null,
+                    null,
+                    0,
+                    List.of(
+                            new AiContextTarget(
+                                    AiTargetType.SECURITY, "sim-600519", "600519", "集成测试证券",
+                                    AiTargetRole.PRIMARY, 600_519L)));
+        }
+    }
+
     @Nested
     class AdminNewsGovernance {
 
