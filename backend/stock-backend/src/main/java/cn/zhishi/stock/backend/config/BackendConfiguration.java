@@ -61,6 +61,9 @@ import cn.zhishi.stock.integration.ai.LlmProviderFactory;
 import cn.zhishi.stock.integration.market.SimulatedKlineProvider;
 import cn.zhishi.stock.integration.market.SimulatedLimitRuleProvider;
 import cn.zhishi.stock.integration.market.SimulatedQuoteProvider;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import cn.zhishi.stock.integration.market.tencent.HttpTencentQuoteFetcher;
+import cn.zhishi.stock.integration.market.tencent.TencentQuoteProvider;
 import cn.zhishi.stock.integration.market.SimulatedQuoteSnapshotProvider;
 import cn.zhishi.stock.integration.market.SimulatedSecurityIdentityProvider;
 import cn.zhishi.stock.integration.market.SimulatedSecurityMasterProvider;
@@ -398,7 +401,17 @@ public class BackendConfiguration {
         return new SecurityQuoteBatchQueryService(quoteSnapshotBatchProvider);
     }
 
+    /**
+     * 行情快照来源开关（方案 A：{@code QUOTE_SOURCE=TENCENT} 切到腾讯免费源，
+     * 默认 {@code SIMULATED}）。两个条件 Bean 各实现 STK-04 单只与整批两个端口，
+     * 消费方按端口注入、无感知——切换数据源不改任何用例代码。
+     *
+     * <p>边界（如实记录）：本开关只覆盖**查询侧**（个股快照 / 榜单 / 板块成分 / 批量）；
+     * MKT-01 总览的采集链路（{@code QuoteProvider} → {@code MarketOverview}）依赖
+     * 真实板块成分与指数数据（#9 未落库），暂仍走模拟采集。
+     */
     @Bean
+    @ConditionalOnProperty(name = "stock.market.quote-source", havingValue = "SIMULATED", matchIfMissing = true)
     SimulatedQuoteSnapshotProvider quoteSnapshotProvider(
             SecurityQuoteProvider securityQuoteProvider,
             SecurityMasterProvider securityMasterProvider,
@@ -412,6 +425,26 @@ public class BackendConfiguration {
                 tradingCalendarProvider,
                 clock);
     }
+
+    /**
+     * 腾讯免费源适配器（方案 A，仅学习用途）：整批带 20 秒 TTL 缓存，
+     * 60 只一片串行抓取，片间延迟可配（给频控留余地）。
+     */
+    @Bean
+    @ConditionalOnProperty(name = "stock.market.quote-source", havingValue = "TENCENT")
+    TencentQuoteProvider tencentQuoteProvider(
+            SecurityMasterProvider securityMasterProvider,
+            Clock clock,
+            @Value("${stock.market.tencent.chunk-delay-millis:200}") long chunkDelayMillis,
+            @Value("${stock.market.tencent.cache-ttl-seconds:20}") long cacheTtlSeconds) {
+        return new TencentQuoteProvider(
+                new HttpTencentQuoteFetcher(),
+                securityMasterProvider,
+                clock,
+                chunkDelayMillis,
+                Duration.ofSeconds(cacheTtlSeconds));
+    }
+
 
     @Bean
     QuoteProvider quoteProvider(

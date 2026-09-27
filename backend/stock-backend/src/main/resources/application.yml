@@ -33,6 +33,11 @@ stock:
     jwt-secret: ${JWT_SECRET:}
     cookie-secure: ${COOKIE_SECURE:true}
   market:
+    # 行情快照来源（方案 A）：SIMULATED（默认，确定性模拟）| TENCENT（免费准实时，仅学习用途）
+    quote-source: ${QUOTE_SOURCE:SIMULATED}
+    tencent:
+      chunk-delay-millis: ${QUOTE_TENCENT_CHUNK_DELAY_MS:200}
+      cache-ttl-seconds: ${QUOTE_TENCENT_CACHE_TTL_SECONDS:20}
     scenario: ${MARKET_SCENARIO:NORMAL}
     # 模拟交易日历的节假日集合，逗号分隔 ISO 日期。真实日历源就位后此项不再需要。
     holidays: ${MARKET_HOLIDAYS:}
