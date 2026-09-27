@@ -11,10 +11,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import cn.zhishi.stock.common.audit.AuditEvent;
+import cn.zhishi.stock.common.audit.AuditLog;
 import cn.zhishi.stock.export.application.ExportException;
 import cn.zhishi.stock.export.application.ExportJobService;
-import cn.zhishi.stock.export.domain.ExportAuditEvent;
-import cn.zhishi.stock.export.domain.ExportAuditLog;
 import cn.zhishi.stock.export.domain.ExportCell;
 import cn.zhishi.stock.export.domain.ExportColumn;
 import cn.zhishi.stock.export.domain.ExportColumnFormat;
@@ -397,7 +397,7 @@ class ExportJobControllerContractTest {
 
     assertThat(auditLog.events).singleElement().satisfies(event -> {
       assertThat(event.operation()).isEqualTo("EXPORT_CREATE");
-      assertThat(event.resultStatus()).isEqualTo(ExportAuditEvent.SUCCESS);
+      assertThat(event.resultStatus()).isEqualTo(AuditEvent.SUCCESS);
       assertThat(event.requestUri()).isEqualTo("/api/v1/export-jobs");
       assertThat(event.httpMethod()).isEqualTo("POST");
       assertThat(event.userId()).isEqualTo(USER_ID);
@@ -417,8 +417,8 @@ class ExportJobControllerContractTest {
         .andExpect(status().isTooManyRequests());
 
     assertThat(auditLog.events).singleElement()
-        .extracting(ExportAuditEvent::resultStatus)
-        .isEqualTo(ExportAuditEvent.DENIED);
+        .extracting(AuditEvent::resultStatus)
+        .isEqualTo(AuditEvent.DENIED);
   }
 
   // ---------- 装配 ----------
@@ -438,7 +438,7 @@ class ExportJobControllerContractTest {
         .build();
     return MockMvcBuilders.standaloneSetup(
             new ExportJobController(
-                service, idempotency, new ExportAuditRecorder(auditLog), CLOCK))
+                service, idempotency, new AuditRecorder(auditLog), CLOCK))
         .setControllerAdvice(new GlobalExceptionHandler(CLOCK))
         .setMessageConverters(
             new ByteArrayHttpMessageConverter(), new MappingJackson2HttpMessageConverter(mapper))
@@ -549,12 +549,12 @@ class ExportJobControllerContractTest {
     }
   }
 
-  private static final class RecordingAuditLog implements ExportAuditLog {
+  private static final class RecordingAuditLog implements AuditLog {
 
-    private final List<ExportAuditEvent> events = new ArrayList<>();
+    private final List<AuditEvent> events = new ArrayList<>();
 
     @Override
-    public void record(ExportAuditEvent event) {
+    public void record(AuditEvent event) {
       events.add(event);
     }
   }

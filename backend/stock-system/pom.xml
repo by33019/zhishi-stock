@@ -25,6 +25,12 @@
     <!-- 幂等守卫要把"首次提交的请求体 + 首次返回的数据"存成 JSON 再回放（契约 §3.7）。 -->
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-json</artifactId></dependency>
     <dependency><groupId>com.baomidou</groupId><artifactId>mybatis-plus-spring-boot3-starter</artifactId></dependency>
+    <!--
+      审计写入（JdbcSysLogAuditLog）直接用 JdbcTemplate：sys_log 是一次插入、无领域模型，
+      为它建一套 MyBatis mapper 只会多一层空转。starter-jdbc 虽由 mybatis-plus 传递引入，
+      但直接使用的依赖仍应显式声明——否则将来换 ORM 时会以"编译不过"的形式暴出来。
+    -->
+    <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-jdbc</artifactId></dependency>
     <dependency><groupId>io.jsonwebtoken</groupId><artifactId>jjwt-api</artifactId></dependency>
     <dependency><groupId>io.jsonwebtoken</groupId><artifactId>jjwt-impl</artifactId><scope>runtime</scope></dependency>
     <dependency><groupId>io.jsonwebtoken</groupId><artifactId>jjwt-jackson</artifactId><scope>runtime</scope></dependency>

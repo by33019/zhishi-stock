@@ -1,7 +1,10 @@
 package cn.zhishi.stock.backend.web;
 
 import cn.zhishi.stock.common.api.ApiResponse;
+import cn.zhishi.stock.common.audit.AuditEvent;
 import cn.zhishi.stock.export.application.ExportDownload;
+import cn.zhishi.stock.export.application.ExportErrorCode;
+import cn.zhishi.stock.export.application.ExportException;
 import cn.zhishi.stock.export.application.ExportJobAccepted;
 import cn.zhishi.stock.export.application.ExportJobService;
 import cn.zhishi.stock.export.application.ExportJobView;
@@ -67,13 +70,13 @@ public class ExportJobController {
 
     private final ExportJobService jobs;
     private final IdempotencyGuard idempotency;
-    private final ExportAuditRecorder audit;
+    private final AuditRecorder audit;
     private final Clock clock;
 
     public ExportJobController(
             ExportJobService jobs,
             IdempotencyGuard idempotency,
-            ExportAuditRecorder audit,
+            AuditRecorder audit,
             Clock clock) {
         this.jobs = jobs;
         this.idempotency = idempotency;
@@ -99,6 +102,7 @@ public class ExportJobController {
                 request,
                 OPERATION_CREATE,
                 summarize(domain),
+                ExportJobController::failureStatus,
                 () -> idempotency.execute(
                         CREATE_SCOPE,
                         principal.userId(),
@@ -137,6 +141,7 @@ public class ExportJobController {
                 request,
                 OPERATION_DOWNLOAD,
                 summarize(exportId),
+                ExportJobController::failureStatus,
                 () -> jobs.download(principal.userId(), exportId));
 
         HttpHeaders headers = new HttpHeaders();
@@ -163,8 +168,26 @@ public class ExportJobController {
                 request,
                 OPERATION_DELETE,
                 summarize(exportId),
+                ExportJobController::failureStatus,
                 () -> jobs.delete(principal.userId(), exportId));
         return success(new DeletedResult(deleted), request);
+    }
+
+    /**
+     * 导出域的"被拒"口径。
+     *
+     * <p>只有限流是**服务按规则主动拒绝**（{@code EXPORT_RATE_LIMITED}，HTTP 429）：
+     * 服务按规则正常工作，只是这次请求不被允许，运维要看的是"谁在刷"。
+     * 其余（作业不存在、文件没就绪、超过行数上限）都是"这次操作没做成"，
+     * 要看的是"哪里坏了"。两者混记，一段突发限流会看起来像一次故障。
+     *
+     * <p>判定只写在这一处：三个端点的审计因此不可能出现两套口径。
+     */
+    private static String failureStatus(RuntimeException exception) {
+        return exception instanceof ExportException export
+                        && export.code() == ExportErrorCode.RATE_LIMITED
+                ? AuditEvent.DENIED
+                : AuditEvent.FAILURE;
     }
 
     /**

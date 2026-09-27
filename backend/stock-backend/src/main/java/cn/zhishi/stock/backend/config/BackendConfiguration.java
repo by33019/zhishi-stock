@@ -39,10 +39,10 @@ import cn.zhishi.stock.ai.infrastructure.MyBatisAiTaskStore;
 import cn.zhishi.stock.ai.infrastructure.RedisAiTaskEventStream;
 import cn.zhishi.stock.ai.infrastructure.RedisAiTaskQueue;
 import cn.zhishi.stock.backend.security.JwtAuthenticationFilter;
-import cn.zhishi.stock.backend.web.ExportAuditRecorder;
+import cn.zhishi.stock.backend.web.AuditRecorder;
 import cn.zhishi.stock.backend.web.TraceIdFilter;
 import cn.zhishi.stock.export.application.ExportJobService;
-import cn.zhishi.stock.export.domain.ExportAuditLog;
+import cn.zhishi.stock.common.audit.AuditLog;
 import cn.zhishi.stock.export.domain.ExportDataSource;
 import cn.zhishi.stock.export.domain.ExportFileStore;
 import cn.zhishi.stock.export.domain.ExportFileWriter;
@@ -50,7 +50,7 @@ import cn.zhishi.stock.export.domain.ExportJobStore;
 import cn.zhishi.stock.export.domain.ExportPolicy;
 import cn.zhishi.stock.export.domain.ExportRateLimiter;
 import cn.zhishi.stock.export.infrastructure.ExportJobJsonCodec;
-import cn.zhishi.stock.export.infrastructure.JdbcSysLogExportAuditLog;
+import cn.zhishi.stock.system.audit.JdbcSysLogAuditLog;
 import cn.zhishi.stock.export.infrastructure.PoiExportFileWriter;
 import cn.zhishi.stock.export.infrastructure.RedisExportJobStore;
 import cn.zhishi.stock.export.infrastructure.RedisExportRateLimiter;
@@ -1008,15 +1008,15 @@ public class BackendConfiguration {
     }
 
     @Bean
-    ExportAuditLog exportAuditLog(
+    AuditLog auditLog(
             JdbcTemplate jdbc, LongSupplier databaseIdGenerator, Clock clock) {
-        return new JdbcSysLogExportAuditLog(jdbc, databaseIdGenerator, clock);
+        return new JdbcSysLogAuditLog(jdbc, databaseIdGenerator, clock);
     }
 
     /** Web 层的审计补齐器：把发起人 / URI / IP / traceId 补进审计事件。 */
     @Bean
-    ExportAuditRecorder exportAuditRecorder(ExportAuditLog exportAuditLog) {
-        return new ExportAuditRecorder(exportAuditLog);
+    AuditRecorder auditRecorder(AuditLog auditLog) {
+        return new AuditRecorder(auditLog);
     }
 
     /**
@@ -1073,7 +1073,7 @@ public class BackendConfiguration {
             ExportDataSource exportDataSource,
             ExportFileWriter exportFileWriter,
             ExportRateLimiter exportRateLimiter,
-            ExportAuditLog exportAuditLog,
+            AuditLog auditLog,
             Supplier<String> exportIdGenerator,
             ExecutorService exportExecutor,
             Clock clock) {
@@ -1083,7 +1083,7 @@ public class BackendConfiguration {
                 exportDataSource,
                 exportFileWriter,
                 exportRateLimiter,
-                exportAuditLog,
+                auditLog,
                 exportIdGenerator,
                 exportExecutor,
                 clock);

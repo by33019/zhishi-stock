@@ -1,7 +1,7 @@
 package cn.zhishi.stock.export.application;
 
-import cn.zhishi.stock.export.domain.ExportAuditEvent;
-import cn.zhishi.stock.export.domain.ExportAuditLog;
+import cn.zhishi.stock.common.audit.AuditEvent;
+import cn.zhishi.stock.common.audit.AuditLog;
 import cn.zhishi.stock.export.domain.ExportDataSource;
 import cn.zhishi.stock.export.domain.ExportFileStore;
 import cn.zhishi.stock.export.domain.ExportFileWriter;
@@ -57,7 +57,7 @@ public class ExportJobService {
     private final ExportDataSource dataSource;
     private final ExportFileWriter writer;
     private final ExportRateLimiter rateLimiter;
-    private final ExportAuditLog auditLog;
+    private final AuditLog auditLog;
     private final Supplier<String> exportIdGenerator;
     private final Executor executor;
     private final Clock clock;
@@ -68,7 +68,7 @@ public class ExportJobService {
             ExportDataSource dataSource,
             ExportFileWriter writer,
             ExportRateLimiter rateLimiter,
-            ExportAuditLog auditLog,
+            AuditLog auditLog,
             Supplier<String> exportIdGenerator,
             Executor executor,
             Clock clock) {
@@ -216,9 +216,9 @@ public class ExportJobService {
     private void failWith(ExportJob job, String code, String message) {
         jobs.save(job.failed(code, message));
         // 生成结果也要审计：没有它，"谁在什么时候导了但没导成"在 sys_log 上是个空洞。
-        auditLog.record(new ExportAuditEvent(
+        auditLog.record(new AuditEvent(
                 job.userId(), null, "EXPORT_GENERATE", null, null,
-                ExportAuditEvent.FAILURE, "exportId=" + job.exportId() + " code=" + code,
+                AuditEvent.FAILURE, "exportId=" + job.exportId() + " code=" + code,
                 null, null));
     }
 
