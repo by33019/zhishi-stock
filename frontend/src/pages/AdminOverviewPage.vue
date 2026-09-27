@@ -1,16 +1,96 @@
 <script setup lang="ts">
-import { Activity, Bot, CheckCircle2, Clock3, Database, Server, ShieldCheck, Users } from '@lucide/vue'
+import { ref } from 'vue'
+import { Activity, Bot, FileClock, ListTree, ScrollText, Users } from '@lucide/vue'
 
 import PageHeader from '@/components/PageHeader.vue'
+import AdminOverviewSection from './admin/AdminOverviewSection.vue'
+import AdminUsersSection from './admin/AdminUsersSection.vue'
+import AdminJobsSection from './admin/AdminJobsSection.vue'
+import AdminLogsSection from './admin/AdminLogsSection.vue'
+import AdminAiSection from './admin/AdminAiSection.vue'
+import AdminNewsSection from './admin/AdminNewsSection.vue'
+
+/**
+ * 后台管理面（M3-11）。设计决策：**单路由 + Tab 分区**，不再拆子路由——
+ * 后台各分区共享同一个权限闸（`admin:access`）与同一个壳，拆路由只会多出
+ * 六条重复的守卫配置；分区内的数据各自按需加载（切到哪个 Tab 才发哪个请求）。
+ *
+ * 原型页的"注册用户 12,680 / 在线会话 486"等数字没有任何后端来源，
+ * 已整体移除——画出来就是编造（项目纪律：没有数据源的字段直接不渲染）。
+ */
+const tabs = [
+  { key: 'overview', label: '总览', icon: ListTree },
+  { key: 'users', label: '用户管理', icon: Users },
+  { key: 'jobs', label: '定时任务', icon: Activity },
+  { key: 'logs', label: '操作日志', icon: ScrollText },
+  { key: 'ai', label: 'AI 运营', icon: Bot },
+  { key: 'news', label: '资讯治理', icon: FileClock },
+] as const
+
+type TabKey = (typeof tabs)[number]['key']
+
+const activeTab = ref<TabKey>('overview')
 </script>
 
 <template>
   <div class="business-page page-enter">
-    <PageHeader eyebrow="SYSTEM OPERATIONS" title="系统运营" description="统一查看用户、数据采集、缓存、AI 服务和安全审计状态。" data-time="系统时间 14:34:06">
-      <button class="secondary-button" type="button"><ShieldCheck :size="15" /> 审计日志</button>
-    </PageHeader>
-    <section class="ops-metrics"><article><span><Users :size="18" /></span><div><small>注册用户</small><strong>12,680</strong><b class="trend-up">本周 +4.8%</b></div></article><article><span><Activity :size="18" /></span><div><small>在线会话</small><strong>486</strong><b>峰值 612</b></div></article><article><span><Bot :size="18" /></span><div><small>今日 AI 分析</small><strong>3,842</strong><b>成功率 98.7%</b></div></article><article><span><Database :size="18" /></span><div><small>行情延迟</small><strong>26s</strong><b class="trend-up">目标内</b></div></article></section>
-    <section class="ops-grid"><article class="service-status"><header><div><span class="eyebrow">SERVICE HEALTH</span><h2>核心服务状态</h2></div><span class="healthy"><CheckCircle2 :size="14" />全部正常</span></header><div><p><span><Server :size="15" />Spring Boot API</span><b>正常</b><small>32 ms</small></p><p><span><Database :size="15" />MySQL 主库</span><b>正常</b><small>18 ms</small></p><p><span><Activity :size="15" />Redis 缓存</span><b>正常</b><small>4 ms</small></p><p><span><Bot :size="15" />LLM Provider</span><b>正常</b><small>2.8 s</small></p></div></article><article class="job-status"><header><span class="eyebrow">SCHEDULED JOBS</span><h2>采集任务</h2></header><div><p><i class="success" /><span><strong>市场行情快照</strong><small>每 30 秒 · 最近 14:33:30</small></span><b>成功</b></p><p><i class="success" /><span><strong>新闻增量采集</strong><small>每 2 分钟 · 最近 14:32:00</small></span><b>成功</b></p><p><i class="running" /><span><strong>日 K 聚合</strong><small>交易日 15:10 · 等待执行</small></span><b>等待</b></p><p><i class="success" /><span><strong>缓存预热</strong><small>每交易日 09:10 · 最近 09:10:03</small></span><b>成功</b></p></div></article></section>
-    <section class="ops-bottom"><article><header><div><span class="eyebrow">AI USAGE</span><h2>模型调用概览</h2></div><Clock3 :size="17" /></header><div class="usage-number"><strong>1.82M</strong><span>今日 Tokens</span></div><div class="usage-track"><i style="width: 61%" /></div><p><span>预算用量 61%</span><span>预计剩余 1.18M</span></p></article><article><header><div><span class="eyebrow">RECENT AUDIT</span><h2>近期操作</h2></div></header><ul><li><span>admin</span><p>更新用户角色权限</p><time>14:28</time></li><li><span>system</span><p>行情数据源自动切换</p><time>13:52</time></li><li><span>operator</span><p>重新执行新闻采集任务</p><time>11:36</time></li></ul></article></section>
+    <PageHeader
+      eyebrow="SYSTEM OPERATIONS"
+      title="系统运营"
+      description="用户、任务、日志、AI 用量与资讯治理的后台管理面。所有数据来自实时接口，不存在演示数值。"
+      data-time=""
+    />
+
+    <nav class="admin-tabs" aria-label="后台分区">
+      <button
+        v-for="tab in tabs"
+        :key="tab.key"
+        type="button"
+        class="admin-tab"
+        :class="{ active: activeTab === tab.key }"
+        @click="activeTab = tab.key"
+      >
+        <component :is="tab.icon" :size="15" />
+        {{ tab.label }}
+      </button>
+    </nav>
+
+    <AdminOverviewSection v-if="activeTab === 'overview'" />
+    <AdminUsersSection v-else-if="activeTab === 'users'" />
+    <AdminJobsSection v-else-if="activeTab === 'jobs'" />
+    <AdminLogsSection v-else-if="activeTab === 'logs'" />
+    <AdminAiSection v-else-if="activeTab === 'ai'" />
+    <AdminNewsSection v-else />
   </div>
 </template>
+
+<style scoped>
+.admin-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 18px 0 22px;
+}
+
+.admin-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--ink-soft);
+  font-size: var(--text-label);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.admin-tab:hover { border-color: var(--ink); color: var(--ink); }
+
+.admin-tab.active {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--white);
+}
+</style>
