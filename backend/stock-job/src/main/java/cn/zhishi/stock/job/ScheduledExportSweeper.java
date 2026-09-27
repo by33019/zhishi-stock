@@ -1,6 +1,12 @@
 package cn.zhishi.stock.job;
 
 import cn.zhishi.stock.export.application.ExportRetentionSweeper;
+import cn.zhishi.stock.system.job.JobExecutionCounts;
+import cn.zhishi.stock.system.job.JobExecutionOutcome;
+import cn.zhishi.stock.system.job.JobExecutionRecorder;
+import cn.zhishi.stock.system.job.JobExecutionRequest;
+import cn.zhishi.stock.system.job.JobIdentifiers;
+import cn.zhishi.stock.system.job.JobNames;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -20,17 +26,25 @@ import org.springframework.stereotype.Component;
  * <h2>为什么是 fixedDelay 而不是 cron</h2>
  * 清理没有"必须在某个时刻完成"的语义，它只需要**持续推进**。fixedDelay 让两轮之间
  * 至少隔一段时间（上一轮跑完才开始计时），因此不会在积压很多时把两轮叠在一起跑。
+ *
+ * <h2>计数只报"删除了多少"</h2>
+ * {@code sweep(limit)} 的参数是"最多删这么多"，返回值是实际删除数，**不返回扫描量**。
+ * 因此 {@code input_count} 保持 0 而不是拿删除数去填——那会把
+ * "扫描了 2000 条、删了 5 条"说成"输入 5 条"。与人工触发路径口径一致。
  */
 @Component
 public class ScheduledExportSweeper {
 
     private final ExportRetentionSweeper sweeper;
+    private final JobExecutionRecorder executions;
     private final int batchSize;
 
     public ScheduledExportSweeper(
             ExportRetentionSweeper sweeper,
+            JobExecutionRecorder executions,
             @Value("${stock.export.sweep-batch-size:200}") int batchSize) {
         this.sweeper = sweeper;
+        this.executions = executions;
         this.batchSize = batchSize;
     }
 
@@ -40,6 +54,17 @@ public class ScheduledExportSweeper {
     public void sweep() {
         // 异常不在这里吞：Spring 的 fixed-delay 任务会把日志记成 ERROR 然后照常跑下一轮，
         // 因此让 Redis/卷的真实错误浮上来比包装一层更有用。
-        sweeper.sweep(batchSize);
+        // 记录器会在重抛之前把这条执行标成 FAILED，所以页面与日志两边都能看到。
+        executions.record(
+                JobExecutionRequest.scheduled(
+                        JobNames.EXPORT_RETENTION_SWEEP,
+                        JobNames.EXPORT_RETENTION_HANDLER,
+                        JobIdentifiers.newBatchId(),
+                        JobIdentifiers.scheduledTraceId()),
+                () -> {
+                    int deleted = sweeper.sweep(batchSize);
+                    return JobExecutionOutcome.success(
+                            new JobExecutionCounts(0, 0, 0, 0, deleted));
+                });
     }
 }

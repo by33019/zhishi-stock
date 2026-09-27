@@ -10,10 +10,17 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import cn.zhishi.stock.news.application.NewsIngestionService;
+import cn.zhishi.stock.news.domain.NewsIngestionResult;
+import cn.zhishi.stock.system.job.JobExecutionRecorder;
+import cn.zhishi.stock.system.job.JobExecutionRequest;
+import cn.zhishi.stock.system.job.JobNames;
+import cn.zhishi.stock.system.job.JobTriggerType;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -23,9 +30,28 @@ class ScheduledNewsCollectorTest {
     private static final Clock CLOCK =
             Clock.fixed(Instant.parse("2026-09-20T12:13:14Z"), ZoneId.of("Asia/Shanghai"));
 
-    private final NewsIngestionService ingestion = mock(NewsIngestionService.class);
+    private static final NewsIngestionResult NOTHING_FETCHED =
+            new NewsIngestionResult(0, 0, 0, 0, 0, List.of());
 
-    private final ScheduledNewsCollector collector = new ScheduledNewsCollector(ingestion, CLOCK);
+    private final NewsIngestionService ingestion = mock(NewsIngestionService.class);
+    private final JobExecutionRecorder executions = mock(JobExecutionRecorder.class);
+
+    private final ScheduledNewsCollector collector =
+            new ScheduledNewsCollector(ingestion, executions, CLOCK);
+
+    /**
+     * 让记录器**就地执行**它收到的动作。
+     *
+     * <p>这里刻意不 mock 掉动作本身：本类要验的是"采集失败时是否正确留痕"，
+     * 而那个逻辑住在动作里。若把 {@code record} 整个桩成空实现，
+     * 下面所有关于失败的用例都会变成"没跑过"却仍然变绿。
+     */
+    @BeforeEach
+    void runTheActionInline() {
+        when(ingestion.ingest(null)).thenReturn(NOTHING_FETCHED);
+        when(executions.record(any(), any())).thenAnswer(
+                invocation -> invocation.<JobExecutionRecorder.JobAction>getArgument(1).run());
+    }
 
     /**
      * 不设下界：增量判据由"来源 ID 幂等"承担。
@@ -38,6 +64,26 @@ class ScheduledNewsCollectorTest {
         collector.collect();
 
         verify(ingestion).ingest(null);
+    }
+
+    /**
+     * 每轮都要留下一条 {@code SCHEDULED} 执行记录。
+     *
+     * <p>任务名必须取自 {@code JobNames}（与后台白名单同一份常量）：
+     * 两处各写字面量时，"后台执行历史页看不到定时任务"会成为一个没有任何报错的故障。
+     */
+    @Test
+    void recordsAScheduledExecutionUnderTheSharedJobName() {
+        collector.collect();
+
+        ArgumentCaptor<JobExecutionRequest> request =
+                ArgumentCaptor.forClass(JobExecutionRequest.class);
+        verify(executions).record(request.capture(), any());
+        assertThat(request.getValue().jobName()).isEqualTo(JobNames.NEWS_INGEST);
+        assertThat(request.getValue().handlerName()).isEqualTo(JobNames.NEWS_INGEST_HANDLER);
+        assertThat(request.getValue().triggerType()).isEqualTo(JobTriggerType.SCHEDULED);
+        assertThat(request.getValue().batchId()).isNotBlank();
+        assertThat(request.getValue().traceId()).startsWith("sched-");
     }
 
     @Test

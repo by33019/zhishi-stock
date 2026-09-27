@@ -19,10 +19,16 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  * 那些接口一旦被 MyBatis 代理，正常装配就会被搅坏，而且报错指向的是别处。
  * 漏掉这一项的线上症状是整个应用起不来（{@code No qualifying bean of type ...Mapper available}），
  * 看起来像"配置类写错了"而不是"扫描范围没覆盖"（M3-01 已踩过一次）。
+ *
+ * <p>M3-11 追加 {@code cn.zhishi.stock.system}：定时任务的执行记录
+ * （{@code JobExecutionMapper}）在系统域，本模块要写它。范围仍是
+ * {@code annotationClass = Mapper.class}，因此那个包里其余几十个非 Mapper 类型不受影响。
  */
 @EnableScheduling
 @SpringBootApplication
-@MapperScan(basePackages = "cn.zhishi.stock.news", annotationClass = Mapper.class)
+@MapperScan(
+        basePackages = {"cn.zhishi.stock.news", "cn.zhishi.stock.system"},
+        annotationClass = Mapper.class)
 public class StockJobApplication {
 
     public static void main(String[] args) {

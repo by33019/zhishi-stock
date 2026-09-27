@@ -43,6 +43,10 @@ import cn.zhishi.stock.news.infrastructure.MyBatisNewsSourceStore;
 import cn.zhishi.stock.news.infrastructure.NewsArticleMapper;
 import cn.zhishi.stock.news.infrastructure.NewsRelationMapper;
 import cn.zhishi.stock.news.infrastructure.NewsSourceMapper;
+import cn.zhishi.stock.system.job.JobExecutionMapper;
+import cn.zhishi.stock.system.job.JobExecutionRecorder;
+import cn.zhishi.stock.system.job.JobExecutionStore;
+import cn.zhishi.stock.system.job.MyBatisJobExecutionStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -277,5 +281,25 @@ public class JobConfiguration {
     @Bean
     ExportRetentionSweeper exportRetentionSweeper(ExportJobStore jobs, ExportFileStore files) {
         return new ExportRetentionSweeper(jobs, files);
+    }
+
+    // ---------------------------------------------------------------- 任务执行记录（M3-11）
+    //
+    // 三个采集器都要把每轮执行写进 job_execution_summary，否则后台的执行历史页
+    // 只能看到管理员人工触发的那几次，日常真正在跑的调度一条都没有。
+    //
+    // 存储实现来自 stock-system（本模块与 stock-backend 唯一的共同依赖），
+    // 因此两个进程写的是同一张表、同一套列语义——包括 counts_available 这个
+    // "计数是否被采集"的标记。
+
+    @Bean
+    JobExecutionStore jobExecutionStore(JobExecutionMapper mapper, Clock clock) {
+        return new MyBatisJobExecutionStore(mapper, clock);
+    }
+
+    @Bean
+    JobExecutionRecorder jobExecutionRecorder(
+            JobExecutionStore jobExecutionStore, LongSupplier jobDatabaseIdGenerator, Clock clock) {
+        return new JobExecutionRecorder(jobExecutionStore, jobDatabaseIdGenerator, clock);
     }
 }

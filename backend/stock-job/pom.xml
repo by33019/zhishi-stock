@@ -11,6 +11,13 @@
     <!-- 导出文件的到期清理在采集侧（见 ScheduledExportSweeper）；Web 侧只用用例，不做定时。 -->
     <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-export</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-integration</artifactId><version>${project.version}</version></dependency>
+    <!--
+      定时执行要写 job_execution_summary（trigger_type='SCHEDULED'），否则后台的
+      执行历史页开箱为空，人工触发与定时触发也就无法在同一个列表里对照。
+      存储端口放在 stock-system，因为它是本模块与 stock-backend 唯一的共同依赖；
+      stock-system 不依赖 stock-job，因此不构成循环。
+    -->
+    <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-system</artifactId><version>${project.version}</version></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter</artifactId></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-redis</artifactId></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-jdbc</artifactId></dependency>

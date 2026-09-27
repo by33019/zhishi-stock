@@ -1,6 +1,13 @@
 package cn.zhishi.stock.job;
 
 import cn.zhishi.stock.news.application.NewsIngestionService;
+import cn.zhishi.stock.news.domain.NewsIngestionResult;
+import cn.zhishi.stock.system.job.JobExecutionOutcome;
+import cn.zhishi.stock.system.job.JobExecutionRecorder;
+import cn.zhishi.stock.system.job.JobExecutionRequest;
+import cn.zhishi.stock.system.job.JobIdentifiers;
+import cn.zhishi.stock.system.job.JobNames;
+import cn.zhishi.stock.system.job.NewsIngestionJobCounts;
 import java.time.Clock;
 import java.time.OffsetDateTime;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -25,16 +32,23 @@ import org.springframework.stereotype.Component;
  * Spring 的 fixed-delay 任务由 {@code LOG_AND_SUPPRESS_ERROR_HANDLER} 包裹，
  * 抛异常只会记一条 ERROR 然后照常跑下一轮，不会中断调度。只写库不抛日志是哑的——
  * 运维得先知道去查 NEWS-03 才看得到失败。
+ *
+ * <h2>异常路径同样会留下执行记录</h2>
+ * {@code JobExecutionRecorder} 捕获异常后先写 FAILED 再重抛，因此这里不需要自己写记录。
+ * 但"来源级失败标记"仍要自己写——那是资讯域的事，记录器不知道什么是来源。
+ * 两者的顺序是：先标来源（{@code REQUIRES_NEW}，独立事务），再让记录器写执行记录。
  */
 @Component
 public class ScheduledNewsCollector {
 
     private final NewsIngestionService ingestion;
-
+    private final JobExecutionRecorder executions;
     private final Clock clock;
 
-    public ScheduledNewsCollector(NewsIngestionService ingestion, Clock clock) {
+    public ScheduledNewsCollector(
+            NewsIngestionService ingestion, JobExecutionRecorder executions, Clock clock) {
         this.ingestion = ingestion;
+        this.executions = executions;
         this.clock = clock;
     }
 
@@ -42,12 +56,22 @@ public class ScheduledNewsCollector {
             initialDelayString = "${stock.news.collect-initial-delay-ms:1000}",
             fixedDelayString = "${stock.news.collect-delay-ms:120000}")
     public void collect() {
-        try {
-            ingestion.ingest(null);
-        } catch (RuntimeException exception) {
-            markFailureWithoutMaskingTheCause(exception);
-            throw exception;
-        }
+        executions.record(
+                JobExecutionRequest.scheduled(
+                        JobNames.NEWS_INGEST,
+                        JobNames.NEWS_INGEST_HANDLER,
+                        JobIdentifiers.newBatchId(),
+                        JobIdentifiers.scheduledTraceId()),
+                () -> {
+                    try {
+                        NewsIngestionResult result = ingestion.ingest(null);
+                        // 计数映射与人工触发共用一份（见 NewsIngestionJobCounts）
+                        return JobExecutionOutcome.success(NewsIngestionJobCounts.of(result));
+                    } catch (RuntimeException exception) {
+                        markFailureWithoutMaskingTheCause(exception);
+                        throw exception;
+                    }
+                });
     }
 
     /**

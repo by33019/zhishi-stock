@@ -13,6 +13,9 @@ import cn.zhishi.stock.news.domain.RelationCatalogProvider;
 import cn.zhishi.stock.news.infrastructure.NewsArticleMapper;
 import cn.zhishi.stock.news.infrastructure.NewsRelationMapper;
 import cn.zhishi.stock.news.infrastructure.NewsSourceMapper;
+import cn.zhishi.stock.system.job.JobExecutionMapper;
+import cn.zhishi.stock.system.job.JobExecutionRecorder;
+import cn.zhishi.stock.system.job.JobExecutionStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -36,6 +39,8 @@ class JobConfigurationTest {
                     .withBean(NewsSourceMapper.class, () -> mock(NewsSourceMapper.class))
                     .withBean(NewsArticleMapper.class, () -> mock(NewsArticleMapper.class))
                     .withBean(NewsRelationMapper.class, () -> mock(NewsRelationMapper.class))
+                    // M3-11：定时执行要落 job_execution_summary，因此执行记录的 Mapper 也要有。
+                    .withBean(JobExecutionMapper.class, () -> mock(JobExecutionMapper.class))
                     .withPropertyValues("stock.market.scenario=NORMAL");
 
     @Test
@@ -81,5 +86,21 @@ class JobConfigurationTest {
     void assemblesTheNewsCollector() {
         runner.withUserConfiguration(ScheduledNewsCollector.class)
                 .run(context -> assertThat(context).hasSingleBean(ScheduledNewsCollector.class));
+    }
+
+    /**
+     * 三个采集器都依赖执行记录器，缺了它应用直接起不来（构造器注入）。
+     *
+     * <p>这条断言的价值不在"能起来"，而在**记录器与存储都被声明了**：
+     * 只声明记录器而忘了存储，报错会指向 {@code JobExecutionRecorder} 的构造器，
+     * 而真正缺的是另一处。一起断言可以省掉一次来回。
+     */
+    @Test
+    void assemblesTheJobExecutionRecorderAndItsStore() {
+        runner.run(
+                context -> {
+                    assertThat(context).hasSingleBean(JobExecutionStore.class);
+                    assertThat(context).hasSingleBean(JobExecutionRecorder.class);
+                });
     }
 }
