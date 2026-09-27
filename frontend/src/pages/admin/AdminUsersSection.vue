@@ -4,19 +4,27 @@ import { computed, onMounted, ref } from 'vue'
 import { useRemoteData } from '@/composables/useRemoteData'
 import {
   changeAdminUserStatus,
+  createAdminUser,
   deleteAdminUser,
+  getAdminRoles,
   getAdminUser,
   getAdminUsers,
+  patchAdminUser,
+  replaceAdminUserRoles,
+  resetAdminUserPassword,
   revokeAdminUserSessions,
 } from '@/services/adminApi'
 import type { AdminUserDetail, AdminUserSummary } from '@/types/admin'
 
 /**
- * 用户管理分区（ADM-USR-01/02/05/08/09 的页面覆盖）。
+ * 用户管理分区（ADM-USR-01~09 的页面覆盖）。
  *
  * 联系方式在详情里就是脱敏值（`138****1234`），后端不给明文，页面也不该要。
  * 每个写操作一个独立的幂等键（`randomUUID()`）："这次点下去的强制下线"与
  * "上一次"是两个意图，重试由操作者自己决定。
+ *
+ * 密码重置如实呈现后端口径：项目尚未接入邮件通道，凭证**未实际送达**，
+ * 页面原样展示签发说明而不是宣称"已发送"。
  */
 const keyword = ref('')
 const submittedKeyword = ref('')
@@ -27,6 +35,7 @@ const actionError = ref('')
 const users = useRemoteData(() =>
   getAdminUsers({ keyword: submittedKeyword.value || undefined, page: page.value, size: 20 }),
 )
+const roles = useRemoteData(() => getAdminRoles({ page: 1, size: 50 }))
 
 onMounted(() => users.reload())
 
@@ -92,6 +101,79 @@ function remove(user: AdminUserDetail) {
   )
 }
 
+// ---------- 创建用户（ADM-USR-03） ----------
+
+const createOpen = ref(false)
+const createForm = ref({ username: '', nickName: '', email: '', phone: '' })
+
+function openCreate() {
+  createOpen.value = true
+  createForm.value = { username: '', nickName: '', email: '', phone: '' }
+}
+
+async function submitCreate() {
+  notice.value = ''
+  actionError.value = ''
+  try {
+    const created = await createAdminUser(
+      {
+        username: createForm.value.username,
+        nickName: createForm.value.nickName || undefined,
+        email: createForm.value.email || undefined,
+        phone: createForm.value.phone || undefined,
+      },
+      crypto.randomUUID(),
+    )
+    createOpen.value = false
+    notice.value = `已创建用户 ${created.username}（临时密码经安全通道另行下发）`
+    await users.reload()
+  } catch (cause) {
+    actionError.value = (cause as { message?: string }).message ?? '创建失败'
+  }
+}
+
+// ---------- 编辑资料 / 角色 / 密码重置（ADM-USR-04 / 06 / 07） ----------
+
+const editNickName = ref('')
+const selectedRoleIds = ref<number[]>([])
+
+function beginEdit() {
+  if (!detail.value) return
+  editNickName.value = detail.value.nickName || ''
+  selectedRoleIds.value = detail.value.roles.map((role) => role.roleId)
+  void roles.reload()
+}
+
+async function saveProfile() {
+  if (!detail.value) return
+  const target = detail.value
+  await runAction(
+    () =>
+      patchAdminUser(target.userId, target.version, {
+        nickName: editNickName.value || undefined,
+      }),
+    `已更新 ${target.username} 的资料`,
+  )
+}
+
+async function saveRoles() {
+  if (!detail.value) return
+  const target = detail.value
+  await runAction(
+    () => replaceAdminUserRoles(target.userId, selectedRoleIds.value),
+    `已更新 ${target.username} 的角色`,
+  )
+}
+
+async function issuePasswordReset() {
+  if (!detail.value) return
+  const target = detail.value
+  await runAction(
+    () => resetAdminUserPassword(target.userId, crypto.randomUUID()),
+    `已为 ${target.username} 签发一次性重置凭证（未接入邮件通道，见签发说明）`,
+  )
+}
+
 function search() {
   submittedKeyword.value = keyword.value.trim()
   page.value = 1
@@ -111,15 +193,25 @@ const totalPages = computed(() => users.data.value?.totalPages ?? 0)
     <section class="research-panel">
       <div class="section-heading">
         <div><span class="eyebrow">USERS</span><h2>用户列表</h2></div>
-        <form class="admin-search" @submit.prevent="search">
+        <div class="admin-search">
           <input v-model="keyword" type="search" placeholder="账号 / 昵称" aria-label="搜索用户" />
-          <button class="secondary-button" type="submit">搜索</button>
-        </form>
+          <button class="secondary-button" type="button" @click="search">搜索</button>
+          <button class="secondary-button" type="button" @click="openCreate">创建用户</button>
+        </div>
       </div>
 
       <p v-if="notice" class="admin-notice">{{ notice }}</p>
       <p v-if="actionError" class="admin-error">{{ actionError }}</p>
       <p v-if="users.error.value" class="admin-error">{{ users.error.value.message }}</p>
+
+      <form v-if="createOpen" class="admin-create-form" @submit.prevent="submitCreate">
+        <input v-model="createForm.username" placeholder="账号（必填）" required />
+        <input v-model="createForm.nickName" placeholder="昵称" />
+        <input v-model="createForm.email" type="email" placeholder="邮箱（重置密码的投递目标）" />
+        <input v-model="createForm.phone" placeholder="手机号" />
+        <button class="primary-button" type="submit">创建</button>
+        <button class="secondary-button" type="button" @click="createOpen = false">取消</button>
+      </form>
 
       <table v-else-if="users.data.value && users.data.value.items.length" class="quote-table">
         <thead><tr><th>账号</th><th>昵称</th><th>状态</th><th>角色数</th><th>操作</th></tr></thead>
@@ -152,7 +244,11 @@ const totalPages = computed(() => users.data.value?.totalPages ?? 0)
     <section v-else-if="detail" class="research-panel">
       <div class="section-heading">
         <div><span class="eyebrow">USER DETAIL</span><h2>{{ detail.username }}</h2></div>
-        <button class="secondary-button" type="button" @click="remove(detail)">删除用户</button>
+        <div class="admin-search">
+          <button class="secondary-button" type="button" @click="beginEdit">编辑</button>
+          <button class="secondary-button" type="button" @click="issuePasswordReset">签发密码重置凭证</button>
+          <button class="secondary-button" type="button" @click="remove(detail)">删除用户</button>
+        </div>
       </div>
       <dl class="admin-facts">
         <div><dt>用户 ID</dt><dd>{{ detail.userId }}</dd></div>
@@ -160,11 +256,24 @@ const totalPages = computed(() => users.data.value?.totalPages ?? 0)
         <div><dt>手机（脱敏）</dt><dd>{{ detail.maskedPhone || '—' }}</dd></div>
         <div><dt>令牌版本</dt><dd>{{ detail.tokenVersion }}</dd></div>
         <div><dt>版本（If-Match）</dt><dd>{{ detail.version }}</dd></div>
-        <div>
-          <dt>角色</dt>
-          <dd>{{ detail.roles.map((role) => role.roleName).join('、') || '—' }}</dd>
-        </div>
       </dl>
+
+      <form class="admin-create-form" @submit.prevent="saveProfile">
+        <input v-model="editNickName" placeholder="昵称（编辑后保存）" aria-label="昵称" />
+        <button class="primary-button" type="submit">保存资料</button>
+      </form>
+
+      <form v-if="roles.data.value" class="admin-create-form" @submit.prevent="saveRoles">
+        <label
+          v-for="role in roles.data.value.items"
+          :key="role.roleId"
+          class="admin-role-option"
+        >
+          <input v-model="selectedRoleIds" type="checkbox" :value="role.roleId" />
+          {{ role.name }}（{{ role.description }}）
+        </label>
+        <button class="primary-button" type="submit">保存角色</button>
+      </form>
     </section>
   </div>
 </template>

@@ -100,6 +100,33 @@ const newsStatus = await openSection('资讯治理', /\/api\/v1\/admin\/news-sou
 assert.equal(newsStatus, 200, 'ADM-NEWS-01 不是 200')
 console.log('资讯分区 OK：ADM-NEWS-01 200')
 
+// ---------- 写路径 1：新建来源（ADM-NEWS-03，201）----------
+// 表单用连续三个 prompt（编码/名称/授权区间），用对话框队列按序应答。
+const promptAnswers = ['sim-e2e-source', 'E2E 验收来源', '2026-01-01', '2027-12-31']
+page.on('dialog', (dialog) => dialog.accept(promptAnswers.shift() ?? ''))
+const createSourceResponse = page.waitForResponse(
+  (response) =>
+    response.url().includes('/admin/news-sources') &&
+    response.request().method() === 'POST',
+  { timeout: 15_000 },
+)
+await page.getByRole('button', { name: '新建来源' }).click()
+assert.equal((await createSourceResponse).status(), 201, 'ADM-NEWS-03 不是 201')
+await page.getByText('sim-e2e-source').waitFor({ timeout: 10_000 })
+console.log('写路径 OK：新建来源 201 且出现在列表')
+
+// ---------- 写路径 2：人工触发任务（ADM-JOB-02，202）----------
+await page.getByRole('button', { name: '定时任务' }).click()
+const triggerResponse = page.waitForResponse(
+  (response) =>
+    /\/admin\/job-definitions\/[a-z-]+\/executions/.test(response.url()) &&
+    response.request().method() === 'POST',
+  { timeout: 15_000 },
+)
+await page.getByRole('button', { name: '人工触发' }).first().click()
+assert.equal((await triggerResponse).status(), 202, 'ADM-JOB-02 不是 202')
+console.log('写路径 OK：人工触发 202（异步执行）')
+
 // ---------- 汇总 ----------
 const failedCalls = apiCalls.filter((call) => call.status >= 400)
 console.log('--- 非 2xx 的 /api 请求 ---')

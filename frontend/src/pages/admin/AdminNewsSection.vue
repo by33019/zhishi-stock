@@ -3,7 +3,9 @@ import { onMounted, ref } from 'vue'
 
 import { useRemoteData } from '@/composables/useRemoteData'
 import {
+  createAdminNewsRelation,
   createAdminNewsSource,
+  deleteAdminNewsRelation,
   getAdminNewsRelations,
   getAdminNewsSources,
   patchAdminNewsSource,
@@ -103,6 +105,45 @@ function authorizeLabel(source: AdminNewsSource): string {
   if (source.authorizationStatus === 'SUSPENDED') return '授权已暂停'
   return '未登记授权'
 }
+
+// ---------- ADM-NEWS-07：手工关联 ----------
+
+const manualRelation = ref({ newsId: '', targetType: 'SECURITY' as string, targetId: '', reason: '' })
+
+async function submitManualRelation() {
+  notice.value = ''
+  actionError.value = ''
+  try {
+    const created = await createAdminNewsRelation(
+      Number(manualRelation.value.newsId),
+      {
+        targetType: manualRelation.value.targetType,
+        targetId: manualRelation.value.targetId,
+        reasonSummary: manualRelation.value.reason || undefined,
+      },
+      crypto.randomUUID(),
+    )
+    notice.value = `已建立手工关联 ${created.relationId}（MANUAL + CONFIRMED）`
+    await relations.reload()
+  } catch (cause) {
+    actionError.value = (cause as { message?: string }).message ?? '建立关联失败'
+  }
+}
+
+// ---------- ADM-NEWS-08：删除关联（置 REJECTED，保留审计） ----------
+
+async function removeRelation(relation: AdminNewsRelation) {
+  const reason = window.prompt('删除关联的原因（审计留痕）') ?? ''
+  notice.value = ''
+  actionError.value = ''
+  try {
+    await deleteAdminNewsRelation(relation.relationId, reason || undefined)
+    notice.value = `关联 ${relation.relationId} 已置为 REJECTED`
+    await relations.reload()
+  } catch (cause) {
+    actionError.value = (cause as { message?: string }).message ?? '删除失败'
+  }
+}
 </script>
 
 <template>
@@ -157,6 +198,18 @@ function authorizeLabel(source: AdminNewsSource): string {
           </select>
         </div>
       </div>
+
+      <form class="admin-create-form" @submit.prevent="submitManualRelation">
+        <input v-model="manualRelation.newsId" placeholder="新闻 ID（必填）" required />
+        <select v-model="manualRelation.targetType" aria-label="目标类型">
+          <option value="SECURITY">证券</option>
+          <option value="SECTOR">板块</option>
+          <option value="MARKET">市场</option>
+        </select>
+        <input v-model="manualRelation.targetId" placeholder="目标标识（如 sim-600000 / CN）" required />
+        <input v-model="manualRelation.reason" placeholder="关联依据（审计留痕）" />
+        <button class="primary-button" type="submit">手工关联</button>
+      </form>
       <p v-if="relations.error.value" class="admin-error">{{ relations.error.value.message }}</p>
       <table v-else-if="relations.data.value && relations.data.value.items.length" class="quote-table">
         <thead><tr><th>新闻</th><th>目标</th><th>方法</th><th>置信度</th><th>依据</th><th>操作</th></tr></thead>
@@ -173,6 +226,13 @@ function authorizeLabel(source: AdminNewsSource): string {
                 <button type="button" @click="review(relation, 'REJECTED')">拒绝</button>
               </template>
               <span v-else class="status-label flat">{{ relation.relationStatus }}</span>
+              <button
+                v-if="relation.relationStatus !== 'REJECTED'"
+                type="button"
+                @click="removeRelation(relation)"
+              >
+                删除
+              </button>
             </td>
           </tr>
         </tbody>
