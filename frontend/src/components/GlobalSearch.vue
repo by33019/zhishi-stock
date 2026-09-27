@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { Search } from '@lucide/vue'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { useRemoteData } from '@/composables/useRemoteData'
-import { searchSecurities } from '@/services/securityApi'
-import type { SecuritySearchMatch, SecuritySummary } from '@/types/domain'
+import { batchQueryQuotes, searchSecurities } from '@/services/securityApi'
+import type { QuoteSnapshot, SecuritySearchMatch, SecuritySummary } from '@/types/domain'
 
 /** PRD QTE-01：300 毫秒防抖。 */
 const DEBOUNCE_MS = 300
@@ -47,6 +47,35 @@ const {
  * 面板里会继续挂着上一次的结果——看起来像"搜到了什么"，其实输入框是空的。
  */
 const items = computed(() => (trimmed.value ? result.value?.items ?? [] : []))
+
+/**
+ * 搜索建议的涨跌幅（STK-05）。
+ *
+ * 已知问题 #10 的收口：此前不展示涨跌幅是因为逐条调 STK-04 会把一次搜索
+ * 变成 N 个请求；STK-05 一次批量取回后这里才有数据可渲染。
+ *
+ * **时机与诚实**：行情批量请求跟在搜索结果之后异步发出，谁先到就先渲染谁——
+ * 行情还没到的行**不显示价格**，而不是显示 0 或"—"冒充数据；
+ * missing 里的标识（主数据有但快照无，如停牌）同样不渲染。
+ * 每次搜索前清空上一批，防止"搜 A 显示 B 的价格"。
+ */
+const quotesById = shallowRef<Map<string, QuoteSnapshot>>(new Map())
+let quoteRequestSeq = 0
+
+watch(items, async (matches) => {
+  const ids = matches.map((match) => match.security.securityId)
+  quotesById.value = new Map()
+  if (!ids.length) return
+  const request = ++quoteRequestSeq
+  try {
+    const batch = await batchQueryQuotes(ids)
+    if (request !== quoteRequestSeq) return
+    quotesById.value = new Map(batch.items.map((quote) => [quote.security.securityId, quote]))
+  } catch {
+    // 行情拿不到时建议仍然可用：不渲染价格，也不报错打断搜索主流程。
+    if (request === quoteRequestSeq) quotesById.value = new Map()
+  }
+})
 
 /** 键盘快捷键提示：Mac 显示 ⌘K，其余平台显示 Ctrl K。 */
 const shortcutHint = computed(() =>
@@ -178,13 +207,20 @@ function statusLabel(security: SecuritySummary): string | null {
   }
 }
 
-const rows = computed(() => items.value.map((match) => ({
-  match,
-  security: match.security,
-  name: split(match.security.securityName, match.highlight),
-  code: split(match.security.securityCode, match.highlight),
-  status: statusLabel(match.security),
-})))
+const rows = computed(() => items.value.map((match) => {
+  const quote = quotesById.value.get(match.security.securityId)
+  const changeRate = quote?.changeRate ?? null
+  return {
+    match,
+    security: match.security,
+    name: split(match.security.securityName, match.highlight),
+    code: split(match.security.securityCode, match.highlight),
+    status: statusLabel(match.security),
+    quote: quote
+      ? { latestPrice: quote.latestPrice, changeRate, up: (changeRate ?? '').startsWith('-') ? false : true }
+      : null,
+  }
+}))
 </script>
 
 <template>
@@ -257,6 +293,10 @@ const rows = computed(() => items.value.map((match) => ({
               <span>{{ row.code.before }}</span><mark v-if="row.code.hit">{{ row.code.hit }}</mark><span>{{ row.code.after }}</span>
             </small>
           </span>
+          <span class="global-search__quote" v-if="row.quote" :class="row.quote.up ? 'is-up' : 'is-down'">
+            {{ row.quote.latestPrice ?? '—' }}
+            <small>{{ row.quote.changeRate == null ? '' : `${(Number(row.quote.changeRate) * 100).toFixed(2)}%` }}</small>
+          </span>
           <span v-if="row.status" class="global-search__badge">{{ row.status }}</span>
         </button>
       </template>
@@ -268,3 +308,23 @@ const rows = computed(() => items.value.map((match) => ({
     </div>
   </div>
 </template>
+<style scoped>
+.global-search__quote {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-label);
+  font-weight: 750;
+}
+
+.global-search__quote small {
+  font-size: var(--text-caption);
+  font-weight: 600;
+}
+
+/* A 股视觉约定：红涨绿跌（设计令牌与全站一致）。 */
+.global-search__quote.is-up { color: var(--up); }
+.global-search__quote.is-down { color: var(--down); }
+</style>

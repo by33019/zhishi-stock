@@ -276,6 +276,13 @@ export interface QuoteSnapshot {
   delaySeconds: number | null
 }
 
+/** STK-05：批量行情查询结果。`missingSecurityIds` 里的标识没有快照，前端不得编造。 */
+export interface BatchQuoteResult {
+  items: QuoteSnapshot[]
+  missingSecurityIds: string[]
+  snapshotVersion: string | null
+}
+
 /** K 线周期。 */
 export type KlinePeriod = 'DAY' | 'WEEK' | 'MONTH'
 

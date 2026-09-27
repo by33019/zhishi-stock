@@ -3,7 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { SecuritySearchResult, SecuritySummary } from '@/types/domain'
 
-const securityApi = vi.hoisted(() => ({ searchSecurities: vi.fn() }))
+const securityApi = vi.hoisted(() => ({
+  searchSecurities: vi.fn(),
+  batchQueryQuotes: vi.fn(),
+}))
 const navigation = vi.hoisted(() => ({ push: vi.fn() }))
 vi.mock('@/services/securityApi', () => securityApi)
 vi.mock('vue-router', () => ({ useRouter: () => navigation }))
@@ -66,11 +69,44 @@ describe('全局证券搜索', () => {
     vi.clearAllMocks()
     vi.useFakeTimers()
     securityApi.searchSecurities.mockResolvedValue(result(threeMatches))
+    securityApi.batchQueryQuotes.mockResolvedValue({ items: [], missingSecurityIds: [], snapshotVersion: null })
   })
 
   afterEach(() => {
     vi.useRealTimers()
     document.body.innerHTML = ''
+  })
+
+  it('enriches suggestions with the batched quote once STK-05 returns', async () => {
+    securityApi.batchQueryQuotes.mockResolvedValue({
+      items: [
+        {
+          security: summary(),
+          previousClosePrice: '12.00', openPrice: '12.10', latestPrice: '12.34',
+          highPrice: '12.50', lowPrice: '11.90', changeAmount: '0.34',
+          changeRate: '0.0283', tradeVolume: '1', tradeAmount: '1', turnoverRate: '0.01',
+          dataTime: null, serverTime: '2026-09-27T15:00:00+08:00',
+          sequence: 'seq-1', dataStatus: 'REALTIME', delaySeconds: null,
+        },
+      ],
+      missingSecurityIds: ['sim-600001', 'sim-600002'],
+      snapshotVersion: 'seq-1',
+    })
+
+    const wrapper = mountSearch()
+    await type(wrapper, '600')
+    await flushPromises()
+
+    const first = wrapper.get('[id="global-search-option-0"]')
+    expect(first.text()).toContain('12.34')
+    expect(first.text()).toContain('2.83%')
+    // missing 的两只没有快照：不渲染价格（不编造）
+    expect(wrapper.get('[id="global-search-option-1"]').find('.global-search__quote').exists()).toBe(false)
+    // 调用契约：一次搜索一次批量请求，而不是逐条 STK-04
+    expect(securityApi.batchQueryQuotes).toHaveBeenCalledTimes(1)
+    expect(securityApi.batchQueryQuotes).toHaveBeenCalledWith([
+      'sim-600000', 'sim-600001', 'sim-600002',
+    ])
   })
 
   it('输入后等满防抖窗口才发请求，且 q 用裁剪后的值', async () => {

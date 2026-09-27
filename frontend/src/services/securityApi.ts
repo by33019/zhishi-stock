@@ -1,5 +1,5 @@
 import { apiRequest, toQueryString } from './apiClient'
-import type { KlineQuery, KlineSeries, QuoteSnapshot, SecuritySearchResult } from '@/types/domain'
+import type { BatchQuoteResult, KlineQuery, KlineSeries, QuoteSnapshot, SecuritySearchResult } from '@/types/domain'
 
 /**
  * STK-01：搜索建议。
@@ -16,6 +16,17 @@ export function searchSecurities(q: string, limit = 10) {
 /** STK-04：个股最新快照。 */
 export function getSecurityQuote(securityId: string) {
   return apiRequest<QuoteSnapshot>(`/securities/${encodeURIComponent(securityId)}/quote`)
+}
+
+/**
+ * STK-05：批量行情。上限 50 只（去重后）；供搜索建议、自选概览等"一次要一批"的
+ * 场景使用——逐条调 STK-04 会把一次搜索变成 N 个请求（已知问题 #10 的由来）。
+ */
+export function batchQueryQuotes(securityIds: string[]) {
+  return apiRequest<BatchQuoteResult>('/quotes/securities/batch-query', {
+    method: 'POST',
+    body: JSON.stringify({ securityIds }),
+  })
 }
 
 /**
