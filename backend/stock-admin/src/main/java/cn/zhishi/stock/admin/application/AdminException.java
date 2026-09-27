@@ -101,4 +101,62 @@ public class AdminException extends RuntimeException {
                 AdminErrorCode.JOB_EXECUTION_NOT_RETRYABLE,
                 "只有失败或部分失败的执行可以重试，执行 " + executionId + " 当前状态为 " + status);
     }
+
+    // ---------- 资讯治理（契约 §17）----------
+
+    public static AdminException newsSourceNotFound(long sourceId) {
+        return new AdminException(
+                AdminErrorCode.NEWS_SOURCE_NOT_FOUND, "资讯来源不存在：" + sourceId);
+    }
+
+    public static AdminException newsSourceCodeExists(String sourceCode) {
+        return new AdminException(
+                AdminErrorCode.NEWS_SOURCE_CODE_EXISTS, "来源编码已被占用：" + sourceCode);
+    }
+
+    public static AdminException newsRightsPeriodInvalid(String reason) {
+        return new AdminException(
+                AdminErrorCode.NEWS_RIGHTS_PERIOD_INVALID, "授权区间不成立：" + reason);
+    }
+
+    public static AdminException newsRelationNotFound(long relationId) {
+        return new AdminException(
+                AdminErrorCode.NEWS_RELATION_NOT_FOUND, "资讯关联不存在：" + relationId);
+    }
+
+    public static AdminException newsRelationAlreadyReviewed(long relationId, String status) {
+        return new AdminException(
+                AdminErrorCode.NEWS_RELATION_ALREADY_REVIEWED,
+                "关联 " + relationId + " 已被人工复核（当前状态 " + status + "），不能二次复核");
+    }
+
+    public static AdminException newsRelationTargetInvalid(String targetId) {
+        return new AdminException(
+                AdminErrorCode.NEWS_RELATION_TARGET_INVALID,
+                "关联目标解析不到有效对象：" + targetId);
+    }
+
+    public static AdminException newsNotFound(long newsId) {
+        return new AdminException(
+                AdminErrorCode.NEWS_NOT_FOUND, "资讯稿件不存在：" + newsId);
+    }
+
+    // ---------- AI 运营（契约 §19）----------
+
+    public static AdminException aiTaskNotFound(long taskId) {
+        return new AdminException(
+                AdminErrorCode.AI_ADMIN_TASK_NOT_FOUND, "AI 任务不存在：" + taskId);
+    }
+
+    public static AdminException aiCancelNotAllowed(long taskId, String status) {
+        return new AdminException(
+                AdminErrorCode.AI_ADMIN_CANCEL_NOT_ALLOWED,
+                "任务 " + taskId + " 已处于终态（" + status + "），取消不再生效");
+    }
+
+    public static AdminException aiUsageRangeTooLarge(int maxDays, int defaultDays) {
+        return new AdminException(
+                AdminErrorCode.AI_USAGE_RANGE_TOO_LARGE,
+                "用量查询跨度不能超过 " + maxDays + " 天，未指定时默认最近 " + defaultDays + " 天");
+    }
 }

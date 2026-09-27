@@ -65,6 +65,26 @@ class AdminAuthorizationTest {
             "execution", "ops:job:detail",
             "retry", "ops:job:retry");
 
+    /** 契约 §17.1 / §17.2 的码表（来源与关联两组资源）。 */
+    private static final Map<String, String> NEWS_ENDPOINTS = endpointTable(
+            "listSources", "news:source:list",
+            "source", "news:source:detail",
+            "createSource", "news:source:create",
+            "updateSource", "news:source:update",
+            "listRelations", "news:relation:list",
+            "reviewRelation", "news:relation:review",
+            "createRelation", "news:relation:create",
+            "deleteRelation", "news:relation:delete");
+
+    /** 契约 §19 的码表。 */
+    private static final Map<String, String> AI_ENDPOINTS = endpointTable(
+            "overview", "ai:ops:overview",
+            "tasks", "ai:ops:task-list",
+            "task", "ai:ops:task-detail",
+            "cancel", "ai:ops:task-cancel",
+            "usage", "ai:ops:usage",
+            "feedbackStatistics", "ai:ops:feedback");
+
     /**
      * 后台的全部控制器。
      *
@@ -76,7 +96,9 @@ class AdminAuthorizationTest {
             AdminUserController.class,
             AdminRoleController.class,
             AdminOperationLogController.class,
-            AdminJobController.class);
+            AdminJobController.class,
+            AdminNewsController.class,
+            AdminAiController.class);
 
     @Test
     void everyAdminUserEndpointCarriesTheContractPermissionCode() {
@@ -100,6 +122,18 @@ class AdminAuthorizationTest {
     void everyJobEndpointCarriesTheContractPermissionCode() {
         assertThat(permissionCodes(AdminJobController.class))
             .containsExactlyInAnyOrderEntriesOf(JOB_ENDPOINTS);
+    }
+
+    @Test
+    void everyNewsGovernanceEndpointCarriesTheContractPermissionCode() {
+        assertThat(permissionCodes(AdminNewsController.class))
+            .containsExactlyInAnyOrderEntriesOf(NEWS_ENDPOINTS);
+    }
+
+    @Test
+    void everyAiOperationsEndpointCarriesTheContractPermissionCode() {
+        assertThat(permissionCodes(AdminAiController.class))
+            .containsExactlyInAnyOrderEntriesOf(AI_ENDPOINTS);
     }
 
     /**

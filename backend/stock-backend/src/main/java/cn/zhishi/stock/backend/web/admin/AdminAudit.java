@@ -32,6 +32,14 @@ final class AdminAudit {
     static final String JOB_TRIGGER = "ADMIN_JOB_TRIGGER";
     static final String JOB_RETRY = "ADMIN_JOB_RETRY";
 
+    static final String NEWS_SOURCE_CREATE = "ADMIN_NEWS_SOURCE_CREATE";
+    static final String NEWS_SOURCE_UPDATE = "ADMIN_NEWS_SOURCE_UPDATE";
+    static final String NEWS_RELATION_REVIEW = "ADMIN_NEWS_RELATION_REVIEW";
+    static final String NEWS_RELATION_CREATE = "ADMIN_NEWS_RELATION_CREATE";
+    static final String NEWS_RELATION_DELETE = "ADMIN_NEWS_RELATION_DELETE";
+
+    static final String AI_TASK_CANCEL = "ADMIN_AI_TASK_CANCEL";
+
     /** 摘要长度上限：{@code reason} 是自由文本，不设上限就能把一行日志撑成一篇文档。 */
     private static final int SUMMARY_LIMIT = 200;
 

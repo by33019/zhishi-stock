@@ -78,7 +78,67 @@ public enum AdminErrorCode {
      * <p>单独一个码而不是复用 {@code INVALID_REQUEST}：调用方需要知道
      * "这条记录再点一次还是会被拒"（成功/运行中/已取消），与"请求体写错了"不是一回事。
      */
-    JOB_EXECUTION_NOT_RETRYABLE("ADMIN_JOB_EXECUTION_NOT_RETRYABLE", 409);
+    JOB_EXECUTION_NOT_RETRYABLE("ADMIN_JOB_EXECUTION_NOT_RETRYABLE", 409),
+
+    // ---------- 资讯治理（契约 §17.1 / §17.2）----------
+
+    /** 资讯来源不存在。 */
+    NEWS_SOURCE_NOT_FOUND("NEWS_SOURCE_NOT_FOUND", 404),
+
+    /** 来源编码已被占用（V4 的 {@code uk_news_source_code}）。 */
+    NEWS_SOURCE_CODE_EXISTS("NEWS_SOURCE_CODE_EXISTS", 409),
+
+    /**
+     * 授权区间不成立，或企图把已到期的区间标记为有效。
+     *
+     * <p>不复用 {@code INVALID_REQUEST}：与 {@code LOG_RANGE_TOO_WIDE} 同一条理由，
+     * "把截止日期改晚一点就能成功"与"请求体本身写错了"对调用方是两种处置。
+     */
+    NEWS_RIGHTS_PERIOD_INVALID("NEWS_RIGHTS_PERIOD_INVALID", 400),
+
+    /** 资讯关联不存在。 */
+    NEWS_RELATION_NOT_FOUND("NEWS_RELATION_NOT_FOUND", 404),
+
+    /**
+     * 关联已被人工复核过（{@code reviewed_at} 非空），不能二次复核。
+     *
+     * <p>单独一个码：复核是留痕的人事动作，"覆盖上一次结论"与"改一个还没审的候选"
+     * 在审计上是两种性质，前者必须显式失败让操作者意识到自己在推翻别人。
+     */
+    NEWS_RELATION_ALREADY_REVIEWED("NEWS_RELATION_ALREADY_REVIEWED", 409),
+
+    /**
+     * 关联目标解析不到代理键（代码打错、目标不在主数据中）。
+     *
+     * <p>422 而非 404：失败的是"这个请求引用的实体"，请求本身格式没问题——
+     * 与 {@code ROLE_NOT_FOUND}（引用了不存在的角色）同一档。
+     */
+    NEWS_RELATION_TARGET_INVALID("NEWS_RELATION_TARGET_INVALID", 422),
+
+    /** 手工关联指向的新闻不存在（ADM-NEWS-07 的 {@code newsId} 解析不到稿件）。 */
+    NEWS_NOT_FOUND("NEWS_NOT_FOUND", 404),
+
+    // ---------- AI 运营（契约 §19）----------
+
+    /** AI 任务不存在。 */
+    AI_ADMIN_TASK_NOT_FOUND("AI_ADMIN_TASK_NOT_FOUND", 404),
+
+    /**
+     * 任务已到终态，取消不再生效。
+     *
+     * <p>与用户侧 AI-06"如实说取消未生效"不同：管理员取消是运营动作，
+     * 打到已完成的任务上是**调用方的状态判断过时**，409 让它显式暴露，
+     * 而不是 200 + 一个"取消没生效"的模糊结果。
+     */
+    AI_ADMIN_CANCEL_NOT_ALLOWED("AI_ADMIN_CANCEL_NOT_ALLOWED", 409),
+
+    /**
+     * 用量查询的窗口跨度超上限。
+     *
+     * <p>与 {@code LOG_RANGE_TOO_WIDE} 同一条理由："收窄窗口重试就能成功"
+     * 必须与"请求写错了"区分开。
+     */
+    AI_USAGE_RANGE_TOO_LARGE("AI_USAGE_RANGE_TOO_LARGE", 400);
 
     private final String externalCode;
     private final int httpStatus;

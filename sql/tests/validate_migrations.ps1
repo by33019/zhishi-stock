@@ -41,11 +41,24 @@ $expectedMigrationNames = @(
     'V5__create_watchlist_domain.sql',
     'V6__create_ai_domain.sql',
     'V7__create_job_and_outbox_domain.sql',
-    'V8__create_market_overview_snapshot.sql'
+    'V8__create_market_overview_snapshot.sql',
+    'V9__seed_admin_rbac.sql',
+    'V10__add_job_execution_counts_available.sql',
+    'V11__seed_admin_news_rbac.sql'
 )
 
 if (($migrationFiles.Name -join ',') -ne ($expectedMigrationNames -join ',')) {
     throw "Flyway 文件集合或顺序不正确: $($migrationFiles.Name -join ', ')"
+}
+
+# V9 / V11 是 RBAC 种子迁移：只允许播种权限、角色与绑定，**不建任何账号**。
+# 账号属于环境数据（dev/test 由 DevelopmentAccountSeeder 建、生产由运维建），
+# 迁移里写死账号等于给每个克隆库留一个已知密码的高权限入口（见 V9 头注）。
+foreach ($seedMigration in @('V9__seed_admin_rbac.sql', 'V11__seed_admin_news_rbac.sql')) {
+    $seedSql = Get-Content -LiteralPath (Join-Path $migrationRoot $seedMigration) -Raw -Encoding UTF8
+    if ($seedSql -match '(?i)INSERT\s+INTO\s+``sys_user``|UPDATE\s+``sys_user``') {
+        throw "$seedMigration 不得写 sys_user（账号不属于迁移，见 V9 头注）"
+    }
 }
 
 $allMigrationSql = ($migrationFiles | ForEach-Object {

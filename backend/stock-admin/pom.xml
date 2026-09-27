@@ -17,6 +17,18 @@
       正是管理员取消需要的语义），不在后台域重写一条 UPDATE。
     -->
     <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-ai</artifactId><version>${project.version}</version></dependency>
+    <!--
+      资讯治理（契约 §17）复用资讯域的领域词汇：NewsSource 及其授权状态/来源状态枚举、
+      关联状态/方法/目标类型枚举。后台是同一批表（news_source / stock_news_relation）的
+      第二个读写方，再造一套"来源状态叫什么"就会出现两个答案。
+      关联审核需要的 reviewed_by/reviewed_at 资讯域模型没带，由后台侧的记录类型补充。
+    -->
+    <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-news</artifactId><version>${project.version}</version></dependency>
+    <!--
+      关联目标的对外标识 ↔ 代理键桥接（SECURITY / SECTOR）是行情域的事实
+      （SecurityIdentityProvider / SectorIdentityProvider），后台只消费不定义。
+    -->
+    <dependency><groupId>cn.zhishi.stock</groupId><artifactId>stock-market</artifactId><version>${project.version}</version></dependency>
     <!-- 后台查询侧全部是注解式 MyBatis（全项目无 XML mapper） -->
     <dependency><groupId>com.baomidou</groupId><artifactId>mybatis-plus-spring-boot3-starter</artifactId></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-jdbc</artifactId></dependency>

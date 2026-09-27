@@ -10,6 +10,12 @@ import cn.zhishi.stock.admin.application.JobAdminService;
 import cn.zhishi.stock.admin.application.OperationLogService;
 import cn.zhishi.stock.admin.application.RetryJobCommand;
 import cn.zhishi.stock.admin.application.TriggerJobCommand;
+import cn.zhishi.stock.admin.domain.AdminNewsRelationStore;
+import cn.zhishi.stock.admin.domain.AdminNewsRelationEntry;
+import cn.zhishi.stock.admin.domain.AdminNewsSourceQuery;
+import cn.zhishi.stock.admin.domain.AdminNewsSourcePatch;
+import cn.zhishi.stock.admin.domain.AdminNewsSourceStore;
+import cn.zhishi.stock.admin.domain.NewAdminNewsSource;
 import cn.zhishi.stock.admin.domain.JobDefinitionCatalog;
 import cn.zhishi.stock.admin.domain.JobTrigger;
 import cn.zhishi.stock.admin.domain.OperationLogDetail;
@@ -153,7 +159,7 @@ class InfrastructureIntegrationTest {
     void executesAllMigrationsAndSeedsOnlyTheTestProfileAccount() {
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM flyway_schema_history WHERE success = 1", Integer.class))
-                .isEqualTo(10);
+                .isEqualTo(11);
         assertThat(accounts.findByUsername("demo")).isPresent();
     }
 
@@ -2215,6 +2221,185 @@ class InfrastructureIntegrationTest {
                     Integer.class, executionId);
             assertThat(value).isNotNull();
             return value;
+        }
+    }
+
+    /**
+     * 资讯治理（契约 §17）的仓储读写往返。
+     *
+     * <h2>这一组为什么必须在真库上跑</h2>
+     * <ul>
+     *   <li>来源的 CAS 更新（{@code WHERE version = ?}）在单测的内存 stub 里必然"成功"，
+     *       只有真库能证明"过期版本影响 0 行"的语义；</li>
+     *   <li>来源编码与关联目标的唯一索引（{@code uk_news_source_code} /
+     *       {@code uk_news_relation_target}）只存在于真实 MySQL；</li>
+     *   <li>关联列表的 {@code JOIN stock_news}（标题回显）与
+     *       {@code COALESCE(reason_summary, 原依据)} 都是 SQL 行为。</li>
+     * </ul>
+     */
+    @Nested
+    class AdminNewsGovernance {
+
+        private static final AtomicLong IDS = new AtomicLong(9_450_000_000_000L);
+
+        @Autowired AdminNewsSourceStore adminNewsSources;
+        @Autowired AdminNewsRelationStore adminNewsRelations;
+        @Autowired NewsArticleStore newsArticles;
+        @Autowired NewsSourceStore newsSources;
+        @Autowired NewsRelationStore newsRelations;
+
+        @Test
+        void roundTripsAnAdminSourceAndEnforcesTheCasUpdate() {
+            NewAdminNewsSource command = new NewAdminNewsSource(
+                    null, "SIM_ADM_SOURCE", "后台登记来源", NewsSourceType.MEDIA, null,
+                    LocalDate.of(2026, 1, 1), LocalDate.of(2026, 12, 31), true,
+                    NewsSource.SourceStatus.ACTIVE);
+            NewsSource created = adminNewsSources.insert(
+                    command, NewsSource.AuthorizationStatus.AUTHORIZED);
+
+            NewsSource stored = adminNewsSources.find(created.sourceId()).orElseThrow();
+            assertThat(stored.sourceCode()).isEqualTo("SIM_ADM_SOURCE");
+            assertThat(stored.authorizationStatus())
+                    .isEqualTo(NewsSource.AuthorizationStatus.AUTHORIZED);
+            assertThat(stored.version()).isZero();
+            assertThat(adminNewsSources.findByCode("SIM_ADM_SOURCE")).isPresent();
+
+            // CAS 成功路径：版本命中，version + 1
+            java.util.Optional<NewsSource> updated = adminNewsSources.update(
+                    created.sourceId(), 0,
+                    AdminNewsSourcePatch.empty().withName("改名后的来源"),
+                    NewsSource.AuthorizationStatus.SUSPENDED);
+            assertThat(updated).isPresent();
+            assertThat(updated.orElseThrow().version()).isEqualTo(1);
+            assertThat(updated.orElseThrow().sourceName()).isEqualTo("改名后的来源");
+            assertThat(updated.orElseThrow().authorizationStatus())
+                    .isEqualTo(NewsSource.AuthorizationStatus.SUSPENDED);
+
+            // CAS 过期路径：旧版本影响 0 行（404 与 409 的区分靠这一行的语义）
+            java.util.Optional<NewsSource> stale = adminNewsSources.update(
+                    created.sourceId(), 0,
+                    AdminNewsSourcePatch.empty().withName("过期版本的重试"),
+                    NewsSource.AuthorizationStatus.SUSPENDED);
+            assertThat(stale).isEmpty();
+        }
+
+        @Test
+        void enforcesTheUniqueSourceCode() {
+            adminNewsSources.insert(command("SIM_ADM_DUP"),
+                    NewsSource.AuthorizationStatus.UNKNOWN);
+
+            assertThatThrownBy(() -> adminNewsSources.insert(command("SIM_ADM_DUP"),
+                    NewsSource.AuthorizationStatus.UNKNOWN))
+                    .isInstanceOf(DuplicateKeyException.class);
+        }
+
+        @Test
+        void pagesSourcesByAuthorizationStatusFilter() {
+            adminNewsSources.insert(command("SIM_ADM_PAGE_A"),
+                    NewsSource.AuthorizationStatus.AUTHORIZED);
+            adminNewsSources.insert(command("SIM_ADM_PAGE_B"),
+                    NewsSource.AuthorizationStatus.EXPIRED);
+
+            AdminNewsSourceQuery query = new AdminNewsSourceQuery(
+                    null, null, NewsSource.AuthorizationStatus.EXPIRED, null, 1, 20);
+            List<NewsSource> expired = adminNewsSources.page(query);
+
+            assertThat(expired).extracting(NewsSource::sourceCode)
+                    .contains("SIM_ADM_PAGE_B")
+                    .doesNotContain("SIM_ADM_PAGE_A");
+            assertThat(adminNewsSources.count(query)).isGreaterThanOrEqualTo(1);
+        }
+
+        @Test
+        void reviewsARelationAndKeepsTheOriginalReasonWhenNoneIsGiven() {
+            NewsSource source = source("SIM_ADM_REL");
+            newsSources.ensureAll(List.of(source));
+            NewsArticle article = article(IDS.incrementAndGet(), source.sourceId(), "adm-rel-1", null);
+            newsArticles.insert(article);
+            NewsRelation candidate = new NewsRelation(
+                    IDS.incrementAndGet(), article.newsId(), NewsTargetType.SECURITY, 600_000L,
+                    NewsRelationMethod.RULE, new BigDecimal("0.60000"),
+                    NewsRelationStatus.CANDIDATE, "摘要含证券简称（规则 R4）");
+            newsRelations.insertAll(List.of(candidate));
+
+            OffsetDateTime reviewedAt = OffsetDateTime.now(clock).withNano(0);
+            boolean affected = adminNewsRelations.review(
+                    candidate.relationId(), NewsRelationStatus.CONFIRMED, null, 9_920_000_000_001L,
+                    reviewedAt);
+
+            assertThat(affected).isTrue();
+            AdminNewsRelationEntry stored =
+                    adminNewsRelations.find(candidate.relationId()).orElseThrow();
+            assertThat(stored.relationStatus()).isEqualTo(NewsRelationStatus.CONFIRMED);
+            assertThat(stored.reviewedBy()).isEqualTo(9_920_000_000_001L);
+            assertThat(stored.reviewedAt()).isNotNull();
+            // 复核没给理由：COALESCE 保留候选阶段的原始依据
+            assertThat(stored.reasonSummary()).isEqualTo("摘要含证券简称（规则 R4）");
+            // 关联列表经 JOIN 回显新闻标题
+            assertThat(stored.newsTitle()).isEqualTo("集成测试标题");
+        }
+
+        @Test
+        void enforcesTheUniqueRelationTargetOnManualCreation() {
+            NewsSource source = source("SIM_ADM_MANUAL");
+            newsSources.ensureAll(List.of(source));
+            NewsArticle article = article(IDS.incrementAndGet(), source.sourceId(), "adm-rel-2", null);
+            newsArticles.insert(article);
+
+            AdminNewsRelationStore.AdminNewsRelationTarget target =
+                    new AdminNewsRelationStore.AdminNewsRelationTarget(
+                            NewsTargetType.SECURITY, 600_000L);
+            AdminNewsRelationEntry created = adminNewsRelations.insertManual(
+                    article.newsId(), target, "人工核实", 9_920_000_000_002L,
+                    OffsetDateTime.now(clock));
+            assertThat(created.relationMethod()).isEqualTo(NewsRelationMethod.MANUAL);
+            assertThat(created.relationStatus()).isEqualTo(NewsRelationStatus.CONFIRMED);
+            assertThat(created.confidenceScore()).isNull();
+            assertThat(adminNewsRelations.findByTarget(
+                    article.newsId(), NewsTargetType.SECURITY, 600_000L)).isPresent();
+
+            assertThatThrownBy(() -> adminNewsRelations.insertManual(
+                    article.newsId(), target, "重复提交", 9_920_000_000_002L,
+                    OffsetDateTime.now(clock)))
+                    .isInstanceOf(DuplicateKeyException.class);
+        }
+
+        // ---------- 夹具 ----------
+
+        private NewAdminNewsSource command(String sourceCode) {
+            return new NewAdminNewsSource(
+                    null, sourceCode, "后台登记来源", NewsSourceType.MEDIA, null,
+                    null, null, true, NewsSource.SourceStatus.ACTIVE);
+        }
+
+        private NewsSource source(String code) {
+            return new NewsSource(
+                    IDS.incrementAndGet(), code, "集成测试来源", NewsSourceType.EXCHANGE, null,
+                    NewsSource.AuthorizationStatus.AUTHORIZED,
+                    LocalDate.of(2026, 1, 1), LocalDate.of(2027, 1, 1), false,
+                    NewsSource.SourceStatus.ACTIVE, null, null, 0);
+        }
+
+        private NewsArticle article(
+                long newsId, long sourceId, String sourceContentId, Long canonicalNewsId) {
+            return new NewsArticle(
+                    newsId,
+                    sourceId,
+                    sourceContentId,
+                    NewsType.NEWS,
+                    "集成测试标题",
+                    "集成测试摘要",
+                    "记者",
+                    "https://example.com/news/" + newsId,
+                    "zh-CN",
+                    OffsetDateTime.now(clock).withNano(0),
+                    OffsetDateTime.now(clock).withNano(0).plusMinutes(1),
+                    "fp-" + newsId,
+                    canonicalNewsId,
+                    canonicalNewsId == null ? NewsDedupStatus.ORIGINAL : NewsDedupStatus.DUPLICATE,
+                    NewsContentStatus.PUBLISHED,
+                    NewsOriginalAccessStatus.AVAILABLE,
+                    null);
         }
     }
 }

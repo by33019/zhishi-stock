@@ -1,10 +1,17 @@
 package cn.zhishi.stock.backend.config;
 
+import cn.zhishi.stock.admin.application.AdminAiService;
+import cn.zhishi.stock.admin.application.AdminNewsRelationService;
+import cn.zhishi.stock.admin.application.AdminNewsSourceService;
 import cn.zhishi.stock.admin.application.AdminRoleService;
 import cn.zhishi.stock.admin.application.AdminUserService;
 import cn.zhishi.stock.admin.application.JobAdminService;
 import cn.zhishi.stock.admin.application.OperationLogService;
 import cn.zhishi.stock.admin.application.SensitiveParamsRedactor;
+import cn.zhishi.stock.admin.domain.AdminAiStatsStore;
+import cn.zhishi.stock.admin.domain.AdminAiTaskStore;
+import cn.zhishi.stock.admin.domain.AdminNewsRelationStore;
+import cn.zhishi.stock.admin.domain.AdminNewsSourceStore;
 import cn.zhishi.stock.admin.domain.AdminRoleStore;
 import cn.zhishi.stock.admin.domain.AdminUserStore;
 import cn.zhishi.stock.admin.domain.JobDefinitionCatalog;
@@ -12,13 +19,22 @@ import cn.zhishi.stock.admin.domain.JobExecutionDispatcher;
 import cn.zhishi.stock.admin.domain.JobTaskExecutor;
 import cn.zhishi.stock.admin.domain.OperationLogStore;
 import cn.zhishi.stock.admin.domain.PasswordResetCredentialStore;
+import cn.zhishi.stock.admin.infrastructure.AdminAiStatsMapper;
+import cn.zhishi.stock.admin.infrastructure.AdminAiTaskMapper;
+import cn.zhishi.stock.admin.infrastructure.AdminNewsRelationMapper;
+import cn.zhishi.stock.admin.infrastructure.AdminNewsSourceMapper;
 import cn.zhishi.stock.admin.infrastructure.AdminRoleMapper;
 import cn.zhishi.stock.admin.infrastructure.AdminUserMapper;
+import cn.zhishi.stock.admin.infrastructure.MyBatisAdminAiStatsStore;
+import cn.zhishi.stock.admin.infrastructure.MyBatisAdminAiTaskStore;
+import cn.zhishi.stock.admin.infrastructure.MyBatisAdminNewsRelationStore;
+import cn.zhishi.stock.admin.infrastructure.MyBatisAdminNewsSourceStore;
 import cn.zhishi.stock.admin.infrastructure.MyBatisAdminRoleStore;
 import cn.zhishi.stock.admin.infrastructure.MyBatisAdminUserStore;
 import cn.zhishi.stock.admin.infrastructure.MyBatisOperationLogStore;
 import cn.zhishi.stock.admin.infrastructure.OperationLogMapper;
 import cn.zhishi.stock.admin.infrastructure.RedisPasswordResetCredentialStore;
+import cn.zhishi.stock.ai.domain.AiTaskStore;
 import cn.zhishi.stock.backend.jobs.InProcessJobDispatcher;
 import cn.zhishi.stock.backend.jobs.InProcessJobRunner;
 import cn.zhishi.stock.export.application.ExportRetentionSweeper;
@@ -28,6 +44,8 @@ import cn.zhishi.stock.market.application.MarketIngestionService;
 import cn.zhishi.stock.market.domain.MarketOverviewArchive;
 import cn.zhishi.stock.market.domain.MarketOverviewStore;
 import cn.zhishi.stock.market.domain.QuoteProvider;
+import cn.zhishi.stock.market.domain.SectorIdentityProvider;
+import cn.zhishi.stock.market.domain.SecurityIdentityProvider;
 import cn.zhishi.stock.news.application.NewsIngestionService;
 import cn.zhishi.stock.system.auth.RefreshSessionStore;
 import cn.zhishi.stock.system.auth.SecureOpaqueTokenGenerator;
@@ -222,5 +240,67 @@ public class AdminConfiguration {
                 jobExecutionRecorder,
                 jobExecutionDispatcher,
                 clock);
+    }
+
+    // ---------------------------------------------------------------- 资讯治理（ADM-NEWS）
+
+    @Bean
+    AdminNewsSourceStore adminNewsSourceStore(
+            AdminNewsSourceMapper mapper, LongSupplier databaseIdGenerator, Clock clock) {
+        return new MyBatisAdminNewsSourceStore(mapper, databaseIdGenerator, clock);
+    }
+
+    @Bean
+    AdminNewsRelationStore adminNewsRelationStore(
+            AdminNewsRelationMapper mapper, LongSupplier databaseIdGenerator, Clock clock) {
+        return new MyBatisAdminNewsRelationStore(mapper, databaseIdGenerator, clock);
+    }
+
+    @Bean
+    AdminNewsSourceService adminNewsSourceService(
+            AdminNewsSourceStore adminNewsSourceStore, Clock clock) {
+        return new AdminNewsSourceService(adminNewsSourceStore, clock);
+    }
+
+    /**
+     * 关联目标的对外标识桥接复用行情域的身份端口（{@code BackendConfiguration} 已装配）：
+     * 后台与前台资讯查询看到的是同一个 {@code sim-600519} 语义，不复述构词规则。
+     */
+    @Bean
+    AdminNewsRelationService adminNewsRelationService(
+            AdminNewsRelationStore adminNewsRelationStore,
+            SecurityIdentityProvider securityIdentityProvider,
+            SectorIdentityProvider sectorIdentityProvider,
+            Clock clock) {
+        return new AdminNewsRelationService(
+                adminNewsRelationStore,
+                securityIdentityProvider,
+                sectorIdentityProvider,
+                clock);
+    }
+
+    // ---------------------------------------------------------------- AI 运营（ADM-AI）
+
+    @Bean
+    AdminAiTaskStore adminAiTaskStore(AdminAiTaskMapper mapper, Clock clock) {
+        return new MyBatisAdminAiTaskStore(mapper, clock);
+    }
+
+    @Bean
+    AdminAiStatsStore adminAiStatsStore(AdminAiStatsMapper mapper, Clock clock) {
+        return new MyBatisAdminAiStatsStore(mapper, clock);
+    }
+
+    /**
+     * {@code AiTaskStore} 由 {@code BackendConfiguration} 装配（任务编排的主端口），
+     * 后台的取消直接复用它的 {@code requestCancel}——原子置意图的语义只有一处。
+     */
+    @Bean
+    AdminAiService adminAiService(
+            AdminAiTaskStore adminAiTaskStore,
+            AdminAiStatsStore adminAiStatsStore,
+            AiTaskStore aiTaskStore,
+            Clock clock) {
+        return new AdminAiService(adminAiTaskStore, adminAiStatsStore, aiTaskStore, clock);
     }
 }
