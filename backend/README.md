@@ -6,13 +6,17 @@ AI 智能股票分析平台的服务端。Spring Boot 3.5.9 / Java 17 / Maven �
 
 | 模块 | 职责 | 规模 |
 | --- | --- | --- |
-| `stock-common` | 跨模块共享类型，如统一返回壳 `ApiResponse` | 2 个类 |
-| `stock-system` | 认证与用户域：登录、JWT、refresh token 轮换、权限、自选中心（WAT-01~12） | 56 个类 |
+| `stock-common` | 跨模块共享类型：统一返回壳 `ApiResponse`、审计事件（`AuditEvent`/`AuditLog`） | 4 个类 |
+| `stock-system` | 认证与用户域：登录、JWT、refresh token 轮换、权限、自选中心（WAT-01~12）、作业执行记录 | 76 个类 |
 | `stock-market` | 行情域：市场总览、广度与趋势、证券主数据、榜单、板块 | 83 个类 |
 | `stock-news` | 资讯域：采集与去重、标的关联、NEWS-01~04 / STK-10 / SEC-07 | 50 个类 |
-| `stock-integration` | 外部数据源适配层（Provider 接口与实现） | 19 个类 |
-| `stock-backend` | Web 入口：控制器、安全配置、全局异常处理 | 19 个类 |
-| `stock-job` | 定时任务：行情采集（默认每 60s）、资讯采集（默认每 120s） | 4 个类 |
+| `stock-ai` | AI 分析域：场景、上下文、任务编排、SSE 中继、报告/反馈/额度 | 80 个类 |
+| `stock-ai-worker` | AI 任务独立执行进程：消费 Redis Stream、调用 LLM、心跳恢复 | 20 个类 |
+| `stock-export` | 导出域：作业生命周期（Redis）、POI 五段式 Excel、限流与 24h 清理（EXP-01~04） | 20 个类 |
+| `stock-admin` | 后台管理面：用户/角色/日志/任务/资讯治理/AI 运营（§16~§20） | 70 个类 |
+| `stock-integration` | 外部数据源适配层（模拟 Provider、通义 DashScope 等 LLM 实现） | 21 个类 |
+| `stock-backend` | Web 入口：控制器、安全配置、全局异常处理、后台装配 | 30 个类 |
+| `stock-job` | 定时任务：行情采集（默认每 60s）、资讯采集（默认每 120s）、导出清理 | 5 个类 |
 
 依赖方向：`stock-backend` / `stock-job` → 各业务模块 → `stock-common`。业务模块之间不互相依赖；
 `stock-system` 与 `stock-news` 例外，两者都只依赖 `stock-market` 的 `domain` 包

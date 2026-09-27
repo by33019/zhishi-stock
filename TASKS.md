@@ -115,7 +115,17 @@
   > 已落地（板块候选来自 SEC-02 榜单本地过滤，多选 2~3 只）。
   > 浏览器级验收：`frontend/e2e/ai-workspace.real.mjs` 31 项全通过
   > （含 /history 三个写操作与 /ai 真实提交、SSE 流式、查库核对）。
-- [ ] **M3-11** P1 后台 admin 最小集 — 依赖：M3-09
+- [x] **M3-11** P1 后台 admin 最小集 — 依赖：M3-09 — 已完成，见下方详情
+  > 契约 §16/§17/§19/§20 全量落地：**RBAC**（V9/V11 播种权限码 + `@EnableMethodSecurity`
+  > 逐端点 `@PreAuthorize`）、**通用审计设施**（common/audit 端口 + sys_log 实现，
+  > 取代导出域私有审计）、**ADM-USR-01~09 + ADM-ROL-01 + LOG-01/02 + ADM-JOB-01~05
+  > （17 端点）**、**ADM-NEWS-01~08 资讯治理**（V11 播种 `news:*` 权限码；授权状态由
+  > 服务端从授权区间推导，客户端不可伪造为有效）、**ADM-AI-01~06 AI 运营**（用量
+  > 分组聚合 + 任务元数据视图 + 管理员取消复用 `AiTaskStore.requestCancel`）；
+  > 定时任务与人工触发共用 `job_execution_summary`（V10 补 `counts_available`）；
+  > 强制下线经 tokenVersion + 反向索引真实生效。前端 `/admin` 从硬编码原型页重写为
+  > Tab 分区的真实接口驱动（总览/用户/任务/日志/AI 运营/资讯治理）。
+  > 契约 §19 的 `AI_PRIVATE_CONTENT_FORBIDDEN` 无触发路径，按"不加永不触发的分支"未实现。
 - [x] **M3-12** P1 热点榜单 Excel 导出 — 依赖：M2-06 — 已完成，见下方详情
   > 第 10 个模块 `stock-export`；契约 §9.2 EXP-01~04 四个端点全部落地，
   > 前端榜单页按钮接上（创建 → 轮询 → 下载）。

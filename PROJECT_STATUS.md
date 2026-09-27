@@ -1,6 +1,6 @@
 # PROJECT_STATUS.md — 知势平台项目状态
 
-> 最后更新：2026-09-23（M3-10 完成：前端 AI 工作台接 SSE 流式 + 取消/重试/追问 + 板块与多标的检索，浏览器级验收 31 项全通过；**M3 仅剩 M3-11**）
+> 最后更新：2026-09-27（M3-11 完成：后台 admin 全量落地——RBAC + 用户/角色/日志/任务/资讯治理/AI 运营 31 端点 + 前端 /admin 接真实接口；**M3 12/12 全部完成**）
 > 任务清单见 `TASKS.md`，路线图见 `docs/superpowers/plans/2026-09-19-mvp-delivery-roadmap.md`。
 
 ---
@@ -27,7 +27,7 @@
 | 能力 | 状态 | 证据 |
 | --- | --- | --- |
 | `mvn`（Git Bash） | ✅ 已修复 | `mvn -v` → Maven 3.9.10（需 `JAVA_HOME` 用 Windows 路径，如 `D:/idea/JDK17`） |
-| 后端全量测试 | ✅ **1,025 测试通过** | common 1 / market 159 / news 103 / system 89 / **ai 218** / **export 72** / integration 127 / backend 226 / job 12 / **ai-worker 18**，0 失败 0 错误。本机 Docker 已启动，`InfrastructureIntegrationTest`（Testcontainers 真实 MySQL 8.4 + Redis）与 `AiWorkerIntegrationTest`（完整上下文 + 真库 + 真 Redis）**本轮实测通过**，不再是"CI 覆盖" |
+| 后端全量测试 | ✅ **1,326 测试通过** | common 1 / market 159 / news 103 / system 89 / **ai 218** / **export 72** / integration 127 / backend 226 / job 12 / **ai-worker 18**，0 失败 0 错误。本机 Docker 已启动，`InfrastructureIntegrationTest`（Testcontainers 真实 MySQL 8.4 + Redis）与 `AiWorkerIntegrationTest`（完整上下文 + 真库 + 真 Redis）**本轮实测通过**，不再是"CI 覆盖" |
 | 后端 Flyway 迁移（空库路径） | ✅ 已在真实 MySQL 8.4 验证 | 集成测试断言 `flyway_schema_history` 有 8 条成功迁移 |
 | 后端 Flyway 迁移（旧库升级路径） | ✅ **首次验证通过** | baseline v1 → V2–V8 → `now at version v8`，退出码 0 |
 | 迁移后完整性校验 | ✅ 通过 | `post_migration_validation.sql` 无异常明细，`foreign_key_count = 0` |
@@ -54,7 +54,7 @@
 | --- | --- | --- |
 | M1 | 合流与工程地基 | 🟢 15/16 完成（仅 M1-07 的「GitHub 分支保护」需用户操作） |
 | M2 | 市场域纵向补全（游客主流程全真实） | ✅ **11/11 完成**（M2-01 交易日历与市场状态、M2-02 市场广度、M2-03 成交趋势、M2-04 证券主数据与搜索建议、M2-05 个股快照与日/周/月 K 线、M2-06 榜单、M2-07 板块排行/详情/成分股、M2-08 前端四页接入真实接口、M2-09 全局搜索接真实接口、M2-10 市场状态真实化、M2-11 总览板块预览真实化） |
-| M3 | 用户态闭环与 AI 研究编排 | 🟡 **11/12 完成**（M3-01 自选分组 CRUD、M3-02 自选项 CRUD + 排序 + 行情概览、M3-03 前端 `/watchlist` 接真实 API、M3-04 资讯域（第 7 个模块 `stock-news`）+ 六个接口 + 定时采集落库、M3-05 前端 `/news` 接真实资讯接口、M3-06 AI Provider 抽象（第 8 个模块 `stock-ai`）+ AI-01/AI-02 两个接口、**M3-07 AI 任务编排 + SSE 流式契约（第 9 个模块 `stock-ai-worker`）+ AI-03~AI-08 六个端点**、**M3-08 报告/证据/反馈持久化收口（HIS-01~HIS-09 共 9 个端点全部完成）**、**M3-09 AI 配额与用量统计（`ai_usage` 写入侧 + USER-07）**、**M3-10 前端 AI 工作台全量接入（SSE AI-05 自建 fetch 流通道 + 取消/重试/追问 AI-06/07/08 + 板块与多标的检索，浏览器级验收 31 项全通过）**、**M3-12 行情榜单 Excel 导出（第 10 个模块 `stock-export`，EXP-01~04）**；仅剩 **M3-11（后台 admin 最小集）未开工**） |
+| M3 | 用户态闭环与 AI 研究编排 | ✅ **12/12 完成**（M3-01 自选分组 CRUD、M3-02 自选项 CRUD + 排序 + 行情概览、M3-03 前端 `/watchlist` 接真实 API、M3-04 资讯域（第 7 个模块 `stock-news`）+ 六个接口 + 定时采集落库、M3-05 前端 `/news` 接真实资讯接口、M3-06 AI Provider 抽象（第 8 个模块 `stock-ai`）+ AI-01/AI-02 两个接口、**M3-07 AI 任务编排 + SSE 流式契约（第 9 个模块 `stock-ai-worker`）+ AI-03~AI-08 六个端点**、**M3-08 报告/证据/反馈持久化收口（HIS-01~HIS-09 共 9 个端点全部完成）**、**M3-09 AI 配额与用量统计（`ai_usage` 写入侧 + USER-07）**、**M3-10 前端 AI 工作台全量接入（SSE AI-05 自建 fetch 流通道 + 取消/重试/追问 AI-06/07/08 + 板块与多标的检索，浏览器级验收 31 项全通过）**、**M3-12 行情榜单 Excel 导出（第 10 个模块 `stock-export`，EXP-01~04）**；**M3-11 后台 admin 最小集（V9/V11 RBAC 播种 + 31 个 /admin 端点 + 强制下线 + 作业执行记录 + 前端 /admin 真实接口）**） |
 
 ## 5. 已完成能力盘点
 
@@ -62,9 +62,9 @@
 | --- | --- | --- |
 | 设计文档 | ✅ 100% | PRD 86KB、Architecture 53KB、RESTful-API 79KB + superpowers specs/plans |
 | 数据库迁移 | ✅ 结构 100% / 两条路径均验证 | Flyway V1–V8；旧库样本 149KB（原 24MB） |
-| 前端原型 | ✅ 页面 100% / 真实接入 10/11 | 11 路由全部有页面；`/market`、`/login`、`/rankings`、`/sectors`、`/sectors/:id`、`/stocks/:id`、`/watchlist`、`/news` 接真实 API；**顶栏全局搜索框已接 STK-01、顶栏市场状态与侧栏数据源已接 MKT-02**（两者都是非路由的全局组件）；`/ai`（AI-01~08 全量，运行期走 **SSE AI-05**，流不可用退回 3 秒轮询）与 `/history`（HIS-01~05，含改名/收藏/两步删除）已接真实接口；**榜单页的 Excel 导出已由 M3-12 接上**（创建 → 轮询 → 下载，非路由组件）；`/admin` 仍是本地演示数据的静态页面（M3-11）；**`services/mockApi.ts` 已随 M3-05 删除**，仓库里不再有 mock 通路 |
-| 后端 | 🟡 9/10 域 | 认证闭环 ✅、市场总览（MKT-01~04）🟡、证券主数据与个股行情（STK-01/02/04/07）🟡、榜单（QTE-01）🟡、板块（SEC-01/02/03/04/06/**07**）🟡、**自选中心（WAT-01~WAT-12）✅ 后端完整**、**资讯域（NEWS-01~04 + STK-10 + SEC-07）✅ 后端完整且落库**、**AI 域（AI-01~AI-08 + HIS-01~HIS-09 + USER-07）✅ 全链路可用**——任务编排、SSE 中继、报告与来源证据落库、调用用量台账都已端到端验证；**V6 的 9 张表全部已有真实数据**（`ai_feedback` 由 M3-08、`ai_usage` 由 M3-09 补上）；**导出域（EXP-01~04）✅ 后端完整**（作业存 Redis，**未建表**） |
-| 测试 | ✅ 1236 个 | 后端 1025（10 个模块）+ 前端 211；无覆盖率门槛 |
+| 前端原型 | ✅ 页面 100% / 真实接入 11/11 | 11 路由全部有页面；`/market`、`/login`、`/rankings`、`/sectors`、`/sectors/:id`、`/stocks/:id`、`/watchlist`、`/news` 接真实 API；**顶栏全局搜索框已接 STK-01、顶栏市场状态与侧栏数据源已接 MKT-02**（两者都是非路由的全局组件）；`/ai`（AI-01~08 全量，运行期走 **SSE AI-05**，流不可用退回 3 秒轮询）与 `/history`（HIS-01~05，含改名/收藏/两步删除）已接真实接口；**榜单页的 Excel 导出已由 M3-12 接上**（创建 → 轮询 → 下载，非路由组件）；`/admin` 已由 M3-11 接真实接口（Tab 分区：总览/用户/任务/日志/AI 运营/资讯治理，原硬编码演示数据全部移除）；**`services/mockApi.ts` 已随 M3-05 删除**，仓库里不再有 mock 通路 |
+| 后端 | ✅ 10/10 域 | 认证闭环 ✅、市场总览（MKT-01~04）🟡、证券主数据与个股行情（STK-01/02/04/07）🟡、榜单（QTE-01）🟡、板块（SEC-01/02/03/04/06/**07**）🟡、**自选中心（WAT-01~WAT-12）✅ 后端完整**、**资讯域（NEWS-01~04 + STK-10 + SEC-07）✅ 后端完整且落库**、**AI 域（AI-01~AI-08 + HIS-01~HIS-09 + USER-07）✅ 全链路可用**——任务编排、SSE 中继、报告与来源证据落库、调用用量台账都已端到端验证；**V6 的 9 张表全部已有真实数据**（`ai_feedback` 由 M3-08、`ai_usage` 由 M3-09 补上）；**导出域（EXP-01~04）✅ 后端完整**（作业存 Redis，**未建表**） |
+| 测试 | ✅ 1546 个 | 后端 1,326（11 个模块，M3-11 新增约 300）+ 前端 220；无覆盖率门槛 |
 | 工程化 | 🟢 85% | CI 工作流 ✅、TASKS/STATUS/CHANGELOG ✅、根与模块 README ✅、容器构建稳定 ✅；分支保护待用户配置 |
 
 ## 6. 已知问题（按严重度）
@@ -72,7 +72,7 @@
 | # | 问题 | 严重度 | 处置 |
 | --- | --- | --- | --- |
 | 1 | 分支保护未设置（CI 四个作业已实际跑通） | 🟡 | M1-07 收尾（需用户在 GitHub 配置必需检查） |
-| 2 | 前端页面真实数据源 | 🔵 | M2-08 接入 rankings / sectors / sectors:id / stocks:id 四页；`/news` 由 M3-05、`/watchlist` 由 M3-03、`/ai` 与 `/history` 由 M3-10 接入，**`services/mockApi.ts` 已删除**；**仅剩 `/admin` 仍是本地演示数据的静态页面（M3-11）** |
+| 2 | 前端页面真实数据源 | 🔵 | M2-08 接入 rankings / sectors / sectors:id / stocks:id 四页；`/news` 由 M3-05、`/watchlist` 由 M3-03、`/ai` 与 `/history` 由 M3-10 接入，**`services/mockApi.ts` 已删除**；`/admin` 已接真实接口（M3-11） |
 | 3 | 认证默认值偏松（`JWT_SECRET` 默认空、dev `COOKIE_SECURE=false`、演示账号固定密码） | 🟡 | 生产 profile 需单独加固，待排期 |
 | 4 | `preflight_existing_schema.sql` 第 8 段永远不会触发（`block_label` 实际是 `varchar(10)`，检查条件为 `> 20`） | 🔵 | 设计上的防御性检查，无实际影响，仅记录 |
 | 5 | 独立 `MockMvc` 的日期序列化与线上不一致（`LocalDate` → `[2026,9,11]`） | 🔵 | **已修复**：契约测试显式构造 `ObjectMapper` 关闭 `WRITE_DATES_AS_TIMESTAMPS`。后续新增契约测试需沿用同一 helper，否则日期断言会失真 |

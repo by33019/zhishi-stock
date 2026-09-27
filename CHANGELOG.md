@@ -23,6 +23,56 @@
 
 ---
 
+## 2026-09-27 — M3-11：后台 admin 全量落地（RBAC + 31 端点 + 前端真实接口）
+
+后台管理面从零到一补齐契约 §16~§20 可运行的部分，M3 里程碑 12/12 收口。
+
+### 新增
+
+**RBAC 与审计基础设施**
+
+- `V9__seed_admin_rbac.sql` / `V11__seed_admin_news_rbac.sql`：播种后台菜单权限（`admin:access`）、
+  30 个端点权限码（`code` 与 `perms` 双轨，鉴权读 COALESCE）与 ADMIN 角色绑定；
+  **迁移不建任何账号**（dev/test 由 seeder 建、生产由运维建），并新增校验脚本断言这一约束。
+- `@EnableMethodSecurity` + 逐端点 `@PreAuthorize`；`AdminAuthorizationTest` 用反射码表
+  钉住"每个后台端点都有正确的权限码"。
+- 通用审计设施：`common/audit`（AuditEvent/AuditLog 端口）+ `JdbcSysLogAuditLog`（sys_log）+
+  Web 层 `AuditRecorder`；导出域私有审计的 4 个类整体删除，全站 SUCCESS/FAILURE/DENIED
+  口径只有一份。
+
+**后台端点（stock-admin 第 11 个模块 + web/admin）**
+
+- ADM-USR-01~09 用户管理（含 If-Match 乐观锁、最后超管保护、一次性密码重置凭证、
+  强制下线——经 tokenVersion + 会话族反向索引真实生效）；
+- ADM-ROL-01 角色只读列表；LOG-01/02 操作日志（90 天窗口，读侧二次脱敏）；
+- ADM-JOB-01~05 定时任务白名单人工触发/重试/执行历史；三个定时任务同表落执行记录（V10 补
+  `counts_available`，区分"计数为 0"与"未采集"）；
+- ADM-NEWS-01~08 资讯治理：来源 CRUD（授权状态由服务端从授权区间推导，禁止伪造为有效；
+  编辑区间不悄悄解除人工暂停）与关联审核（缺省看 CANDIDATE、二次复核 409、
+  删除=置 REJECTED 保留审计、手工关联幂等）；
+- ADM-AI-01~06 AI 运营：总览/任务元数据视图/管理员取消（复用 `AiTaskStore.requestCancel`
+  原子置意图）/分组用量/反馈统计；任务列表与详情在形状上不含用户问题与报告正文。
+
+**前端 /admin**
+
+- 从 16 行硬编码假数据原型重写为 Tab 分区（总览/用户/任务/日志/AI 运营/资讯治理），
+  全部走 `adminApi` 真实接口；写操作带幂等键，乐观锁带 If-Match，无数据源的字段不渲染。
+
+### 变更
+
+- 后端 Maven 模块 10 → 11（新增 `stock-admin`，依赖 common/system/ai/news/market）；
+- `GlobalExceptionHandler` 新增 `AdminException` 处理（业务码自带 HTTP 状态）；
+- `sql/tests/validate_migrations.ps1` 迁移清单扩至 V11，并新增"种子迁移不得写 sys_user"断言。
+
+### 验证
+
+- 后端 `mvn clean verify`：**11 模块 1,326 测试全绿**（新增约 300 用例，含 Testcontainers
+  真库往返、RBAC 反射码表、21+2 个契约测试）；
+- 前端：typecheck 0 错误、**26 文件 220 测试全绿**、vite build 通过；
+- 全栈 Compose 浏览器级验收 `frontend/e2e/admin.real.mjs`（登录 admin → 六分区真实数据渲染）。
+
+---
+
 ## 2026-09-23 — M3-10：前端 AI 工作台全量接入（SSE 流式 + 取消/重试/追问 + 标的检索）
 
 `/ai` 工作台从「轮询 + 仅单标的场景」补齐为契约 AI-01~08 全量；

@@ -9,8 +9,8 @@
 | 层 | 技术 |
 | --- | --- |
 | 前端 | Vue 3.5 · TypeScript 6 · Vite 8 · Vue Router 5 · Pinia 4 · ECharts 6 · Lucide |
-| 后端 | Spring Boot 3.5.9 · Java 17 · Maven 多模块（6 个）· MyBatis-Plus · Spring Security · Spring Data Redis |
-| 数据 | MySQL 8.4 · Redis 8.2 · Flyway V1–V8 |
+| 后端 | Spring Boot 3.5.9 · Java 17 · Maven 多模块（11 个）· MyBatis-Plus · Spring Security · Spring Data Redis |
+| 数据 | MySQL 8.4 · Redis 8.2 · Flyway V1–V11 |
 | 测试 | 后端 JUnit 5 + Testcontainers（真实 MySQL/Redis）· 前端 Vitest + Vue Test Utils + Playwright |
 | 编排 | Docker Compose：mysql → flyway → stock-api / stock-job → frontend（nginx 反代 `/api/`） |
 
@@ -47,10 +47,14 @@ docker-compose -f compose.yaml -f compose.legacy.yaml -p zhishi-legacy up -d --b
 ```
 .
 ├── backend/            Spring Boot 多模块后端（详见 backend/README.md）
-│   ├── stock-common/       共享类型（ApiResponse）
-│   ├── stock-system/       认证与用户域
+│   ├── stock-common/       共享类型（ApiResponse、审计事件）
+│   ├── stock-system/       认证、用户、自选与作业执行记录
 │   ├── stock-market/       行情域
 │   ├── stock-news/         资讯域
+│   ├── stock-ai/           AI 分析域
+│   ├── stock-ai-worker/    AI 任务独立执行进程
+│   ├── stock-export/       导出域
+│   ├── stock-admin/        后台管理面
 │   ├── stock-integration/  外部数据源适配层
 │   ├── stock-backend/      Web 入口
 │   └── stock-job/          定时任务
@@ -117,10 +121,10 @@ docker exec -i zhishi-legacy-mysql-1 mysql -ustock -p<密码> stock_system \
 ## 当前状态
 
 - ✅ 数据库迁移：空库与旧库升级**两条路径均已验证**
-- ✅ 后端 45 测试全绿 · 前端 35 测试全绿
+- ✅ 后端 1,325 测试全绿（11 模块）· 前端 220 测试全绿
 - ✅ 全栈 Compose 端到端验收通过（市场 API、登录、Cookie 恢复、退出、路由保护）
-- 🟡 前端 11 个路由中，`/market` 与 `/login` 已接真实 API，其余 9 个仍走 Mock
-- 🟡 真实行情源 / 资讯源 / LLM Provider 尚未接入，当前使用确定性模拟实现
+- ✅ 前端 11 个路由全部接真实 API（含 `/admin` 后台管理面）
+- ✅ LLM Provider 已接入真实通义 DashScope；行情 / 资讯源仍为确定性模拟实现（授权源未就位）
 
 ## 协作约定
 
