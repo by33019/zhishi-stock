@@ -2,8 +2,8 @@ package cn.zhishi.stock.system.audit;
 
 import cn.zhishi.stock.common.audit.AuditEvent;
 import cn.zhishi.stock.common.audit.AuditLog;
-import java.sql.Timestamp;
 import java.time.Clock;
+import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.function.LongSupplier;
 import org.slf4j.Logger;
@@ -65,7 +65,14 @@ public class JdbcSysLogAuditLog implements AuditLog {
         try {
             // withNano(0)：见类注释"写入时刻截断到秒"。不截断的话，读侧用"现在"作上界
             // 会查不到刚刚写下的这条。
+            //
+            // 落库值用 Clock 时区的 LocalDateTime，而不是 Timestamp.from(instant)：
+            // Timestamp 会按 JDBC 会话时区（URL 钉死 Asia/Shanghai）换算，而读侧
+            // （MyBatisOperationLogStore）按 Clock 时区换算——两者只在"JVM 时区恰好也是
+            // 上海"的机器上一致，CI 的 UTC JVM 上会错开 8 小时，窗口过滤整组失败。
+            // 写读两侧都必须走同一个 Clock 时区，与 session 时区无关。
             OffsetDateTime recordedAt = OffsetDateTime.now(clock).withNano(0);
+            LocalDateTime recordedAtLocal = recordedAt.atZoneSameInstant(clock.getZone()).toLocalDateTime();
             jdbc.update(
                     INSERT,
                     idGenerator.getAsLong(),
@@ -79,7 +86,7 @@ public class JdbcSysLogAuditLog implements AuditLog {
                     event.paramsSummary(),
                     event.ip(),
                     event.traceId(),
-                    Timestamp.from(recordedAt.toInstant()));
+                    recordedAtLocal);
         } catch (DataAccessException exception) {
             LOGGER.error(
                     "审计写库失败：userId={}，operation={}，traceId={}",
