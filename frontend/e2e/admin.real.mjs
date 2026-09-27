@@ -102,7 +102,7 @@ console.log('资讯分区 OK：ADM-NEWS-01 200')
 
 // ---------- 写路径 1：新建来源（ADM-NEWS-03，201）----------
 // 表单用连续三个 prompt（编码/名称/授权区间），用对话框队列按序应答。
-const promptAnswers = ['sim-e2e-source', 'E2E 验收来源', '2026-01-01', '2027-12-31']
+const promptAnswers = ['sim-e2e-source-' + Date.now(), 'E2E 验收来源', '2026-01-01', '2027-12-31']
 page.on('dialog', (dialog) => dialog.accept(promptAnswers.shift() ?? ''))
 const createSourceResponse = page.waitForResponse(
   (response) =>
@@ -112,7 +112,7 @@ const createSourceResponse = page.waitForResponse(
 )
 await page.getByRole('button', { name: '新建来源' }).click()
 assert.equal((await createSourceResponse).status(), 201, 'ADM-NEWS-03 不是 201')
-await page.getByText('sim-e2e-source').waitFor({ timeout: 10_000 })
+await page.getByText('sim-e2e-source-').first().waitFor({ timeout: 10_000 })
 console.log('写路径 OK：新建来源 201 且出现在列表')
 
 // ---------- 写路径 2：人工触发任务（ADM-JOB-02，202）----------
