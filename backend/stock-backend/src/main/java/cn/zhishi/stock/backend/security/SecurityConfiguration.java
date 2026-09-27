@@ -65,6 +65,8 @@ public class SecurityConfiguration {
                         .requestMatchers(
                                 "/api/v1/auth/login",
                                 "/api/v1/auth/token/refresh",
+                                // AUTH-07 找回密码：持一次性凭证的匿名请求（契约 §5 标 PUBLIC）
+                                "/api/v1/auth/password/reset",
                                 "/actuator/health")
                         .permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/markets/**")

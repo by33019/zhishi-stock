@@ -9,7 +9,7 @@ import cn.zhishi.stock.admin.domain.AdminUserStore;
 import cn.zhishi.stock.admin.domain.AdminUserStatus;
 import cn.zhishi.stock.admin.domain.AdminUserSummary;
 import cn.zhishi.stock.admin.domain.NewAdminUser;
-import cn.zhishi.stock.admin.domain.PasswordResetCredentialStore;
+import cn.zhishi.stock.system.auth.PasswordResetCredentialStore;
 import cn.zhishi.stock.common.api.PageData;
 import cn.zhishi.stock.system.auth.OpaqueTokenGenerator;
 import cn.zhishi.stock.system.auth.RefreshSessionStore;
@@ -274,9 +274,13 @@ public class AdminUserService {
         if (!current.emailConfigured()) {
             throw AdminException.passwordResetNoDeliveryTarget();
         }
+        // verificationId 与 credential 用同一生成器连出两枚：前者是签发标识
+        // （随邮件一起送达用户，兑换时原样带回），后者是一次性秘密（只存哈希）。
+        // 测试注入受控生成器即可同时拿到两者，完整兑换链路因此可测。
+        String verificationId = tokenGenerator.next();
         String credential = tokenGenerator.next();
         Instant expiresAt = clock.instant().plusSeconds(PasswordResetCredentialStore.TTL_SECONDS);
-        resetCredentials.save(userId, RefreshTokenHashing.sha256(credential), expiresAt);
+        resetCredentials.save(userId, verificationId, RefreshTokenHashing.sha256(credential), expiresAt);
         return new PasswordResetIssued(
                 true,
                 current.maskedEmail(),

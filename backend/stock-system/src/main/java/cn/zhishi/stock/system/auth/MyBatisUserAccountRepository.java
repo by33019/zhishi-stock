@@ -23,6 +23,16 @@ public class MyBatisUserAccountRepository implements UserAccountRepository {
     }
 
     @Override
+    public Optional<UserAccount> findByEmail(String email) {
+        return Optional.ofNullable(mapper.findByEmail(email)).map(this::toDomain);
+    }
+
+    @Override
+    public void updatePasswordHashBumpingTokenVersion(long userId, String newPasswordHash) {
+        mapper.updatePasswordHashBumpingTokenVersion(userId, newPasswordHash);
+    }
+
+    @Override
     public Set<String> findPermissions(long userId) {
         return new LinkedHashSet<>(mapper.findPermissions(userId));
     }

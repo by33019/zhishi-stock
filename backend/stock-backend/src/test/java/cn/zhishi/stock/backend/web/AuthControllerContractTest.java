@@ -15,12 +15,19 @@ import cn.zhishi.stock.system.auth.AuthErrorCode;
 import cn.zhishi.stock.system.auth.AuthException;
 import cn.zhishi.stock.system.auth.AuthenticationService;
 import cn.zhishi.stock.system.auth.LoginTokens;
+import cn.zhishi.stock.system.auth.PasswordResetRedemptionService;
 import cn.zhishi.stock.system.auth.RefreshResult;
 import cn.zhishi.stock.system.auth.RefreshSessionService;
 import cn.zhishi.stock.system.auth.UserAccount;
+import cn.zhishi.stock.system.idempotency.IdempotencyGuard;
+import cn.zhishi.stock.system.idempotency.IdempotencyRecord;
+import cn.zhishi.stock.system.idempotency.IdempotencyStore;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,6 +44,8 @@ class AuthControllerContractTest {
   private AuthenticationService authentication;
   private RefreshSessionService sessions;
   private AccessTokenBlacklist blacklist;
+  private PasswordResetRedemptionService passwordReset;
+  private InMemoryIdempotencyStore idempotencyStore;
   private MockMvc mvc;
 
   @BeforeEach
@@ -44,8 +53,12 @@ class AuthControllerContractTest {
     authentication = mock(AuthenticationService.class);
     sessions = mock(RefreshSessionService.class);
     blacklist = mock(AccessTokenBlacklist.class);
+    passwordReset = mock(PasswordResetRedemptionService.class);
+    idempotencyStore = new InMemoryIdempotencyStore();
     mvc = MockMvcBuilders.standaloneSetup(
-            new AuthController(authentication, sessions, blacklist, CLOCK, true))
+            new AuthController(
+                authentication, sessions, blacklist, passwordReset,
+                new IdempotencyGuard(idempotencyStore, mapper()), CLOCK, true))
         .setControllerAdvice(new GlobalExceptionHandler(CLOCK))
         .addFilters(new TraceIdFilter())
         .build();
@@ -189,5 +202,27 @@ class AuthControllerContractTest {
         .andExpect(jsonPath("$.data.userId").isString())
         .andExpect(jsonPath("$.data.userId").value("1001"))
         .andExpect(jsonPath("$.data.tokenExpiresAt").value("2026-09-11T02:15:00Z"));
+  }
+
+  private static com.fasterxml.jackson.databind.ObjectMapper mapper() {
+    return org.springframework.http.converter.json.Jackson2ObjectMapperBuilder.json()
+        .featuresToDisable(
+            com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+        .build();
+  }
+
+  private static final class InMemoryIdempotencyStore implements IdempotencyStore {
+
+    private final Map<String, IdempotencyRecord> records = new HashMap<>();
+
+    @Override
+    public Optional<IdempotencyRecord> find(String scope, long userId, String key) {
+      return Optional.ofNullable(records.get(scope + '|' + userId + '|' + key));
+    }
+
+    @Override
+    public void save(String scope, long userId, String key, IdempotencyRecord record) {
+      records.put(scope + '|' + userId + '|' + key, record);
+    }
   }
 }

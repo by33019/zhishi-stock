@@ -326,7 +326,7 @@ class NewsQueryServiceTest {
     void optionsRangeIsEmptyWithoutContent() {
         NewsOptions options = service.options();
 
-        assertThat(options.availableTimeRange().isEmpty()).isTrue();
+        assertThat(options.availableTimeRange().blank()).isTrue();
     }
 
     // ---------- 附加条件 ----------

@@ -627,10 +627,13 @@ public class GlobalExceptionHandler {
             Exception exception,
             HttpServletRequest request) {
         String traceId = TraceIdFilter.current(request);
+        // 异常对象作为最后一个参数传入：不打堆栈的话，一次 500 只剩一行类型名，
+        // 排查（如 MyBatisSystemException 的 cause 链）要在容器外复现才能继续。
         LOGGER.error(
                 "未处理的接口异常：traceId={}，type={}",
                 traceId,
-                exception.getClass().getName());
+                exception.getClass().getName(),
+                exception);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(ApiResponse.failure(
                 "INTERNAL_ERROR",
                 "服务暂时不可用",

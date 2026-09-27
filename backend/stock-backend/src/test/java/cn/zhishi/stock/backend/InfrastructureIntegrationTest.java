@@ -66,9 +66,12 @@ import cn.zhishi.stock.news.domain.NewsSourceStore;
 import cn.zhishi.stock.news.domain.NewsSourceType;
 import cn.zhishi.stock.news.domain.NewsTargetType;
 import cn.zhishi.stock.news.domain.NewsType;
+import cn.zhishi.stock.system.auth.PasswordResetCredentialStore;
+import cn.zhishi.stock.system.auth.PasswordResetRedemptionService;
 import cn.zhishi.stock.system.auth.AuthErrorCode;
 import cn.zhishi.stock.system.auth.AuthException;
 import cn.zhishi.stock.system.auth.AuthenticationService;
+import cn.zhishi.stock.system.auth.RefreshTokenHashing;
 import cn.zhishi.stock.system.auth.RefreshSessionService;
 import cn.zhishi.stock.system.auth.UserAccount;
 import cn.zhishi.stock.system.auth.UserAccountRepository;
@@ -2241,6 +2244,66 @@ class InfrastructureIntegrationTest {
      *       {@code COALESCE(reason_summary, 原依据)} 都是 SQL 行为。</li>
      * </ul>
      */
+    /**
+     * AUTH-07 密码重置兑换的端到端往返（公开端点 + 真实 Redis + 真实 MySQL）。
+     *
+     * <p>夹具用**独立的一次性账号**而不是 demo：兑换会把密码改掉，
+     * 而 demo 的密码被本类其它用例的登录断言依赖。
+     */
+    @Nested
+    class PasswordResetRedemptionFlow {
+
+        @Autowired PasswordResetRedemptionService redemption;
+        @Autowired PasswordResetCredentialStore resetCredentials;
+        @Autowired JdbcTemplate jdbc;
+
+        @Test
+        void redeemsTheIssuedCredentialEndToEndAndIsOneTimeOnly() {
+            long userId = 9_730_000_000_001L;
+            String email = "it-reset@example.com";
+            jdbc.update("""
+                    INSERT INTO sys_user
+                      (id, username, password, email, nick_name, status, deleted, create_where, create_time, update_time)
+                    VALUES (?, 'it-reset-user', 'old-hash', ?, '重置测试用户', 1, 1, 1, NOW(), NOW())
+                    """, userId, email);
+
+            String verificationId = "it-vid-1";
+            String code = "it-code-1";
+            String oldHash = jdbc.queryForObject(
+                    "SELECT password FROM sys_user WHERE id = ?", String.class, userId);
+            resetCredentials.save(
+                    userId, verificationId, RefreshTokenHashing.sha256(code),
+                    OffsetDateTime.now(clock).plusSeconds(600).toInstant());
+
+            var result = redemption.reset(email, verificationId, code, "New@12345");
+
+            assertThat(result.reset()).isTrue();
+            assertThat(result.revokedSessionCount()).isGreaterThanOrEqualTo(0);
+            // 一次性：消费之后读不到
+            assertThat(resetCredentials.find(userId)).isEmpty();
+            String newHash = jdbc.queryForObject(
+                    "SELECT password FROM sys_user WHERE id = ?", String.class, userId);
+            assertThat(newHash).isNotEqualTo(oldHash);
+
+            // 同一凭证第二次兑换：所有失败都收敛到 CREDENTIALS_INVALID
+            assertThatThrownBy(() -> redemption.reset(
+                    email, verificationId, code, "New@99999"))
+                    .isInstanceOfSatisfying(AuthException.class, exception ->
+                            assertThat(exception.code())
+                                    .isEqualTo(AuthErrorCode.INVALID_CREDENTIALS));
+
+            // verificationId 对不上（code 正确）也过不了
+            resetCredentials.save(
+                    userId, "it-vid-2", RefreshTokenHashing.sha256("code-2"),
+                    OffsetDateTime.now(clock).plusSeconds(600).toInstant());
+            assertThatThrownBy(() -> redemption.reset(
+                    email, "it-vid-wrong", "code-2", "New@11111"))
+                    .isInstanceOfSatisfying(AuthException.class, exception ->
+                            assertThat(exception.code())
+                                    .isEqualTo(AuthErrorCode.INVALID_CREDENTIALS));
+        }
+    }
+
     /**
      * 后台 AI 运营（契约 §19）的仓储往返。
      *

@@ -14,7 +14,12 @@ public record NewsTimeRange(OffsetDateTime startAt, OffsetDateTime endAt) {
         return new NewsTimeRange(null, null);
     }
 
-    public boolean isEmpty() {
+    /**
+     * 命名刻意避开 {@code isXxx}：无参 {@code isXxx()} 会被 Jackson 按 getter 规则
+     * 序列化进响应（已知问题 #21——响应里多出契约外的 {@code empty} 字段）。
+     * {@code blank} 不是 getter 形态，Jackson 不认识它。
+     */
+    public boolean blank() {
         return startAt == null && endAt == null;
     }
 }

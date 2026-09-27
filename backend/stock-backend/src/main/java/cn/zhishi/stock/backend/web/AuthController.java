@@ -5,9 +5,11 @@ import cn.zhishi.stock.system.auth.AccessTokenBlacklist;
 import cn.zhishi.stock.system.auth.AccessTokenPrincipal;
 import cn.zhishi.stock.system.auth.AuthenticationService;
 import cn.zhishi.stock.system.auth.LoginTokens;
+import cn.zhishi.stock.system.auth.PasswordResetRedemptionService;
 import cn.zhishi.stock.system.auth.RefreshResult;
 import cn.zhishi.stock.system.auth.RefreshSessionService;
 import cn.zhishi.stock.system.auth.UserAccount;
+import cn.zhishi.stock.system.idempotency.IdempotencyGuard;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -24,6 +26,7 @@ import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -34,9 +37,13 @@ public class AuthController {
     private static final String REFRESH_COOKIE = "refresh_token";
     private static final Duration REFRESH_TTL = Duration.ofDays(7);
 
+    private static final String RESET_SCOPE = "auth:password-reset";
+
     private final AuthenticationService authentication;
     private final RefreshSessionService sessions;
     private final AccessTokenBlacklist blacklist;
+    private final PasswordResetRedemptionService passwordReset;
+    private final IdempotencyGuard idempotency;
     private final Clock clock;
     private final boolean secureCookie;
 
@@ -44,13 +51,48 @@ public class AuthController {
             AuthenticationService authentication,
             RefreshSessionService sessions,
             AccessTokenBlacklist blacklist,
+            PasswordResetRedemptionService passwordReset,
+            IdempotencyGuard idempotency,
             Clock clock,
             @Value("${stock.auth.cookie-secure:true}") boolean secureCookie) {
         this.authentication = authentication;
         this.sessions = sessions;
         this.blacklist = blacklist;
+        this.passwordReset = passwordReset;
+        this.idempotency = idempotency;
         this.clock = clock;
         this.secureCookie = secureCookie;
+    }
+
+    /**
+     * AUTH-07：兑换一次性凭证并重置密码（PUBLIC）。
+     *
+     * <p>所有失败（邮箱不存在 / 凭证过期 / 校验不匹配 / 账号锁定）都是同一句
+     * {@code CREDENTIALS_INVALID}——公开端点不做任何区分，见
+     * {@code PasswordResetRedemptionService} 的说明。
+     *
+     * <p>幂等键按匿名处理（{@code userId=0}）：指纹里含完整请求体，同键同体重放
+     * 回放第一次结果，同键异体 409。重置成功后旧会话全部作废，攻击者拿旧会话
+     * 重放也只改一次密码。
+     */
+    @PostMapping("/password/reset")
+    public ApiResponse<PasswordResetResponse> resetPassword(
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+            @Valid @RequestBody ResetPasswordRequest body,
+            HttpServletRequest request) {
+        PasswordResetRedemptionService.PasswordResetResult result = idempotency.execute(
+                RESET_SCOPE,
+                0L,
+                IdempotencyGuard.requireKey(idempotencyKey),
+                body,
+                PasswordResetRedemptionService.PasswordResetResult.class,
+                () -> passwordReset.reset(
+                        body.email(), body.verificationId(), body.verificationCode(),
+                        body.newPassword()));
+        return ApiResponse.success(
+                new PasswordResetResponse(result.reset(), result.revokedSessionCount()),
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock));
     }
 
     @PostMapping("/login")
@@ -165,5 +207,17 @@ public class AuthController {
             String userId,
             String tokenExpiresAt,
             boolean tokenVersionValid) {
+    }
+
+    /** AUTH-07 的请求体。 */
+    public record ResetPasswordRequest(
+            @NotBlank String email,
+            @NotBlank String verificationId,
+            @NotBlank String verificationCode,
+            @NotBlank String newPassword) {
+    }
+
+    /** AUTH-07 的响应体。 */
+    public record PasswordResetResponse(boolean reset, int revokedSessionCount) {
     }
 }

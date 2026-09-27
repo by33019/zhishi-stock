@@ -19,7 +19,7 @@ import cn.zhishi.stock.admin.domain.AdminUserSummary;
 import cn.zhishi.stock.admin.domain.NewAdminUser;
 import cn.zhishi.stock.admin.domain.RolePage;
 import cn.zhishi.stock.admin.domain.RoleQuery;
-import cn.zhishi.stock.admin.domain.PasswordResetCredentialStore;
+import cn.zhishi.stock.system.auth.PasswordResetCredentialStore;
 import cn.zhishi.stock.system.auth.RefreshSessionStore;
 import cn.zhishi.stock.system.watchlist.WatchlistGroupService;
 import java.time.Clock;
@@ -664,16 +664,27 @@ class AdminUserServiceTest {
     }
   }
 
-  private static final class RecordingCredentialStore implements PasswordResetCredentialStore {
+  private static final class RecordingCredentialStore
+      implements PasswordResetCredentialStore {
 
     private final List<Saved> saved = new ArrayList<>();
 
     @Override
-    public void save(long userId, String credentialHash, Instant expiresAt) {
-      saved.add(new Saved(userId, credentialHash, expiresAt));
+    public void save(long userId, String verificationId, String credentialHash, Instant expiresAt) {
+      saved.add(new Saved(userId, verificationId, credentialHash, expiresAt));
     }
 
-    record Saved(long userId, String credentialHash, Instant expiresAt) {
+    @Override
+    public Optional<StoredResetCredential> find(long userId) {
+      return Optional.empty();
+    }
+
+    @Override
+    public boolean consume(long userId) {
+      return false;
+    }
+
+    record Saved(long userId, String verificationId, String credentialHash, Instant expiresAt) {
     }
   }
 }

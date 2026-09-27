@@ -18,7 +18,9 @@ import cn.zhishi.stock.admin.domain.JobDefinitionCatalog;
 import cn.zhishi.stock.admin.domain.JobExecutionDispatcher;
 import cn.zhishi.stock.admin.domain.JobTaskExecutor;
 import cn.zhishi.stock.admin.domain.OperationLogStore;
-import cn.zhishi.stock.admin.domain.PasswordResetCredentialStore;
+import cn.zhishi.stock.system.auth.PasswordResetCredentialStore;
+import cn.zhishi.stock.system.auth.PasswordResetRedemptionService;
+import cn.zhishi.stock.system.auth.UserAccountRepository;
 import cn.zhishi.stock.admin.infrastructure.AdminAiStatsMapper;
 import cn.zhishi.stock.admin.infrastructure.AdminAiTaskMapper;
 import cn.zhishi.stock.admin.infrastructure.AdminNewsRelationMapper;
@@ -103,6 +105,25 @@ public class AdminConfiguration {
     PasswordResetCredentialStore passwordResetCredentialStore(
             StringRedisTemplate redis, Clock clock) {
         return new RedisPasswordResetCredentialStore(redis, clock);
+    }
+
+    /**
+     * AUTH-07 的兑换服务跟着凭证存储走（bean 在同一个配置类里，"签发"与"兑换"
+     * 用的必须是同一份存储）——虽然它是认证域的服务，端点也是公开的。
+     */
+    @Bean
+    PasswordResetRedemptionService passwordResetRedemptionService(
+            UserAccountRepository userAccountRepository,
+            PasswordResetCredentialStore passwordResetCredentialStore,
+            RefreshSessionStore refreshSessionStore,
+            PasswordEncoder passwordEncoder,
+            Clock clock) {
+        return new PasswordResetRedemptionService(
+                userAccountRepository,
+                passwordResetCredentialStore,
+                refreshSessionStore,
+                passwordEncoder,
+                clock);
     }
 
     @Bean
