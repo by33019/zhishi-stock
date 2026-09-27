@@ -85,6 +85,7 @@ import cn.zhishi.stock.market.domain.LimitRuleProvider;
 import cn.zhishi.stock.market.domain.MarketOverviewArchive;
 import cn.zhishi.stock.market.domain.MarketOverviewStore;
 import cn.zhishi.stock.market.domain.QuoteProvider;
+import cn.zhishi.stock.market.application.SecurityQuoteBatchQueryService;
 import cn.zhishi.stock.market.domain.QuoteSnapshotBatchProvider;
 import cn.zhishi.stock.market.domain.QuoteSnapshotProvider;
 import cn.zhishi.stock.market.domain.SectorIdentityProvider;
@@ -390,6 +391,13 @@ public class BackendConfiguration {
      * <p>若拆成两个实例，两者就会各自持有一份装配逻辑，将来改一处就会让
      * 榜单与个股页对同一只证券给出不同价格，且不会有任何测试变红。
      */
+    /** STK-05：批量行情查询（整批横截面切片，见 {@code SecurityQuoteBatchQueryService}）。 */
+    @Bean
+    SecurityQuoteBatchQueryService securityQuoteBatchQueryService(
+            QuoteSnapshotBatchProvider quoteSnapshotBatchProvider) {
+        return new SecurityQuoteBatchQueryService(quoteSnapshotBatchProvider);
+    }
+
     @Bean
     SimulatedQuoteSnapshotProvider quoteSnapshotProvider(
             SecurityQuoteProvider securityQuoteProvider,

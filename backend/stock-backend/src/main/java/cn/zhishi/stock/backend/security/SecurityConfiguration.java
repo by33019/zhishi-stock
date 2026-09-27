@@ -88,6 +88,9 @@ public class SecurityConfiguration {
                         // 也在这两个前缀下，已由上面的 securities/sectors 规则覆盖。
                         .requestMatchers(HttpMethod.GET, "/api/v1/news", "/api/v1/news/**")
                         .permitAll()
+                        // STK-05 批量行情（契约 §8 标 PUBLIC）：游客的搜索建议涨跌幅也用它。
+                        .requestMatchers(HttpMethod.POST, "/api/v1/quotes/**")
+                        .permitAll()
                         // 后台管理面（契约 §16）：**不放行任何 admin 路径**。
                         // 这条显式规则写下来是为了让"admin 前缀必须已认证"成为一个被测试钉住的事实，
                         // 而不是靠末尾的 anyRequest() 兜住——将来若有人放宽上面某个公共前缀，
