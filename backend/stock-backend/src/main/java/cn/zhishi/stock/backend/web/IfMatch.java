@@ -10,14 +10,15 @@ package cn.zhishi.stock.backend.web;
  * 静默把它当成"随便改"会让乐观锁形同虚设，不如响亮地拒绝。
  *
  * <p>抽成共用工具而不是写在某个控制器里：WAT-03 / WAT-04 之后，
- * USER-02、HIS-03、ADM-PRV-04 都要同一段解析。
+ * USER-02、HIS-03、ADM-PRV-04 都要同一段解析；M3-11 的后台控制器在
+ * {@code web.admin} 子包，因此这个类与它的方法都是 public。
  */
-final class IfMatch {
+public final class IfMatch {
 
     private IfMatch() {
     }
 
-    static int version(String header) {
+    public static int version(String header) {
         if (header == null || header.isBlank()) {
             throw new InvalidIfMatchException("缺少 If-Match 请求头");
         }

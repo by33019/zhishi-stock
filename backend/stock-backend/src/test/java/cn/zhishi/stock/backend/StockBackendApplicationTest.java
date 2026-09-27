@@ -36,4 +36,19 @@ class StockBackendApplicationTest {
     assertThat(scan.basePackages()).contains("cn.zhishi.stock.ai");
     assertThat(scan.annotationClass()).isEqualTo(Mapper.class);
   }
+
+  /**
+   * 后台域的 Mapper 必须被扫到（M3-11）。
+   *
+   * <p>同 {@link #scansTheAiMappers()} 的理由：漏掉一项的后果是
+   * {@code No qualifying bean of type ...Mapper available}，整个应用起不来，
+   * 而报错指向配置类而不是扫描范围。
+   */
+  @Test
+  void scansTheAdminMappers() {
+    MapperScan scan = StockBackendApplication.class.getAnnotation(MapperScan.class);
+
+    assertThat(scan).isNotNull();
+    assertThat(scan.basePackages()).contains("cn.zhishi.stock.admin");
+  }
 }

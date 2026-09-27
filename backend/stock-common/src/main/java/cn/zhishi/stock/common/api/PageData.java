@@ -28,18 +28,27 @@ public record PageData<T>(
   }
 
   /**
+   * 用**已在数据库侧完成**分页的一页数据组装响应。
+   *
+   * <p>{@code totalPages} 与 {@code hasNext} 由 {@code total} 推出，与
+   * {@link #slice} 共用同一套口径——分页在 SQL 里的接口（如后台列表）如果自己算一遍，
+   * 就会出现"某个接口的 {@code hasNext} 与别处不同"的漂移。
+   */
+  public static <T> PageData<T> of(List<T> items, int page, int size, long total) {
+    int totalPages = (int) ((total + size - 1) / size);
+    return new PageData<>(items, page, size, total, totalPages, page < totalPages);
+  }
+
+  /**
    * 对**已过滤、已排序**的完整列表做分页切片。
    *
    * <p>越界页码返回空页而不是报错——翻到最后一页之后是正常的客户端行为，
    * 且 {@code total} 仍然给出真实总数，调用方可以据此纠正页码。
    */
   public static <T> PageData<T> slice(List<T> filtered, int page, int size) {
-    long total = filtered.size();
-    int totalPages = (int) ((total + size - 1) / size);
     long offset = (long) (page - 1) * size;
     int from = (int) Math.min(offset, filtered.size());
     int to = (int) Math.min(offset + size, filtered.size());
-    return new PageData<>(
-        filtered.subList(from, to), page, size, total, totalPages, page < totalPages);
+    return of(filtered.subList(from, to), page, size, filtered.size());
   }
 }

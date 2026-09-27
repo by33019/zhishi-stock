@@ -24,6 +24,7 @@
     <module>stock-news</module>
     <module>stock-ai</module>
     <module>stock-export</module>
+    <module>stock-admin</module>
     <module>stock-integration</module>
     <module>stock-backend</module>
     <module>stock-job</module>

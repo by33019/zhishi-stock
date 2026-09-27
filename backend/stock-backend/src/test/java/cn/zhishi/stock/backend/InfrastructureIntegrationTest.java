@@ -4,6 +4,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 
+import cn.zhishi.stock.admin.application.AdminErrorCode;
+import cn.zhishi.stock.admin.application.AdminException;
+import cn.zhishi.stock.admin.application.JobAdminService;
+import cn.zhishi.stock.admin.application.OperationLogService;
+import cn.zhishi.stock.admin.application.RetryJobCommand;
+import cn.zhishi.stock.admin.application.TriggerJobCommand;
+import cn.zhishi.stock.admin.domain.JobDefinitionCatalog;
+import cn.zhishi.stock.admin.domain.JobTrigger;
+import cn.zhishi.stock.admin.domain.OperationLogDetail;
+import cn.zhishi.stock.admin.domain.OperationLogEntry;
+import cn.zhishi.stock.admin.domain.OperationLogQuery;
 import cn.zhishi.stock.ai.domain.AiContextSnapshot;
 import cn.zhishi.stock.ai.domain.AiContextSnapshotStore;
 import cn.zhishi.stock.ai.domain.AiContextTarget;
@@ -22,6 +33,8 @@ import cn.zhishi.stock.ai.domain.AiTargetType;
 import cn.zhishi.stock.ai.domain.AiTask;
 import cn.zhishi.stock.ai.domain.AiTaskStatus;
 import cn.zhishi.stock.ai.domain.AiTaskStore;
+import cn.zhishi.stock.common.audit.AuditEvent;
+import cn.zhishi.stock.common.audit.AuditLog;
 import cn.zhishi.stock.market.application.MarketIngestionService;
 import cn.zhishi.stock.market.application.MarketOverviewQueryService;
 import cn.zhishi.stock.market.domain.MarketOverview;
@@ -49,6 +62,18 @@ import cn.zhishi.stock.system.auth.AuthenticationService;
 import cn.zhishi.stock.system.auth.RefreshSessionService;
 import cn.zhishi.stock.system.auth.UserAccount;
 import cn.zhishi.stock.system.auth.UserAccountRepository;
+import cn.zhishi.stock.system.job.JobExecution;
+import cn.zhishi.stock.system.job.JobExecutionCounts;
+import cn.zhishi.stock.system.job.JobExecutionFailure;
+import cn.zhishi.stock.system.job.JobExecutionOutcome;
+import cn.zhishi.stock.system.job.JobExecutionQuery;
+import cn.zhishi.stock.system.job.JobExecutionRecorder;
+import cn.zhishi.stock.system.job.JobExecutionRequest;
+import cn.zhishi.stock.system.job.JobExecutionStatus;
+import cn.zhishi.stock.system.job.JobExecutionStore;
+import cn.zhishi.stock.system.job.JobNames;
+import cn.zhishi.stock.system.job.JobTriggerType;
+import cn.zhishi.stock.system.job.NewJobExecution;
 import cn.zhishi.stock.system.watchlist.WatchlistGroup;
 import cn.zhishi.stock.system.watchlist.WatchlistGroupRepository;
 import cn.zhishi.stock.system.watchlist.WatchlistItem;
@@ -60,12 +85,14 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -126,7 +153,7 @@ class InfrastructureIntegrationTest {
     void executesAllMigrationsAndSeedsOnlyTheTestProfileAccount() {
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM flyway_schema_history WHERE success = 1", Integer.class))
-                .isEqualTo(8);
+                .isEqualTo(10);
         assertThat(accounts.findByUsername("demo")).isPresent();
     }
 
@@ -1413,6 +1440,781 @@ class InfrastructureIntegrationTest {
                     cutoff.minusMinutes(1),
                     "c".repeat(64),
                     cutoff);
+        }
+    }
+
+    /**
+     * {@code sys_log} 的读写往返（M3-11 / LOG-01、LOG-02）。
+     *
+     * <h2>这一组为什么必须在真库上跑</h2>
+     * 操作日志的 SQL 是整个后台里唯一带**较长 XML 片段**的 Mapper：十来个
+     * {@code <if>} 拼一个 {@code <where>}，其中时间条件用了 {@code &gt;=} /
+     * {@code &lt;=} 这两种实体转义。转义写错不会有任何编译期或启动期报错——
+     * MyBatis 直到**第一次执行**那条语句时才解析它。内存桩跑不出这个问题，
+     * 契约测试（{@code standaloneSetup}）也不会碰到 Mapper。
+     *
+     * <p>其次要钉的是列别名：{@code time AS durationMillis}、
+     * {@code params AS paramsSummary}、{@code legacy_user_ref AS legacyUserRef}。
+     * 别名写错时 MyBatis 会安静地把字段留成 {@code null}（构造器映射少一个列
+     * 不会报错），而"详情里参数摘要是空的"看起来像是这条日志本来就没有参数。
+     *
+     * <p>写入走真实端口 {@code AuditLog}，读取走真实用例层 {@code OperationLogService}——
+     * 只有这样才能同时覆盖"写入侧留空的列"与"读取侧的二次脱敏"。
+     */
+    @Nested
+    class OperationLogs {
+
+        private static final AtomicLong TRACES = new AtomicLong(1);
+
+        @Autowired AuditLog auditLog;
+        @Autowired OperationLogService operationLogs;
+
+        @Test
+        void roundTripsARecordWrittenThroughTheAuditPort() {
+            String traceId = traceId();
+            long userId = 9_910_000_000_001L;
+
+            auditLog.record(new AuditEvent(
+                    userId, "admin", "ADMIN_USER_CREATE", "/api/v1/admin/users",
+                    "POST", AuditEvent.SUCCESS, "userId=7001;nickName=小新",
+                    "127.0.0.1", traceId));
+
+            OperationLogEntry stored = onlyOne(byTraceId(traceId));
+
+            assertThat(stored.userId()).isEqualTo(userId);
+            assertThat(stored.username()).isEqualTo("admin");
+            assertThat(stored.operation()).isEqualTo("ADMIN_USER_CREATE");
+            assertThat(stored.requestUri()).isEqualTo("/api/v1/admin/users");
+            assertThat(stored.httpMethod()).isEqualTo("POST");
+            assertThat(stored.resultStatus()).isEqualTo(AuditEvent.SUCCESS);
+            assertThat(stored.ip()).isEqualTo("127.0.0.1");
+            assertThat(stored.traceId()).isEqualTo(traceId);
+            assertThat(stored.createdAt()).isNotNull();
+        }
+
+        /**
+         * 写入侧刻意留空的两列读回来是 {@code null}，不是 0 或空串。
+         *
+         * <p>{@code time}（耗时）是 {@code int}、{@code method} 是 {@code varchar}。
+         * 若某处的映射把 NULL 变成了 0 或 {@code ""}，运维看到的会是
+         * "这次操作耗时 0 毫秒"——一个具体的、错误的数字。
+         */
+        @Test
+        void keepsTheColumnsTheAuditPortDeliberatelyLeavesEmpty() {
+            String traceId = traceId();
+            auditLog.record(new AuditEvent(
+                    9_910_000_000_002L, "admin", "ADMIN_USER_DELETE", "/api/v1/admin/users/1",
+                    "DELETE", AuditEvent.SUCCESS, "reason=误建", "127.0.0.1", traceId));
+
+            OperationLogDetail detail = operationLogs.detail(onlyOne(byTraceId(traceId)).logId());
+
+            assertThat(detail.durationMillis()).isNull();
+            assertThat(detail.method()).isNull();
+            assertThat(detail.paramsSummary()).isEqualTo("reason=误建");
+        }
+
+        /** 详情必须走一遍二次脱敏；写入侧留下的明文不该从读侧流出去。 */
+        @Test
+        void redactsTheParamSummaryOnTheWayOutOfTheRealService() {
+            String traceId = traceId();
+            auditLog.record(new AuditEvent(
+                    9_910_000_000_003L, "admin", "ADMIN_USER_PASSWORD_RESET",
+                    "/api/v1/admin/users/7001/password-reset", "POST", AuditEvent.SUCCESS,
+                    "userId=7001;delivery=EMAIL;password=Temp@12345;reason=用户忘记密码",
+                    "127.0.0.1", traceId));
+
+            OperationLogDetail detail = operationLogs.detail(onlyOne(byTraceId(traceId)).logId());
+
+            assertThat(detail.paramsSummary()).doesNotContain("Temp@12345");
+            assertThat(detail.paramsSummary()).contains("password=***");
+            assertThat(detail.paramsSummary())
+                    .describedAs("非敏感字段仍然可读，否则日志就没有价值了")
+                    .contains("delivery=EMAIL", "reason=用户忘记密码");
+        }
+
+        /**
+         * 时间条件的实体转义必须真的生成合法 SQL，并且真的在过滤。
+         *
+         * <p>这一条就是本组存在的首要理由：{@code &gt;=} 写成 {@code >=}
+         * 或者反过来，都不是编译错误，只在执行时爆。
+         */
+        @Test
+        void theEscapedRangeConditionsBothParseAndFilter() {
+            String traceId = traceId();
+            OffsetDateTime writtenAt = OffsetDateTime.now(clock);
+            auditLog.record(new AuditEvent(
+                    9_910_000_000_004L, "admin", "ADMIN_USER_UPDATE", "/api/v1/admin/users/7001",
+                    "PATCH", AuditEvent.SUCCESS, "nickName=小新", "127.0.0.1", traceId));
+
+            assertThat(operationLogs.list(range(traceId, writtenAt.minusHours(1), writtenAt.plusHours(1)))
+                    .items())
+                    .describedAs("落在窗口内应当能查到")
+                    .hasSize(1);
+            assertThat(operationLogs.list(range(traceId, writtenAt.minusHours(3), writtenAt.minusHours(2)))
+                    .items())
+                    .describedAs("窗口之外应当查不到——两个条件有一个没生效都会让这里变红")
+                    .isEmpty();
+        }
+
+        /**
+         * 同一秒内的多条日志按 {@code id} 倒序，翻页才不会重复或漏项。
+         *
+         * <p>{@code create_time} 是只到秒的 {@code datetime}，同一秒里写三条是常态
+         * （一次写操作会同时留下多条记录）。只按时间排序时它们的相对顺序由存储引擎决定，
+         * 而 {@code LIMIT/OFFSET} 分页依赖一个**稳定**的全序。
+         *
+         * <p>断言"确实降序"而不是"等于某个我算出来的逆序"：后者会顺带依赖
+         * "id 严格按写入顺序递增"这个假设，而那不是这条用例要证明的事。
+         */
+        @Test
+        void ordersRowsWrittenInTheSameSecondByIdDescending() {
+            String traceId = traceId();
+            List<Long> written = new ArrayList<>();
+            for (int index = 0; index < 3; index++) {
+                auditLog.record(new AuditEvent(
+                        9_910_000_000_005L, "admin", "ADMIN_USER_STATUS_CHANGE",
+                        "/api/v1/admin/users/7001/status", "PATCH", AuditEvent.SUCCESS,
+                        "status=LOCKED", "127.0.0.1", traceId));
+                written.add(lastLogIdFor(traceId));
+            }
+
+            List<Long> readBack = operationLogs.list(byTraceId(traceId)).items().stream()
+                    .map(OperationLogEntry::logId)
+                    .toList();
+
+            assertThat(readBack).containsExactlyInAnyOrderElementsOf(written);
+            assertThat(readBack).isSortedAccordingTo(Comparator.reverseOrder());
+        }
+
+        /** 与写入侧一致的过滤条件都要能被 SQL 接受（每一列都真的存在）。 */
+        @Test
+        void everyFilterColumnMatchesTheRealSchema() {
+            String traceId = traceId();
+            auditLog.record(new AuditEvent(
+                    9_910_000_000_006L, "admin", "ADMIN_USER_SESSION_REVOKE",
+                    "/api/v1/admin/users/7001/sessions/revoke", "POST", AuditEvent.DENIED,
+                    "reason=疑似被盗", "10.0.0.9", traceId));
+
+            OperationLogQuery query = new OperationLogQuery(
+                    9_910_000_000_006L, "admin", "ADMIN_USER_SESSION_REVOKE", AuditEvent.DENIED,
+                    "POST", "/api/v1/admin/users/7001/sessions/revoke", traceId, "10.0.0.9",
+                    OffsetDateTime.now(clock).minusMinutes(5),
+                    OffsetDateTime.now(clock).plusMinutes(5), 1, 20);
+
+            assertThat(operationLogs.list(query).items()).hasSize(1);
+            assertThat(operationLogs.list(new OperationLogQuery(
+                    9_910_000_000_006L, "someone-else", "ADMIN_USER_SESSION_REVOKE",
+                    AuditEvent.DENIED, "POST",
+                    "/api/v1/admin/users/7001/sessions/revoke", traceId, "10.0.0.9",
+                    OffsetDateTime.now(clock).minusMinutes(5),
+                    OffsetDateTime.now(clock).plusMinutes(5), 1, 20))
+                    .items())
+                    .describedAs("过滤条件必须真的参与 WHERE，而不是被拼丢了")
+                    .isEmpty();
+        }
+
+        @Test
+        void reportsAMissingLogAsNotFound() {
+            assertThatThrownBy(() -> operationLogs.detail(-1L))
+                    .isInstanceOfSatisfying(AdminException.class, exception ->
+                            assertThat(exception.code()).isEqualTo(AdminErrorCode.LOG_NOT_FOUND));
+        }
+
+        // ---------- 夹具 ----------
+
+        private String traceId() {
+            return "it-log-" + TRACES.getAndIncrement() + '-' + java.util.UUID.randomUUID();
+        }
+
+        private OperationLogQuery byTraceId(String traceId) {
+            return new OperationLogQuery(
+                    null, null, null, null, null, null, traceId, null, null, null, 1, 20);
+        }
+
+        private OperationLogQuery range(
+                String traceId, OffsetDateTime startedAt, OffsetDateTime endedAt) {
+            return new OperationLogQuery(
+                    null, null, null, null, null, null, traceId, null,
+                    startedAt, endedAt, 1, 20);
+        }
+
+        private OperationLogEntry onlyOne(OperationLogQuery query) {
+            List<OperationLogEntry> items = operationLogs.list(query).items();
+            assertThat(items).describedAs("按 traceId 过滤应当恰好命中一条").hasSize(1);
+            return items.get(0);
+        }
+
+        private long lastLogIdFor(String traceId) {
+            Long logId = jdbc.queryForObject(
+                    "SELECT MAX(id) FROM sys_log WHERE trace_id = ?", Long.class, traceId);
+            assertThat(logId).isNotNull();
+            return logId;
+        }
+    }
+
+    /**
+     * {@code job_execution_summary} 的读写往返（契约 §16.3 ADM-JOB-01~05、P4）。
+     *
+     * <h2>这一组为什么必须在真库上跑</h2>
+     * <ul>
+     *   <li>{@code JobExecutionMapper} 的分页与计数同样是用 <b>XML 片段</b>拼
+     *       {@code <where>}，时间条件用了 {@code &gt;=} / {@code &lt;=} 两种实体转义。
+     *       转义写错只在**第一次执行**那条语句时才炸，内存桩与
+     *       {@code standaloneSetup} 都碰不到；</li>
+     *   <li>{@code V10} 新增的 {@code counts_available} 是"计数未采集"与
+     *       "处理了 0 条"在库里唯一的区别。这一列要是没生效，
+     *       症状是页面上把真实的 0 显示成"未采集"（或反之），而两种都不报错；</li>
+     *   <li>{@code ck_job_execution_counts} / {@code uk_job_execution_batch_shard_attempt}
+     *       是最后一层防线：应用层的校验挡不住绕过应用的写入，
+     *       而这两条约束的失败方式是"写进去一行坏数据"。</li>
+     * </ul>
+     *
+     * <h2>人工触发用真的 {@code JobAdminService}，但换掉执行体与调度器</h2>
+     * {@code InProcessJobRunner} 会去连真实的 Provider 与资讯来源，在集成测试里
+     * 既慢又不确定。这里保留真实的用例层 + 真实的记录器 + 真实的 SQL，
+     * 只把"执行哪段逻辑"和"在哪个线程跑"换成可控的实现——
+     * 于是"手工触发后库里有一条 MANUAL 行"这句话被完整验证，
+     * 而它验证的正是我们写的那些代码。
+     */
+    @Nested
+    class JobExecutions {
+
+        /** 与其它分组错开的一段 ID，避免与 ID 生成器造出来的值相撞。 */
+        private static final AtomicLong IDS = new AtomicLong(9_810_000_000_000L);
+        private static final AtomicLong BATCHES = new AtomicLong(1);
+        private static final AtomicLong TRACES = new AtomicLong(1);
+
+        @Autowired JobExecutionStore executions;
+        @Autowired JobExecutionRecorder recorder;
+        @Autowired JobDefinitionCatalog catalog;
+
+        // ---------- V10 ----------
+
+        @Test
+        void theMigrationAddedTheCountsAvailableFlagWithAZeroDefault() {
+            Map<String, Object> column = jdbc.queryForMap("""
+                    SELECT DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT
+                      FROM information_schema.COLUMNS
+                     WHERE TABLE_SCHEMA = DATABASE()
+                       AND TABLE_NAME = 'job_execution_summary'
+                       AND COLUMN_NAME = 'counts_available'
+                    """);
+
+            assertThat(column.get("DATA_TYPE")).isEqualTo("tinyint");
+            assertThat(column.get("IS_NULLABLE")).isEqualTo("NO");
+            assertThat(String.valueOf(column.get("COLUMN_DEFAULT")))
+                    .describedAs("历史行必须落在 0——把它们标成已采集就是编造")
+                    .isEqualTo("0");
+        }
+
+        // ---------- 开始 → 回填 ----------
+
+        @Test
+        void recordsARunningRowAndOnlyFillsInTheOutcomeAtTheEnd() {
+            String batchId = newBatchId();
+            long executionId = recorder.start(JobExecutionRequest.manual(
+                    JobNames.MARKET_OVERVIEW_COLLECT, JobNames.MARKET_OVERVIEW_HANDLER,
+                    batchId, 7L, 3, traceId()));
+
+            JobExecution started = executions.find(executionId).orElseThrow();
+            assertThat(started.status()).isEqualTo(JobExecutionStatus.RUNNING);
+            assertThat(started.triggerType()).isEqualTo(JobTriggerType.MANUAL);
+            assertThat(started.batchId()).isEqualTo(batchId);
+            assertThat(started.providerId()).isEqualTo(7L);
+            assertThat(started.shardTotal()).isEqualTo(3);
+            assertThat(started.attemptNo()).isEqualTo(1);
+            assertThat(started.completedAt()).isNull();
+            assertThat(started.scheduledAt())
+                    .describedAs("fixedDelay 与人工触发都没有\"计划时刻\"这个事实")
+                    .isNull();
+            assertThat(started.countsAvailable()).isFalse();
+
+            JobExecutionOutcome outcome = recorder.finish(
+                    executionId, () -> JobExecutionOutcome.success(new JobExecutionCounts(10, 7, 1, 2, 7)));
+
+            assertThat(outcome.status()).isEqualTo(JobExecutionStatus.SUCCESS);
+
+            JobExecution finished = executions.find(executionId).orElseThrow();
+            assertThat(finished.status()).isEqualTo(JobExecutionStatus.SUCCESS);
+            assertThat(finished.completedAt()).isNotNull();
+            assertThat(finished.counts()).isEqualTo(new JobExecutionCounts(10, 7, 1, 2, 7));
+            assertThat(finished.countsAvailable()).isTrue();
+        }
+
+        /**
+         * "未采集"与"处理了 0 条"在库里必须可分。
+         *
+         * <p>这正是 V10 存在的理由：五个 count 列都是 {@code NOT NULL DEFAULT 0}，
+         * 两行的计数部分完全同形，唯一的区别是 {@code counts_available}。
+         */
+        @Test
+        void keepsUnknownCountsDistinctFromZeroCounts() {
+            long unknown = recorder.start(manualMoment(JobNames.NEWS_INGEST, JobNames.NEWS_INGEST_HANDLER));
+            recorder.finish(unknown, JobExecutionOutcome::success);
+
+            long zero = recorder.start(manualMoment(JobNames.NEWS_INGEST, JobNames.NEWS_INGEST_HANDLER));
+            recorder.finish(zero, () -> JobExecutionOutcome.success(JobExecutionCounts.ZERO));
+
+            assertThat(executions.find(unknown).orElseThrow().counts())
+                    .describedAs("没有计数时读回来必须是 null，而不是一排 0")
+                    .isNull();
+            assertThat(executions.find(zero).orElseThrow().counts())
+                    .describedAs("确实是 0 条的合法取值，不能被显示成\"未采集\"")
+                    .isEqualTo(JobExecutionCounts.ZERO);
+
+            assertThat(countsAvailableColumnOf(unknown)).isZero();
+            assertThat(countsAvailableColumnOf(zero)).isEqualTo(1);
+
+            // 断言"两行的五个计数列逐列相同"而不是读回来比对数字：
+            // bigint unsigned 列经驱动读回的是 BigInteger 而不是 Long，
+            // 写死类型的断言测的是驱动的类型选择，不是这一列的业务含义。
+            assertThat(jdbc.queryForObject("""
+                    SELECT COUNT(*) FROM job_execution_summary a
+                      JOIN job_execution_summary b ON b.id = ?
+                     WHERE a.id = ?
+                       AND (a.input_count   <> b.input_count
+                         OR a.success_count <> b.success_count
+                         OR a.ignored_count <> b.ignored_count
+                         OR a.failure_count <> b.failure_count
+                         OR a.output_count  <> b.output_count)
+                    """, Long.class, unknown, zero))
+                    .describedAs("库里区分这两行的只有 counts_available，计数部分完全同形")
+                    .isZero();
+            assertThat(jdbc.queryForObject("""
+                    SELECT COUNT(*) FROM job_execution_summary a
+                      JOIN job_execution_summary b ON b.id = ?
+                     WHERE a.id = ? AND a.counts_available <> b.counts_available
+                    """, Long.class, unknown, zero))
+                    .isEqualTo(1L);
+        }
+
+        /**
+         * 定时一轮的记录（契约 P4b 的验收点：库里有一条 {@code SCHEDULED} 行）。
+         *
+         * <p>用的是 {@code stock-job} 三个采集器调用的同一个工厂
+         * {@link JobExecutionRequest#scheduled}——定时侧与人工侧共用记录器，
+         * 这里钉的是"两条触发路径在库里留下的是可区分的两种事实"。
+         */
+        @Test
+        void aScheduledRunIsRecordedAsScheduledWithoutAPlannedTime() {
+            String batchId = newBatchId();
+            String traceId = traceId();
+            long executionId = recorder.start(JobExecutionRequest.scheduled(
+                    JobNames.MARKET_OVERVIEW_COLLECT, JobNames.MARKET_OVERVIEW_HANDLER,
+                    batchId, traceId));
+
+            JobExecution stored = executions.find(executionId).orElseThrow();
+            assertThat(stored.triggerType()).isEqualTo(JobTriggerType.SCHEDULED);
+            assertThat(stored.providerId())
+                    .describedAs("定时采集不关联外部 Provider")
+                    .isNull();
+            assertThat(stored.scheduledAt())
+                    .describedAs("fixedDelay 没有\"计划时刻\"这个事实，不拿实际开始时间冒充")
+                    .isNull();
+            assertThat(stored.handlerName())
+                    .describedAs("定时侧与人工侧必须落到同一个 handler，否则按 handler 聚合会分裂成两个任务")
+                    .isEqualTo(JobNames.MARKET_OVERVIEW_HANDLER);
+            assertThat(stored.traceId()).isEqualTo(traceId);
+
+            assertThat(jdbc.queryForObject("""
+                    SELECT COUNT(*) FROM job_execution_summary
+                     WHERE id = ? AND trigger_type = 'SCHEDULED' AND scheduled_at IS NULL
+                    """, Long.class, executionId))
+                    .isEqualTo(1L);
+        }
+
+        /** 异常路径也要回填成 FAILED，并且异常原样抛出去。 */
+        @Test
+        void fillsInAFailedOutcomeAndRethrowsTheException() {
+            long executionId = recorder.start(
+                    manualMoment(JobNames.NEWS_INGEST, JobNames.NEWS_INGEST_HANDLER));
+
+            assertThatThrownBy(() -> recorder.finish(executionId, () -> {
+                throw new JobExecutionFailure(
+                        "PROVIDER_TIMEOUT", "IT_TIMEOUT", "来源超时，已跳过本轮", null);
+            }))
+                    .isInstanceOf(JobExecutionFailure.class)
+                    .hasMessage("来源超时，已跳过本轮");
+
+            JobExecution stored = executions.find(executionId).orElseThrow();
+            assertThat(stored.status()).isEqualTo(JobExecutionStatus.FAILED);
+            assertThat(stored.errorCategory()).isEqualTo("PROVIDER_TIMEOUT");
+            assertThat(stored.errorCode()).isEqualTo("IT_TIMEOUT");
+            assertThat(stored.errorSummary()).isEqualTo("来源超时，已跳过本轮");
+            assertThat(stored.completedAt()).isNotNull();
+        }
+
+        /** 回填只生效一次：第二次影响 0 行，读回来仍是第一次的结论。 */
+        @Test
+        void completeOnlyAppliesWhileTheRowIsStillRunning() {
+            long executionId = recorder.start(
+                    manualMoment(JobNames.NEWS_INGEST, JobNames.NEWS_INGEST_HANDLER));
+            OffsetDateTime now = OffsetDateTime.now(clock);
+
+            assertThat(executions.complete(executionId, JobExecutionOutcome.success(), now)).isTrue();
+            assertThat(executions.complete(
+                    executionId, JobExecutionOutcome.failed("X", "Y", "不该覆盖"), now.plusSeconds(1)))
+                    .describedAs("已经收尾过的记录不该被再次回填")
+                    .isFalse();
+            assertThat(executions.complete(IDS.getAndIncrement(), JobExecutionOutcome.success(), now))
+                    .describedAs("回填一条从未开始的记录同样影响 0 行")
+                    .isFalse();
+
+            JobExecution stored = executions.find(executionId).orElseThrow();
+            assertThat(stored.status()).isEqualTo(JobExecutionStatus.SUCCESS);
+            assertThat(stored.errorSummary()).isNull();
+        }
+
+        // ---------- 数据库约束 ----------
+
+        @Test
+        void theDatabaseRejectsCountsThatExceedTheInput() {
+            long executionId = recorder.start(
+                    manualMoment(JobNames.NEWS_INGEST, JobNames.NEWS_INGEST_HANDLER));
+
+            assertThatThrownBy(() -> jdbc.update("""
+                    UPDATE job_execution_summary
+                       SET status = 'SUCCESS', input_count = 1, success_count = 2
+                     WHERE id = ?
+                    """, executionId))
+                    .isInstanceOf(DataAccessException.class)
+                    .hasMessageContaining("ck_job_execution_counts");
+        }
+
+        @Test
+        void theDatabaseRejectsATriggerTypeOutsideTheContract() {
+            assertThatThrownBy(() -> jdbc.update("""
+                    INSERT INTO job_execution_summary
+                      (id, job_name, handler_name, batch_id, trigger_type, status, started_at, trace_id)
+                    VALUES (?, 'it-job', 'It.handler', ?, 'CRON', 'RUNNING', NOW(3), ?)
+                    """, IDS.getAndIncrement(), newBatchId(), traceId()))
+                    .isInstanceOf(DataAccessException.class)
+                    .hasMessageContaining("ck_job_execution_trigger");
+        }
+
+        @Test
+        void theUniqueIndexBlocksASecondRowForTheSameAttempt() {
+            String batchId = newBatchId();
+            JobExecutionRequest request = JobExecutionRequest.manual(
+                    JobNames.MARKET_OVERVIEW_COLLECT, JobNames.MARKET_OVERVIEW_HANDLER,
+                    batchId, null, 1, traceId());
+            recorder.start(request);
+
+            // 第二次的 id 不同，撞的是 (job_name, batch_id, shard_index, attempt_no)。
+            assertThatThrownBy(() -> recorder.start(request))
+                    .isInstanceOf(DataAccessException.class)
+                    .hasMessageContaining("uk_job_execution_batch_shard_attempt");
+        }
+
+        // ---------- 尝试号 ----------
+
+        @Test
+        void nextAttemptNoFollowsTheMaximumOfTheSameBatchAndShard() {
+            String batchId = newBatchId();
+
+            assertThat(executions.nextAttemptNo(JobNames.MARKET_OVERVIEW_COLLECT, batchId, 0))
+                    .describedAs("这个批次还没有任何记录，第一次尝试是 1")
+                    .isEqualTo(1);
+
+            recorder.start(JobExecutionRequest.manual(
+                    JobNames.MARKET_OVERVIEW_COLLECT, JobNames.MARKET_OVERVIEW_HANDLER,
+                    batchId, null, 1, traceId()));
+
+            assertThat(executions.nextAttemptNo(JobNames.MARKET_OVERVIEW_COLLECT, batchId, 0))
+                    .isEqualTo(2);
+            assertThat(executions.nextAttemptNo(JobNames.MARKET_OVERVIEW_COLLECT, newBatchId(), 0))
+                    .describedAs("换一个批次互不影响")
+                    .isEqualTo(1);
+        }
+
+        // ---------- 过滤、排序与转义 ----------
+
+        /**
+         * 时间条件的实体转义必须真的生成合法 SQL，并且真的在过滤。
+         *
+         * <p>这一条与本文件的 {@code OperationLogs} 分组同源：{@code &gt;=} 写成
+         * {@code >=}（或反过来）都不是编译错误，只在执行时爆。
+         */
+        @Test
+        void theEscapedRangeConditionsBothParseAndFilter() {
+            String jobName = uniqueJobName();
+            OffsetDateTime base = OffsetDateTime.now(clock).withNano(0);
+
+            long older = seed(scheduledRequest(jobName), base.minusSeconds(90));
+            long newer = seed(scheduledRequest(jobName), base.minusSeconds(30));
+
+            assertThat(idsIn(pageOfJob(jobName, base.minusHours(1), base.plusHours(1))))
+                    .containsExactly(newer, older);
+            assertThat(pageOfJob(jobName, base.minusHours(3), base.minusHours(2)))
+                    .describedAs("窗口之外应当查不到——两个条件有一个没生效都会让这里变红")
+                    .isEmpty();
+            assertThat(idsIn(pageOfJob(jobName, base.minusSeconds(60), base.plusHours(1))))
+                    .describedAs("下界生效：只剩较新的那条")
+                    .containsExactly(newer);
+            assertThat(idsIn(pageOfJob(jobName, base.minusHours(1), base.minusSeconds(60))))
+                    .describedAs("上界生效：只剩较早的那条")
+                    .containsExactly(older);
+        }
+
+        /**
+         * 同一毫秒内的多条记录按 {@code id} 倒序。
+         *
+         * <p>{@code started_at} 是 {@code datetime(3)}，人工触发的分片之间可以落在
+         * 同一毫秒。只按时间排序时它们的相对顺序由存储引擎决定，而
+         * {@code LIMIT/OFFSET} 分页依赖一个**稳定**的全序：没有 {@code id} 兜底时，
+         * 翻页会重复或漏项，且只在恰好有同毫秒记录时出现。
+         */
+        @Test
+        void ordersRowsWrittenInTheSameMillisecondByIdDescending() {
+            String jobName = uniqueJobName();
+            OffsetDateTime sameMoment = OffsetDateTime.now(clock).withNano(0);
+
+            long lower = seed(scheduledRequest(jobName), sameMoment);
+            long higher = seed(scheduledRequest(jobName), sameMoment);
+
+            assertThat(higher).isGreaterThan(lower);
+            assertThat(idsIn(pageOfJob(jobName, sameMoment.minusHours(1), sameMoment.plusHours(1))))
+                    .containsExactly(higher, lower);
+        }
+
+        /** 每个过滤列都真的存在，并且真的参与 {@code WHERE}。 */
+        @Test
+        void everyFilterColumnMatchesTheRealSchemaAndFilters() {
+            String batchId = newBatchId();
+            OffsetDateTime base = OffsetDateTime.now(clock).withNano(0);
+            long executionId = seed(JobExecutionRequest.manual(
+                            JobNames.MARKET_OVERVIEW_COLLECT, JobNames.MARKET_OVERVIEW_HANDLER,
+                            batchId, 42L, 1, traceId()),
+                    base);
+
+            assertThat(idsIn(executions.page(new JobExecutionQuery(
+                    JobNames.MARKET_OVERVIEW_COLLECT, 42L, JobExecutionStatus.RUNNING,
+                    JobTriggerType.MANUAL, batchId, base.minusMinutes(5), base.plusMinutes(5), 1, 20))))
+                    .containsExactly(executionId);
+
+            assertThat(executions.count(new JobExecutionQuery(
+                    JobNames.MARKET_OVERVIEW_COLLECT, 42L, JobExecutionStatus.RUNNING,
+                    JobTriggerType.MANUAL, batchId, base.minusMinutes(5), base.plusMinutes(5),
+                    1, 20)))
+                    .isEqualTo(1);
+
+            // 每一个条件单独改动，都必须让结果变成 0 条。
+            assertThat(pageByJobName(JobNames.NEWS_INGEST, batchId, base)).isEmpty();
+            assertThat(pageByProvider(7L, batchId, base)).isEmpty();
+            assertThat(pageByStatus(JobExecutionStatus.SUCCESS, batchId, base)).isEmpty();
+            assertThat(pageByTriggerType(JobTriggerType.RETRY, batchId, base)).isEmpty();
+        }
+
+        // ---------- 人工触发与重试（真用例层 + 真 SQL） ----------
+
+        /** 契约 ADM-JOB-02 的验收点：手工触发后库里有一条 MANUAL 行。 */
+        @Test
+        void aManualTriggerLeavesAManualRunningRow() {
+            JobExecution accepted = serviceThatDiscardsTheTask().trigger(
+                    JobNames.MARKET_OVERVIEW_COLLECT,
+                    new TriggerJobCommand("CN", null, 2, "集成测试"),
+                    9_910_000_000_001L,
+                    traceId());
+
+            assertThat(accepted.status()).isEqualTo(JobExecutionStatus.RUNNING);
+
+            long rowCount = jdbc.queryForObject("""
+                    SELECT COUNT(*) FROM job_execution_summary
+                     WHERE id = ? AND trigger_type = 'MANUAL' AND status = 'RUNNING'
+                    """, Long.class, accepted.executionId());
+            assertThat(rowCount)
+                    .describedAs("执行体被丢弃时记录应当停在 RUNNING，等待真实调度器接手")
+                    .isEqualTo(1L);
+            assertThat(jdbc.queryForObject("""
+                    SELECT COUNT(*) FROM job_execution_summary
+                     WHERE id = ? AND scheduled_at IS NULL AND counts_available = 0
+                    """, Long.class, accepted.executionId()))
+                    .describedAs("人工触发没有计划时刻，也没有计数")
+                    .isEqualTo(1L);
+        }
+
+        /**
+         * 人工触发的完整链路：记录 → 执行体 → 回填。
+         *
+         * <p>执行体在这里断言"它拿到了归一化后的作用范围"，因此这条用例同时覆盖
+         * "控制器 → 用例层 → 执行体"这一段接口。
+         */
+        @Test
+        void aManualTriggerIsExecutedAndItsOutcomeIsReadBack() {
+            AtomicReference<JobTrigger> seen = new AtomicReference<>();
+            JobAdminService synchronous = new JobAdminService(
+                    catalog,
+                    trigger -> {
+                        seen.set(trigger);
+                        return JobExecutionOutcome.success(new JobExecutionCounts(5, 5, 0, 0, 5));
+                    },
+                    executions,
+                    recorder,
+                    Runnable::run,
+                    clock);
+
+            JobExecution accepted = synchronous.trigger(
+                    JobNames.MARKET_OVERVIEW_COLLECT,
+                    new TriggerJobCommand("cn", null, null, "集成测试"),
+                    9_910_000_000_002L,
+                    traceId());
+
+            assertThat(seen.get().scopeKey())
+                    .describedAs("小写会被归一化成白名单里的取值")
+                    .isEqualTo("CN");
+            assertThat(seen.get().shardTotal()).isEqualTo(1);
+            assertThat(seen.get().operatorId()).isEqualTo(9_910_000_000_002L);
+            assertThat(seen.get().byOperator()).isTrue();
+
+            assertThat(accepted.status())
+                    .describedAs("同步调度器下响应返回时任务已经跑完")
+                    .isEqualTo(JobExecutionStatus.SUCCESS);
+            assertThat(accepted.counts()).isEqualTo(new JobExecutionCounts(5, 5, 0, 0, 5));
+            assertThat(accepted.countsAvailable()).isTrue();
+            assertThat(executions.find(accepted.executionId()).orElseThrow().countsAvailable()).isTrue();
+        }
+
+        /**
+         * 重试不覆盖旧记录：新行沿用批次、递增尝试号，旧行原样保留。
+         */
+        @Test
+        void aRetryAddsANewAttemptAndLeavesTheFailedRowAlone() {
+            String batchId = newBatchId();
+            long failedId = recorder.start(JobExecutionRequest.manual(
+                    JobNames.MARKET_OVERVIEW_COLLECT, JobNames.MARKET_OVERVIEW_HANDLER,
+                    batchId, 42L, 1, traceId()));
+            recorder.finish(failedId,
+                    () -> JobExecutionOutcome.failed("PROVIDER_TIMEOUT", "IT_TIMEOUT", "来源超时"));
+
+            JobExecution retried = serviceThatDiscardsTheTask().retry(
+                    failedId, new RetryJobCommand("来源已恢复"), 9_910_000_000_003L, traceId());
+
+            assertThat(retried.triggerType()).isEqualTo(JobTriggerType.RETRY);
+            assertThat(retried.batchId()).isEqualTo(batchId);
+            assertThat(retried.attemptNo()).isEqualTo(2);
+            assertThat(retried.status()).isEqualTo(JobExecutionStatus.RUNNING);
+            assertThat(retried.providerId())
+                    .describedAs("重试沿用原记录的外部来源")
+                    .isEqualTo(42L);
+
+            JobExecution original = executions.find(failedId).orElseThrow();
+            assertThat(original.status()).isEqualTo(JobExecutionStatus.FAILED);
+            assertThat(original.attemptNo()).isEqualTo(1);
+            assertThat(executions.find(retried.executionId()).orElseThrow().completedAt()).isNull();
+        }
+
+        /** 只有失败与部分失败可以重试——判定读的是库里的真实状态。 */
+        @Test
+        void aSuccessfulExecutionCannotBeRetried() {
+            long successId = recorder.start(
+                    manualMoment(JobNames.NEWS_INGEST, JobNames.NEWS_INGEST_HANDLER));
+            recorder.finish(successId, JobExecutionOutcome::success);
+
+            assertThatThrownBy(() -> serviceThatDiscardsTheTask().retry(
+                    successId, new RetryJobCommand("手滑"), 9_910_000_000_004L, traceId()))
+                    .isInstanceOfSatisfying(AdminException.class, exception ->
+                            assertThat(exception.code())
+                                    .isEqualTo(AdminErrorCode.JOB_EXECUTION_NOT_RETRYABLE));
+        }
+
+        // ---------- 夹具 ----------
+
+        /**
+         * 用真实用例层 + 真实 SQL，但把执行体与调度器换成不产生副作用的实现。
+         *
+         * <p>调度器直接丢弃任务：记录停在 {@code RUNNING}，正是"响应已返回、任务还没跑"
+         * 这个 202 语义在库里的样子。
+         */
+        private JobAdminService serviceThatDiscardsTheTask() {
+            return new JobAdminService(
+                    catalog,
+                    trigger -> JobExecutionOutcome.success(),
+                    executions,
+                    recorder,
+                    task -> {
+                    },
+                    clock);
+        }
+
+        private JobExecutionRequest manualMoment(String jobName, String handlerName) {
+            return JobExecutionRequest.manual(
+                    jobName, handlerName, newBatchId(), null, 1, traceId());
+        }
+
+        /**
+         * 一个本组专用的任务名。
+         *
+         * <p>这些用例要在同一个任务名下放多行、又必须避开
+         * {@code uk_job_execution_batch_shard_attempt}（同批同分片同尝试号唯一），
+         * 因此每行给一个独立批次，改用任务名 + 时间窗来定位。
+         * 用真实的 {@code JobNames} 常量做不到这一点：三个常量是共享的。
+         */
+        private JobExecutionRequest scheduledRequest(String jobName) {
+            return JobExecutionRequest.scheduled(
+                    jobName, jobName + ".handler", newBatchId(), traceId());
+        }
+
+        private String uniqueJobName() {
+            return "it-job-" + BATCHES.getAndIncrement();
+        }
+
+        private long seed(JobExecutionRequest request, OffsetDateTime startedAt) {
+            long executionId = IDS.getAndIncrement();
+            executions.insert(new NewJobExecution(executionId, request, startedAt));
+            return executionId;
+        }
+
+        private List<JobExecution> pageOfJob(
+                String jobName, OffsetDateTime startedAt, OffsetDateTime endedAt) {
+            return executions.page(new JobExecutionQuery(
+                    jobName, null, null, null, null, startedAt, endedAt, 1, 50));
+        }
+
+        private List<Long> idsIn(List<JobExecution> items) {
+            return items.stream().map(JobExecution::executionId).toList();
+        }
+
+        private List<JobExecution> pageByJobName(
+                String jobName, String batchId, OffsetDateTime base) {
+            return executions.page(new JobExecutionQuery(
+                    jobName, null, null, null, batchId,
+                    base.minusMinutes(5), base.plusMinutes(5), 1, 20));
+        }
+
+        private List<JobExecution> pageByProvider(Long providerId, String batchId, OffsetDateTime base) {
+            return executions.page(new JobExecutionQuery(
+                    null, providerId, null, null, batchId,
+                    base.minusMinutes(5), base.plusMinutes(5), 1, 20));
+        }
+
+        private List<JobExecution> pageByStatus(
+                JobExecutionStatus status, String batchId, OffsetDateTime base) {
+            return executions.page(new JobExecutionQuery(
+                    null, null, status, null, batchId,
+                    base.minusMinutes(5), base.plusMinutes(5), 1, 20));
+        }
+
+        private List<JobExecution> pageByTriggerType(
+                JobTriggerType triggerType, String batchId, OffsetDateTime base) {
+            return executions.page(new JobExecutionQuery(
+                    null, null, null, triggerType, batchId,
+                    base.minusMinutes(5), base.plusMinutes(5), 1, 20));
+        }
+
+        private String newBatchId() {
+            return "it-job-" + BATCHES.getAndIncrement() + '-' + java.util.UUID.randomUUID();
+        }
+
+        private String traceId() {
+            return "it-job-trace-" + TRACES.getAndIncrement() + '-' + java.util.UUID.randomUUID();
+        }
+
+        private int countsAvailableColumnOf(long executionId) {
+            Integer value = jdbc.queryForObject(
+                    "SELECT counts_available FROM job_execution_summary WHERE id = ?",
+                    Integer.class, executionId);
+            assertThat(value).isNotNull();
+            return value;
         }
     }
 }

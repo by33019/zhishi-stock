@@ -10,6 +10,7 @@ import java.time.OffsetDateTime;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -18,6 +19,17 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 
 @Configuration
 @EnableWebSecurity
+/**
+ * {@code @EnableMethodSecurity} 让后台端点可以逐条声明 {@code @PreAuthorize}（契约 §16 开头：
+ * "除登录身份外，每个接口还必须校验 Spring Security 权限标识"）。
+ *
+ * <p>只加路径级规则做不到这件事：路径能表达的粒度是"/admin 下的都要某个权限"，
+ * 而契约给的是 <em>每个端点一个</em>权限码（`sys:user:list` 与 `sys:user:delete` 不是同一件事）。
+ * 权限码本来就在 access token 里（{@code JwtAccessTokenService} 写 `permissions` claim、
+ * {@code JwtAuthenticationFilter} 裸转 `GrantedAuthority`），因此 {@code hasAuthority('...')}
+ * 与现有令牌完全对齐，不需要新的授权基础设施。
+ */
+@EnableMethodSecurity
 public class SecurityConfiguration {
 
     @Bean
@@ -74,6 +86,13 @@ public class SecurityConfiguration {
                         // 也在这两个前缀下，已由上面的 securities/sectors 规则覆盖。
                         .requestMatchers(HttpMethod.GET, "/api/v1/news", "/api/v1/news/**")
                         .permitAll()
+                        // 后台管理面（契约 §16）：**不放行任何 admin 路径**。
+                        // 这条显式规则写下来是为了让"admin 前缀必须已认证"成为一个被测试钉住的事实，
+                        // 而不是靠末尾的 anyRequest() 兜住——将来若有人放宽上面某个公共前缀，
+                        // 这一条能挡住"顺手把 /admin 也放开"。
+                        // 具体权限码由各控制器的 @PreAuthorize 逐个校验（见 @EnableMethodSecurity 的说明）。
+                        .requestMatchers("/api/v1/admin/**")
+                        .authenticated()
                         .anyRequest()
                         .authenticated())
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)

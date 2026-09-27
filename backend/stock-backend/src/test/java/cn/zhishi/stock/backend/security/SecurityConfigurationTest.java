@@ -2,6 +2,7 @@ package cn.zhishi.stock.backend.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -21,6 +22,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -195,6 +198,79 @@ class SecurityConfigurationTest {
         });
   }
 
+  /**
+   * 后台管理面（契约 §16）必须要求已登录。
+   *
+   * <p>上面那些 PUBLIC 前缀是逐条列出的行情/资讯数据，`/api/v1/admin/**` 的显式规则把它们
+   * 与后台面隔开：将来若有人为了放开别的公共前缀而加宽匹配范围，这条会变红。
+   */
+  @Test
+  void keepsAdminEndpointsBehindAuthentication() {
+    new WebApplicationContextRunner()
+        .withUserConfiguration(SecurityConfiguration.class, TestEndpoints.class)
+        .withBean(JwtAuthenticationFilter.class, () -> new JwtAuthenticationFilter(
+            mock(JwtAccessTokenService.class), mock(AccessTokenBlacklist.class),
+            mock(UserAccountRepository.class)))
+        .withBean(ObjectMapper.class, () -> new ObjectMapper().findAndRegisterModules())
+        .withBean(Clock.class, Clock::systemUTC)
+        .withBean(TraceIdFilter.class, TraceIdFilter::new)
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          var mvc = MockMvcBuilders.webAppContextSetup(context)
+              .apply(springSecurity())
+              .addFilters(context.getBean(TraceIdFilter.class))
+              .build();
+          for (String[] target : new String[][] {
+              {"GET", "/api/v1/admin/users"},
+              {"GET", "/api/v1/admin/roles"},
+              {"GET", "/api/v1/admin/operation-logs"},
+              {"GET", "/api/v1/admin/jobs"},
+              {"GET", "/api/v1/admin/ai/tasks"}}) {
+            MockHttpServletRequestBuilder request = switch (target[0]) {
+              case "GET" -> get(target[1]);
+              default -> post(target[1]);
+            };
+            assertThat(mvc.perform(request).andReturn().getResponse().getStatus())
+                .describedAs("游客访问 %s %s 应当被拒绝", target[0], target[1])
+                .isEqualTo(401);
+          }
+        });
+  }
+
+  /**
+   * 路径规则只能表达"已登录"，契约 §16 要的是"每个端点一个权限码"——这条差异由
+   * {@code @EnableMethodSecurity} + {@code @PreAuthorize} 承担。
+   *
+   * <p>断言的是三件事：缺码必须 403（而不是 200）、403 要走统一错误壳、有码才放行。
+   * 只测"游客被挡"是不够的——把 {@code @EnableMethodSecurity} 删掉后那条依然会绿。
+   */
+  @Test
+  void enforcesAdminPermissionCodesFromAccessToken() {
+    new WebApplicationContextRunner()
+        .withUserConfiguration(SecurityConfiguration.class, TestEndpoints.class)
+        .withBean(JwtAuthenticationFilter.class, () -> new JwtAuthenticationFilter(
+            mock(JwtAccessTokenService.class), mock(AccessTokenBlacklist.class),
+            mock(UserAccountRepository.class)))
+        .withBean(ObjectMapper.class, () -> new ObjectMapper().findAndRegisterModules())
+        .withBean(Clock.class, Clock::systemUTC)
+        .withBean(TraceIdFilter.class, TraceIdFilter::new)
+        .run(context -> {
+          assertThat(context).hasNotFailed();
+          var mvc = MockMvcBuilders.webAppContextSetup(context)
+              .apply(springSecurity())
+              .addFilters(context.getBean(TraceIdFilter.class))
+              .build();
+          mvc.perform(get("/api/v1/admin/users")
+                  .with(user("member").authorities(new SimpleGrantedAuthority("sys:user:view"))))
+              .andExpect(status().isForbidden())
+              .andExpect(jsonPath("$.success").value(false))
+              .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+          mvc.perform(get("/api/v1/admin/users")
+                  .with(user("admin").authorities(new SimpleGrantedAuthority("sys:user:list"))))
+              .andExpect(status().isOk());
+        });
+  }
+
   @Configuration(proxyBeanMethods = false)
   @EnableWebMvc
   static class TestEndpoints {
@@ -202,6 +278,45 @@ class SecurityConfigurationTest {
     @Bean
     EndpointController endpointController() {
       return new EndpointController();
+    }
+
+    @Bean
+    AdminEndpointController adminEndpointController() {
+      return new AdminEndpointController();
+    }
+  }
+
+  /**
+   * 后台端点的最小替身：只留一个受 {@code sys:user:list} 保护的 GET，
+   * 用来验证方法级鉴权链路（JWT 里的权限码 → {@code GrantedAuthority} → {@code @PreAuthorize}）。
+   */
+  @RestController
+  static class AdminEndpointController {
+
+    @GetMapping("/api/v1/admin/users")
+    @PreAuthorize("hasAuthority('sys:user:list')")
+    String listUsers() {
+      return "ok";
+    }
+
+    @GetMapping("/api/v1/admin/roles")
+    String listRoles() {
+      return "ok";
+    }
+
+    @GetMapping("/api/v1/admin/operation-logs")
+    String listOperationLogs() {
+      return "ok";
+    }
+
+    @GetMapping("/api/v1/admin/jobs")
+    String listJobs() {
+      return "ok";
+    }
+
+    @GetMapping("/api/v1/admin/ai/tasks")
+    String listAiTasks() {
+      return "ok";
     }
   }
 

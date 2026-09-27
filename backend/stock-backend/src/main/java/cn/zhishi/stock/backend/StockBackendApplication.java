@@ -22,12 +22,16 @@ import org.springframework.boot.autoconfigure.security.servlet.UserDetailsServic
  *
  * <p>M3-07 起 AI 域的写入侧在 {@code stock-ai-worker}，那个可启动模块上有**同样一份**
  * {@code @MapperScan}——两个入口各声明一次，不能只改这里。
+ *
+ * <p>M3-11 新增后台域（{@code cn.zhishi.stock.admin}）。它**只在 API 进程里跑**：
+ * {@code stock-ai-worker} 不提供后台端点，因此那边的 {@code @MapperScan} 不需要加这一项。
  */
 @MapperScan(
         basePackages = {
             "cn.zhishi.stock.system",
             "cn.zhishi.stock.news",
-            "cn.zhishi.stock.ai"
+            "cn.zhishi.stock.ai",
+            "cn.zhishi.stock.admin"
         },
         annotationClass = Mapper.class)
 public class StockBackendApplication {

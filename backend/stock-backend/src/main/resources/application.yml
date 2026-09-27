@@ -84,6 +84,17 @@ stock:
   seed:
     demo-username: ${DEMO_USERNAME:demo}
     demo-password: ${DEMO_PASSWORD:Stock@123}
+    # 后台演示账号（M3-11）。与 demo 一样只在 dev / test 由 DevelopmentAccountSeeder 播种；
+    # 权限码与 ADMIN 角色来自 V9__seed_admin_rbac.sql，这里只提供账号本身。
+    # 生产不播种：仓库里写死的高权限账号等于给每个克隆库留一个已知密码的入口。
+    admin-username: ${ADMIN_USERNAME:admin}
+    admin-password: ${ADMIN_PASSWORD:Admin@123}
+  # ---- M3-11 后台管理面 ----
+  admin:
+    # 超级管理员角色的名字（契约 §16.1 的三处"最后一个超级管理员保护"）。
+    # **必须与 V9__seed_admin_rbac.sql 播种的角色名一致**：改名后"找不到这个角色"
+    # 会让保护静默失效（没人算超管），且不会有任何报错。
+    super-role-name: ${ADMIN_SUPER_ROLE_NAME:ADMIN}
   # ---- M3-12 导出（EXP-01~EXP-04）----
   export:
     # 导出文件存放目录。**必须与 stock-job 指向同一个卷**（见 compose.yaml 的 export-files）：

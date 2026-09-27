@@ -2,6 +2,7 @@ package cn.zhishi.stock.backend.web;
 
 import cn.zhishi.stock.ai.application.AiQuotaExceededException;
 import cn.zhishi.stock.ai.application.AiTaskErrorCode;
+import cn.zhishi.stock.admin.application.AdminException;
 import cn.zhishi.stock.ai.application.AiTaskException;
 import cn.zhishi.stock.ai.application.AiTaskQuota;
 import cn.zhishi.stock.ai.application.InvalidAiContextQueryException;
@@ -479,6 +480,28 @@ public class GlobalExceptionHandler {
                 exception.code().externalCode(),
                 exception.getMessage(),
                 data,
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock)));
+    }
+
+    /**
+     * 后台管理面的业务异常（契约 §16.4）。
+     *
+     * <p>业务码与 HTTP 状态都由 {@link AdminException} 自身携带，这里不做任何 switch：
+     * 后台同一模块里 400 / 404 / 409 / 422 都有，在 handler 里推断会让"新增一个业务码"
+     * 必须同时改两处，而漏改的那一处不会编译失败。
+     *
+     * <p>响应里带 {@code traceId}（契约 §22.3）：一次失败的写操作要能在 {@code sys_log}
+     * 里按同一个 traceId 找到它的审计记录。
+     */
+    @ExceptionHandler(AdminException.class)
+    public ResponseEntity<ApiResponse<Void>> admin(
+            AdminException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.status(exception.code().httpStatus()).body(ApiResponse.failure(
+                exception.code().externalCode(),
+                exception.getMessage(),
+                null,
                 TraceIdFilter.current(request),
                 OffsetDateTime.now(clock)));
     }
