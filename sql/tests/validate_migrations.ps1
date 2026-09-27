@@ -30,7 +30,7 @@ if ($missingFiles.Count -gt 0) {
 
 $migrationFiles = @(
     Get-ChildItem -LiteralPath $migrationRoot -Filter 'V*.sql' -File |
-        Sort-Object Name
+        Sort-Object { [int]($_.BaseName -replace '^V(\d+).*', '$1') }
 )
 
 $expectedMigrationNames = @(
@@ -56,7 +56,7 @@ if (($migrationFiles.Name -join ',') -ne ($expectedMigrationNames -join ',')) {
 # 迁移里写死账号等于给每个克隆库留一个已知密码的高权限入口（见 V9 头注）。
 foreach ($seedMigration in @('V9__seed_admin_rbac.sql', 'V11__seed_admin_news_rbac.sql')) {
     $seedSql = Get-Content -LiteralPath (Join-Path $migrationRoot $seedMigration) -Raw -Encoding UTF8
-    if ($seedSql -match '(?i)INSERT\s+INTO\s+``sys_user``|UPDATE\s+``sys_user``') {
+    if ($seedSql -match '(?i)INSERT\s+INTO\s+`?sys_user`?|UPDATE\s+`?sys_user`?') {
         throw "$seedMigration 不得写 sys_user（账号不属于迁移，见 V9 头注）"
     }
 }
