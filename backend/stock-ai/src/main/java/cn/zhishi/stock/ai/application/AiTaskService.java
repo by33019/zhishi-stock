@@ -399,6 +399,9 @@ public class AiTaskService {
         }
     }
 
+    /** 全局并发上限（契约 §13.5："全局按 30 个并发任务设计"）。 */
+    private static final int GLOBAL_CONCURRENT_LIMIT = 30;
+
     private void guardConcurrency(long userId) {
         int active = tasks.countByUserAndStatuses(userId, AiTaskStatus.activeStatuses());
         int limit = quotas.concurrentLimit();
@@ -406,6 +409,14 @@ public class AiTaskService {
             throw new AiTaskException(
                     AiTaskErrorCode.CONCURRENCY_EXCEEDED,
                     "单用户最多 " + limit + " 个进行中的 AI 任务，当前 " + active + " 个");
+        }
+        // 全局闸门（已知问题 #24）：平台整体的处理能力上限，与单用户配额是
+        // 两个独立维度——一个用户没超配额，也可能因为全场排队而被拒。
+        int global = tasks.countByStatuses(AiTaskStatus.activeStatuses());
+        if (global >= GLOBAL_CONCURRENT_LIMIT) {
+            throw new AiTaskException(
+                    AiTaskErrorCode.GLOBAL_CONCURRENCY_EXCEEDED,
+                    "平台进行中的 AI 任务已达 " + GLOBAL_CONCURRENT_LIMIT + " 个上限，请稍后重试");
         }
     }
 

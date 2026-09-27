@@ -95,6 +95,24 @@ public class SecurityController {
                 OffsetDateTime.now(clock));
     }
 
+    /**
+     * STK-06：分时序列（PRD P0 的最后一个缺口）。interval 取 1/5/15/30/60 分钟；
+     * tradeDate 缺省为最近一个已完成交易日。
+     */
+    @GetMapping("/{securityId}/intraday")
+    public ApiResponse<cn.zhishi.stock.market.domain.IntradaySeries> intraday(
+            @PathVariable String securityId,
+            @RequestParam(value = "tradeDate", required = false)
+                @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE)
+                java.time.LocalDate tradeDate,
+            @RequestParam(value = "interval", defaultValue = "1") Integer interval,
+            HttpServletRequest request) {
+        return ApiResponse.success(
+                securityDetailQueryService.getIntraday(securityId, tradeDate, interval),
+                TraceIdFilter.current(request),
+                OffsetDateTime.now(clock));
+    }
+
     /** STK-07：日 / 周 / 月 K 线。 */
     @GetMapping("/{securityId}/klines")
     public ApiResponse<KlineSeries> klines(

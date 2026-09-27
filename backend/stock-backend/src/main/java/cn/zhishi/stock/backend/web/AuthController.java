@@ -10,6 +10,7 @@ import cn.zhishi.stock.system.auth.RefreshResult;
 import cn.zhishi.stock.system.auth.RefreshSessionService;
 import cn.zhishi.stock.system.auth.UserAccount;
 import cn.zhishi.stock.system.idempotency.IdempotencyGuard;
+import cn.zhishi.stock.system.ratelimit.RequestRateLimiter;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -44,6 +45,7 @@ public class AuthController {
     private final AccessTokenBlacklist blacklist;
     private final PasswordResetRedemptionService passwordReset;
     private final IdempotencyGuard idempotency;
+    private final RequestRateLimiter rateLimiter;
     private final Clock clock;
     private final boolean secureCookie;
 
@@ -53,6 +55,7 @@ public class AuthController {
             AccessTokenBlacklist blacklist,
             PasswordResetRedemptionService passwordReset,
             IdempotencyGuard idempotency,
+            RequestRateLimiter rateLimiter,
             Clock clock,
             @Value("${stock.auth.cookie-secure:true}") boolean secureCookie) {
         this.authentication = authentication;
@@ -60,8 +63,16 @@ public class AuthController {
         this.blacklist = blacklist;
         this.passwordReset = passwordReset;
         this.idempotency = idempotency;
+        this.rateLimiter = rateLimiter;
         this.clock = clock;
         this.secureCookie = secureCookie;
+    }
+
+    private static String clientIp(HttpServletRequest request) {
+        String forwarded = request.getHeader("X-Forwarded-For");
+        return forwarded == null || forwarded.isBlank()
+                ? request.getRemoteAddr()
+                : forwarded.split(",")[0].trim();
     }
 
     /**
@@ -99,6 +110,11 @@ public class AuthController {
     public ResponseEntity<ApiResponse<TokenResponse>> login(
             @Valid @RequestBody LoginRequest body,
             HttpServletRequest request) {
+        // §22.1 登录基线：10 次/15 分钟，维度为账号+IP。失败锁定由
+        // LoginAttemptStore 负责（失败后逐步收紧），这里限的是"尝试"本身。
+        rateLimiter.acquire(
+                "login:" + body.account().trim() + ":" + clientIp(request),
+                10, Duration.ofMinutes(15));
         LoginTokens tokens = authentication.login(body.account(), body.password());
         UserAccount user = tokens.user();
         UserSummary summary = user == null

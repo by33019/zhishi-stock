@@ -27,7 +27,7 @@
 | 能力 | 状态 | 证据 |
 | --- | --- | --- |
 | `mvn`（Git Bash） | ✅ 已修复 | `mvn -v` → Maven 3.9.10（需 `JAVA_HOME` 用 Windows 路径，如 `D:/idea/JDK17`） |
-| 后端全量测试 | ✅ **1,351 测试通过** | common 1 / market 159 / news 103 / system 89 / **ai 218** / **export 72** / integration 127 / backend 226 / job 12 / **ai-worker 18**，0 失败 0 错误。本机 Docker 已启动，`InfrastructureIntegrationTest`（Testcontainers 真实 MySQL 8.4 + Redis）与 `AiWorkerIntegrationTest`（完整上下文 + 真库 + 真 Redis）**本轮实测通过**，不再是"CI 覆盖" |
+| 后端全量测试 | ✅ **1,365 测试通过** | common 1 / market 159 / news 103 / system 89 / **ai 218** / **export 72** / integration 127 / backend 226 / job 12 / **ai-worker 18**，0 失败 0 错误。本机 Docker 已启动，`InfrastructureIntegrationTest`（Testcontainers 真实 MySQL 8.4 + Redis）与 `AiWorkerIntegrationTest`（完整上下文 + 真库 + 真 Redis）**本轮实测通过**，不再是"CI 覆盖" |
 | 后端 Flyway 迁移（空库路径） | ✅ 已在真实 MySQL 8.4 验证 | 集成测试断言 `flyway_schema_history` 有 8 条成功迁移 |
 | 后端 Flyway 迁移（旧库升级路径） | ✅ **首次验证通过** | baseline v1 → V2–V8 → `now at version v8`，退出码 0 |
 | 迁移后完整性校验 | ✅ 通过 | `post_migration_validation.sql` 无异常明细，`foreign_key_count = 0` |
@@ -64,7 +64,7 @@
 | 数据库迁移 | ✅ 结构 100% / 两条路径均验证 | Flyway V1–V8；旧库样本 149KB（原 24MB） |
 | 前端原型 | ✅ 页面 100% / 真实接入 11/11 | 11 路由全部有页面；`/market`、`/login`、`/rankings`、`/sectors`、`/sectors/:id`、`/stocks/:id`、`/watchlist`、`/news` 接真实 API；**顶栏全局搜索框已接 STK-01、顶栏市场状态与侧栏数据源已接 MKT-02**（两者都是非路由的全局组件）；`/ai`（AI-01~08 全量，运行期走 **SSE AI-05**，流不可用退回 3 秒轮询）与 `/history`（HIS-01~05，含改名/收藏/两步删除）已接真实接口；**榜单页的 Excel 导出已由 M3-12 接上**（创建 → 轮询 → 下载，非路由组件）；`/admin` 已由 M3-11 接真实接口（Tab 分区：总览/用户/任务/日志/AI 运营/资讯治理，原硬编码演示数据全部移除）；**`services/mockApi.ts` 已随 M3-05 删除**，仓库里不再有 mock 通路 |
 | 后端 | ✅ 10/10 域 | 认证闭环 ✅、市场总览（MKT-01~04）🟡、证券主数据与个股行情（STK-01/02/04/07）🟡、榜单（QTE-01）🟡、板块（SEC-01/02/03/04/06/**07**）🟡、**自选中心（WAT-01~WAT-12）✅ 后端完整**、**资讯域（NEWS-01~04 + STK-10 + SEC-07）✅ 后端完整且落库**、**AI 域（AI-01~AI-08 + HIS-01~HIS-09 + USER-07）✅ 全链路可用**——任务编排、SSE 中继、报告与来源证据落库、调用用量台账都已端到端验证；**V6 的 9 张表全部已有真实数据**（`ai_feedback` 由 M3-08、`ai_usage` 由 M3-09 补上）；**导出域（EXP-01~04）✅ 后端完整**（作业存 Redis，**未建表**） |
-| 测试 | ✅ 1,571 个 | 后端 1,351 + 前端 220；无覆盖率门槛 |
+| 测试 | ✅ 1,585 个 | 后端 1,365 + 前端 220；无覆盖率门槛 |
 | 工程化 | 🟢 85% | CI 工作流 ✅、TASKS/STATUS/CHANGELOG ✅、根与模块 README ✅、容器构建稳定 ✅；分支保护待用户配置 |
 
 ## 6. 已知问题（按严重度）

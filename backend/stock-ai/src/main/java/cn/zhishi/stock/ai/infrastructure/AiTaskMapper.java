@@ -193,6 +193,10 @@ public interface AiTaskMapper {
     int countByUserAndStatuses(
             @Param("userId") long userId, @Param("statuses") List<AiTaskStatus> statuses);
 
+    @Select("<script>SELECT COUNT(*) FROM ai_task WHERE status IN "
+            + STATUS_IN + "</script>")
+    int countByStatuses(@Param("statuses") List<AiTaskStatus> statuses);
+
     @Select("SELECT COUNT(*) FROM ai_task WHERE user_id = #{userId} AND created_at >= #{from}")
     int countCreatedSince(@Param("userId") long userId, @Param("from") LocalDateTime from);
 

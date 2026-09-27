@@ -108,6 +108,14 @@ public class MyBatisAiTaskStore implements AiTaskStore {
     }
 
     @Override
+    public int countByStatuses(List<AiTaskStatus> statuses) {
+        if (statuses == null || statuses.isEmpty()) {
+            return 0;
+        }
+        return mapper.countByStatuses(statuses);
+    }
+
+    @Override
     public int countCreatedSince(long userId, OffsetDateTime from) {
         return mapper.countCreatedSince(userId, toLocalDateTime(from));
     }

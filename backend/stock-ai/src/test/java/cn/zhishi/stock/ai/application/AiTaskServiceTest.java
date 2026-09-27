@@ -814,6 +814,13 @@ class AiTaskServiceTest {
         }
 
         @Override
+        public int countByStatuses(List<AiTaskStatus> statuses) {
+            return (int) byId.values().stream()
+                    .filter(task -> statuses.contains(task.status()))
+                    .count();
+        }
+
+        @Override
         public int countCreatedSince(long userId, OffsetDateTime from) {
             return (int) byId.values().stream()
                     .filter(task -> task.userId() == userId && !task.createdAt().isBefore(from))

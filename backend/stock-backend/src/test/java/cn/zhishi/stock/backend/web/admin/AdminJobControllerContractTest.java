@@ -96,12 +96,18 @@ class AdminJobControllerContractTest {
             """;
 
     private final JobAdminService jobs = mock(JobAdminService.class);
+    private final cn.zhishi.stock.system.ratelimit.RequestRateLimiter jobRateLimiter =
+        org.mockito.Mockito.mock(cn.zhishi.stock.system.ratelimit.RequestRateLimiter.class);
     private final RecordingAuditLog auditLog = new RecordingAuditLog();
     private final InMemoryIdempotencyStore idempotencyStore = new InMemoryIdempotencyStore();
     private final ObjectMapper objectMapper = mapper();
 
     @BeforeEach
     void defaultStubs() {
+        org.mockito.Mockito.when(jobRateLimiter.acquire(org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyInt(),
+                org.mockito.ArgumentMatchers.any(java.time.Duration.class)))
+            .thenReturn(new cn.zhishi.stock.system.ratelimit.RateLimitDecision(true, 10, 9, 0, 0));
         when(jobs.definitions())
                 .thenReturn(new JobDefinitionCatalog(60_000, 120_000, 600_000).all());
         when(jobs.trigger(any(), any(), anyLong(), any())).thenReturn(running(1001L, 1));
@@ -613,6 +619,7 @@ class AdminJobControllerContractTest {
                         jobs,
                         new IdempotencyGuard(idempotencyStore, objectMapper),
                         new AuditRecorder(auditLog),
+                        jobRateLimiter,
                         CLOCK))
                 .setControllerAdvice(new GlobalExceptionHandler(CLOCK))
                 .setMessageConverters(new MappingJackson2HttpMessageConverter(objectMapper))

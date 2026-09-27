@@ -442,6 +442,27 @@ public class GlobalExceptionHandler {
                 OffsetDateTime.now(clock)));
     }
 
+    /**
+     * 超过限流基线（契约 §22.1：429 + 建议的响应头三元组）。
+     * 头的取值由异常自身携带（判定时的窗口状态），这里只负责搬运到响应。
+     */
+    @ExceptionHandler(cn.zhishi.stock.system.ratelimit.RateLimitExceededException.class)
+    public ResponseEntity<ApiResponse<Void>> rateLimited(
+            cn.zhishi.stock.system.ratelimit.RateLimitExceededException exception,
+            HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("RateLimit-Limit", String.valueOf(exception.limit()))
+                .header("RateLimit-Remaining", "0")
+                .header("RateLimit-Reset", String.valueOf(exception.resetEpochSeconds()))
+                .header("Retry-After", String.valueOf(exception.retryAfterSeconds()))
+                .body(ApiResponse.failure(
+                        "RATE_LIMITED",
+                        exception.getMessage(),
+                        null,
+                        TraceIdFilter.current(request),
+                        OffsetDateTime.now(clock)));
+    }
+
     @ExceptionHandler(AuthException.class)
     public ResponseEntity<ApiResponse<Void>> authentication(
             AuthException exception,

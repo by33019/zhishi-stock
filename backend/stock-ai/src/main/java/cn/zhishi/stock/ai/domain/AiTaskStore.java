@@ -67,6 +67,9 @@ public interface AiTaskStore {
     /** 某用户在指定状态下的任务数（并发上限判据）。 */
     int countByUserAndStatuses(long userId, List<AiTaskStatus> statuses);
 
+    /** 全局活跃任务计数（契约 §13.5 的全局并发上限，不看用户）。 */
+    int countByStatuses(List<AiTaskStatus> statuses);
+
     /** 某用户在 {@code from} 之后创建的任务数（每日额度的 {@code used}）。 */
     int countCreatedSince(long userId, OffsetDateTime from);
 

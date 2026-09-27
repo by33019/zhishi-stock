@@ -90,6 +90,7 @@ import cn.zhishi.stock.market.domain.MarketOverviewStore;
 import cn.zhishi.stock.market.domain.QuoteProvider;
 import cn.zhishi.stock.market.application.SecurityQuoteBatchQueryService;
 import cn.zhishi.stock.market.domain.QuoteSnapshotBatchProvider;
+import cn.zhishi.stock.market.domain.IntradayProvider;
 import cn.zhishi.stock.market.domain.QuoteSnapshotProvider;
 import cn.zhishi.stock.market.domain.SectorIdentityProvider;
 import cn.zhishi.stock.market.domain.SectorProvider;
@@ -255,10 +256,27 @@ public class BackendConfiguration {
         return new RedisLoginAttemptStore(redis, Duration.ofMinutes(30));
     }
 
+    /**
+     * 生产加固（已知问题 #3 的收口）：密钥缺失或过弱时**启动即失败**，
+     * 而不是带着可预测的签名密钥默默运行。
+     *
+     * <p>HS256 的安全下限是 256 位（32 字节）。{@code JWT_SECRET} 为空或不足
+     * 32 字节时拒绝启动——dev/test 的演示部署由 compose 显式提供一个
+     * 仅限本机的长随机值，生产必须由运维注入真实密钥。
+     */
     @Bean
     JwtAccessTokenService jwtAccessTokenService(
             @Value("${stock.auth.jwt-secret}") String secret,
+            @Value("${spring.profiles.active:}") String activeProfiles,
             Clock clock) {
+        boolean productionLike = java.util.Arrays.stream(activeProfiles.split(","))
+                .map(String::trim)
+                .noneMatch(profile -> profile.equals("dev") || profile.equals("test"));
+        if (productionLike && (secret == null || secret.getBytes(java.nio.charset.StandardCharsets.UTF_8).length < 32)) {
+            throw new IllegalStateException(
+                    "JWT_SECRET 缺失或弱于 32 字节：生产环境拒绝以可预测的签名密钥启动。"
+                            + "请通过环境变量注入至少 32 字节的高熵密钥。");
+        }
         return new JwtAccessTokenService(secret, clock, Duration.ofMinutes(15));
     }
 
@@ -394,6 +412,24 @@ public class BackendConfiguration {
      * <p>若拆成两个实例，两者就会各自持有一份装配逻辑，将来改一处就会让
      * 榜单与个股页对同一只证券给出不同价格，且不会有任何测试变红。
      */
+    /** 全站请求限流（契约 §22.1）：Redis 固定窗口，Redis 异常时放行。 */
+    @Bean
+    cn.zhishi.stock.system.ratelimit.RequestRateLimiter requestRateLimiter(
+            StringRedisTemplate redis, Clock clock) {
+        return new cn.zhishi.stock.system.ratelimit.RedisRequestRateLimiter(redis, clock);
+    }
+
+    /** STK-06：分时序列的确定性模拟实现（与 K 线同一套按需现算约定）。 */
+    @Bean
+    cn.zhishi.stock.integration.market.SimulatedIntradayProvider simulatedIntradayProvider(
+            cn.zhishi.stock.market.domain.SecurityQuoteProvider securityQuoteProvider,
+            cn.zhishi.stock.market.domain.SecurityMasterProvider securityMasterProvider,
+            cn.zhishi.stock.market.domain.TradingCalendarProvider tradingCalendarProvider,
+            Clock clock) {
+        return new cn.zhishi.stock.integration.market.SimulatedIntradayProvider(
+                securityQuoteProvider, securityMasterProvider, tradingCalendarProvider, clock);
+    }
+
     /** STK-05：批量行情查询（整批横截面切片，见 {@code SecurityQuoteBatchQueryService}）。 */
     @Bean
     SecurityQuoteBatchQueryService securityQuoteBatchQueryService(
@@ -605,9 +641,10 @@ public class BackendConfiguration {
             QuoteSnapshotProvider quoteSnapshotProvider,
             KlineProvider klineProvider,
             TradingCalendarProvider tradingCalendarProvider,
+            IntradayProvider intradayProvider,
             Clock clock) {
         return new SecurityDetailQueryService(
-                quoteSnapshotProvider, klineProvider, tradingCalendarProvider, clock);
+                quoteSnapshotProvider, klineProvider, tradingCalendarProvider, clock, intradayProvider);
     }
 
     @Bean

@@ -45,6 +45,7 @@ class AuthControllerContractTest {
   private RefreshSessionService sessions;
   private AccessTokenBlacklist blacklist;
   private PasswordResetRedemptionService passwordReset;
+  private cn.zhishi.stock.system.ratelimit.RequestRateLimiter rateLimiter;
   private InMemoryIdempotencyStore idempotencyStore;
   private MockMvc mvc;
 
@@ -54,11 +55,16 @@ class AuthControllerContractTest {
     sessions = mock(RefreshSessionService.class);
     blacklist = mock(AccessTokenBlacklist.class);
     passwordReset = mock(PasswordResetRedemptionService.class);
+    rateLimiter = mock(cn.zhishi.stock.system.ratelimit.RequestRateLimiter.class);
+    org.mockito.Mockito.when(rateLimiter.acquire(org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyInt(),
+            org.mockito.ArgumentMatchers.any(java.time.Duration.class)))
+        .thenReturn(new cn.zhishi.stock.system.ratelimit.RateLimitDecision(true, 10, 9, 0, 0));
     idempotencyStore = new InMemoryIdempotencyStore();
     mvc = MockMvcBuilders.standaloneSetup(
             new AuthController(
                 authentication, sessions, blacklist, passwordReset,
-                new IdempotencyGuard(idempotencyStore, mapper()), CLOCK, true))
+                new IdempotencyGuard(idempotencyStore, mapper()), rateLimiter, CLOCK, true))
         .setControllerAdvice(new GlobalExceptionHandler(CLOCK))
         .addFilters(new TraceIdFilter())
         .build();

@@ -2305,6 +2305,47 @@ class InfrastructureIntegrationTest {
     }
 
     /**
+     * 全站请求限流（契约 §22.1）的 Redis 固定窗口语义。
+     *
+     * <p>真库/真 Redis 才能钉住三件事：窗口内计数超限、不同桶互不影响、
+     * 窗口翻页后额度恢复（TTL 由键名对齐的窗口决定）。
+     */
+    @Nested
+    class RateLimiting {
+
+        @Autowired cn.zhishi.stock.system.ratelimit.RequestRateLimiter rateLimiter;
+
+        @Test
+        void enforcesTheLimitInsideAWindowAndRecoversAfterIt() throws Exception {
+            String key = "it-rate-" + java.util.UUID.randomUUID();
+
+            assertThat(rateLimiter.acquire(key, 2, java.time.Duration.ofSeconds(1)).allowed()).isTrue();
+            assertThat(rateLimiter.acquire(key, 2, java.time.Duration.ofSeconds(1)).allowed()).isTrue();
+
+            cn.zhishi.stock.system.ratelimit.RateLimitDecision rejected =
+                    rateLimiter.acquire(key, 2, java.time.Duration.ofSeconds(1));
+            assertThat(rejected.allowed()).isFalse();
+            assertThat(rejected.remaining()).isZero();
+            assertThat(rejected.retryAfterSeconds()).isGreaterThanOrEqualTo(1);
+
+            // 窗口翻页（1 秒窗口 + 1.2 秒等待）：额度恢复
+            Thread.sleep(1200);
+            assertThat(rateLimiter.acquire(key, 2, java.time.Duration.ofSeconds(1)).allowed()).isTrue();
+        }
+
+        @Test
+        void keepsBucketsIndependent() {
+            String first = "it-rate-a-" + java.util.UUID.randomUUID();
+            String second = "it-rate-b-" + java.util.UUID.randomUUID();
+
+            rateLimiter.acquire(first, 1, java.time.Duration.ofMinutes(1));
+            assertThat(rateLimiter.acquire(first, 1, java.time.Duration.ofMinutes(1)).allowed()).isFalse();
+            // 另一个桶不受影响
+            assertThat(rateLimiter.acquire(second, 1, java.time.Duration.ofMinutes(1)).allowed()).isTrue();
+        }
+    }
+
+    /**
      * 后台 AI 运营（契约 §19）的仓储往返。
      *
      * <p>契约测试（MockMvc + stub 服务）测不到 SQL 参数绑定与行映射——

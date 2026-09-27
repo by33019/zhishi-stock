@@ -209,6 +209,65 @@ class SecurityControllerContractTest {
         .andExpect(jsonPath("$.code").value("SECURITY_NOT_FOUND"));
   }
 
+  // ---------- STK-06 分时 ----------
+
+  @Test
+  void returnsIntradayContract() throws Exception {
+    MockMvc mvc = mvc(intraday -> java.util.Optional.of(intradaySeries()));
+
+    mvc.perform(get("/api/v1/securities/sim-600000/intraday")
+            .queryParam("interval", "5"))
+        .andExpect(status().isOk())
+        .andExpect(header().exists("X-Trace-Id"))
+        .andExpect(jsonPath("$.data.security.securityId").value("sim-600000"))
+        .andExpect(jsonPath("$.data.tradeDate").value("2026-09-11"))
+        .andExpect(jsonPath("$.data.intervalMinutes").value(5))
+        .andExpect(jsonPath("$.data.previousClosePrice").value("12.00"))
+        .andExpect(jsonPath("$.data.dataCutoffAt").isNotEmpty())
+        .andExpect(jsonPath("$.data.dataStatus").value("REALTIME"))
+        .andExpect(jsonPath("$.data.points.length()").value(1))
+        .andExpect(jsonPath("$.data.points[0].time").value("2026-09-11T09:30:00"))
+        .andExpect(jsonPath("$.data.points[0].closePrice").value("12.34"));
+  }
+
+  @Test
+  void returns400ForAnUnsupportedIntradayInterval() throws Exception {
+    MockMvc mvc = mvc(intraday -> java.util.Optional.empty());
+
+    mvc.perform(get("/api/v1/securities/sim-600000/intraday")
+            .queryParam("interval", "7"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+  }
+
+  /** interval 的合法性由服务校验；provider 收到的请求已经是合法粒度。 */
+  private static SecurityDetailQueryService detailService(
+      cn.zhishi.stock.market.domain.IntradayProvider intraday) {
+    QuoteSnapshotProvider snapshots = (securityId, marketCode) ->
+        "sim-600000".equals(securityId) && "CN".equals(marketCode)
+            ? Optional.of(snapshot())
+            : Optional.empty();
+    KlineProvider klines = request ->
+        "sim-600000".equals(request.securityId()) && "CN".equals(request.marketCode())
+            ? Optional.of(series(request))
+            : Optional.empty();
+    return new SecurityDetailQueryService(snapshots, klines, calendar(), CLOCK, intraday);
+  }
+
+  private static cn.zhishi.stock.market.domain.IntradaySeries intradaySeries() {
+    return new cn.zhishi.stock.market.domain.IntradaySeries(
+        UNIVERSE.get(0),
+        java.time.LocalDate.of(2026, 9, 11),
+        5,
+        "12.00",
+        java.time.OffsetDateTime.of(java.time.LocalDate.of(2026, 9, 11),
+            java.time.LocalTime.of(15, 0), java.time.ZoneOffset.ofHours(8)),
+        cn.zhishi.stock.market.domain.MarketOverview.DataStatus.REALTIME,
+        List.of(new cn.zhishi.stock.market.domain.IntradayPoint(
+            java.time.LocalDateTime.of(2026, 9, 11, 9, 30),
+            "12.10", "12.50", "11.90", "12.34", "500000", "6170000.00")));
+  }
+
   // ---------- STK-07 日 / 周 / 月 K 线 ----------
 
   @Test
@@ -289,6 +348,23 @@ class SecurityControllerContractTest {
    * Jackson2ObjectMapperBuilder 默认不关闭 WRITE_DATES_AS_TIMESTAMPS。
    * 这里显式对齐线上配置，使契约测试断言的是真实线上格式。
    */
+  /** 分时用例的入口：把函数式 intraday provider 注入真实服务。 */
+  private static MockMvc mvc(cn.zhishi.stock.market.domain.IntradayProvider intraday) {
+    ObjectMapper mapper = Jackson2ObjectMapperBuilder.json()
+        .featuresToDisable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+        .build();
+    SecurityMasterProvider provider = marketCode ->
+        "CN".equals(marketCode) ? UNIVERSE : List.of();
+    return MockMvcBuilders.standaloneSetup(
+            new SecurityController(
+                new SecurityQueryService(provider, sectorProvider()),
+                detailService(intraday), CLOCK))
+        .setControllerAdvice(new GlobalExceptionHandler(CLOCK))
+        .setMessageConverters(new MappingJackson2HttpMessageConverter(mapper))
+        .addFilters(new TraceIdFilter())
+        .build();
+  }
+
   private static MockMvc mvc() {
     ObjectMapper mapper = Jackson2ObjectMapperBuilder.json()
         .featuresToDisable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
@@ -323,7 +399,8 @@ class SecurityControllerContractTest {
         "sim-600000".equals(request.securityId()) && "CN".equals(request.marketCode())
             ? Optional.of(series(request))
             : Optional.empty();
-    return new SecurityDetailQueryService(snapshots, klines, calendar(), CLOCK);
+    return new SecurityDetailQueryService(snapshots, klines, calendar(), CLOCK,
+        securityIds -> java.util.Optional.empty());
   }
 
   private static QuoteSnapshot snapshot() {

@@ -11,11 +11,13 @@ import cn.zhishi.stock.common.api.PageData;
 import cn.zhishi.stock.system.auth.AccessTokenPrincipal;
 import cn.zhishi.stock.system.idempotency.IdempotencyGuard;
 import cn.zhishi.stock.system.job.JobExecution;
+import cn.zhishi.stock.system.ratelimit.RequestRateLimiter;
 import cn.zhishi.stock.system.job.JobExecutionQuery;
 import cn.zhishi.stock.system.job.JobExecutionStatus;
 import cn.zhishi.stock.system.job.JobTriggerType;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.List;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -63,13 +65,16 @@ public class AdminJobController {
     private final JobAdminService jobs;
     private final IdempotencyGuard idempotency;
     private final AuditRecorder audit;
+    private final RequestRateLimiter rateLimiter;
     private final Clock clock;
 
     public AdminJobController(
-            JobAdminService jobs, IdempotencyGuard idempotency, AuditRecorder audit, Clock clock) {
+            JobAdminService jobs, IdempotencyGuard idempotency, AuditRecorder audit,
+            RequestRateLimiter rateLimiter, Clock clock) {
         this.jobs = jobs;
         this.idempotency = idempotency;
         this.audit = audit;
+        this.rateLimiter = rateLimiter;
         this.clock = clock;
     }
 
@@ -97,6 +102,12 @@ public class AdminJobController {
             @RequestBody(required = false) TriggerJobRequest body,
             HttpServletRequest request) {
         long operatorId = principal(authentication).userId();
+        // §22.1 人工触发基线：10 次/小时，维度为管理员+任务名。幂等回放不算次数
+        // ——限流在幂等检查**之前**，同键重放会在指纹比对处被拦下吗？不会：
+        // 重放同样要先过限流。可接受：重放是调用方的重试语义，计入频次更保守。
+        rateLimiter.acquire(
+                "admin-job-trigger:" + operatorId + ":" + jobName,
+                10, Duration.ofHours(1));
         // 幂等指纹必须带上路径里的任务名：只拿请求体比对时，"两个不同的任务
         // 共用一个键、请求体都是空"会被判成同一次请求，第二个返回 202 却被回放成
         // 第一个的结果——库里没有任何第二份记录，而调用方以为它跑了。

@@ -23,6 +23,9 @@ public enum AiTaskErrorCode {
     TASK_NOT_RETRYABLE("AI_TASK_NOT_RETRYABLE", 409),
     /** 单用户并发任务数已达上限（契约 §13.5）。 */
     CONCURRENCY_EXCEEDED("AI_CONCURRENCY_EXCEEDED", 429),
+
+    /** 全局并发上限（契约 §13.5：全局按 30 个并发任务设计）。 */
+    GLOBAL_CONCURRENCY_EXCEEDED("AI_GLOBAL_CONCURRENCY_EXCEEDED", 429),
     /** 每日额度已用完（契约 §13.5）。响应体带 {@code dailyLimit} / {@code usedCount} / {@code resetsAt}。 */
     QUOTA_EXCEEDED("AI_QUOTA_EXCEEDED", 429),
     /** 核心行情缺失：创建任务时必须拒绝（契约 §13.5「核心行情缺失时拒绝创建或终止任务」）。 */

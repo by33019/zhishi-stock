@@ -883,6 +883,11 @@ class AiTaskExecutionServiceTest {
         public int countByUserAndStatuses(long userId, List<AiTaskStatus> statuses) {
             return 0;
         }
+        @Override
+        public int countByStatuses(List<AiTaskStatus> statuses) {
+            return 0;
+        }
+
 
         @Override
         public int countCreatedSince(long userId, OffsetDateTime from) {

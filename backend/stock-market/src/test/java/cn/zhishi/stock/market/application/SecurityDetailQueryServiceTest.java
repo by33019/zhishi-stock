@@ -71,7 +71,8 @@ class SecurityDetailQueryServiceTest {
   void trimsSecurityIdBeforeQuerying() {
     RecordingSnapshotProvider provider = new RecordingSnapshotProvider(snapshot("sim-600000"));
     SecurityDetailQueryService service =
-        new SecurityDetailQueryService(provider, new RecordingKlineProvider(true), CALENDAR, CLOCK);
+        new SecurityDetailQueryService(provider, new RecordingKlineProvider(true), CALENDAR, CLOCK,
+        securityIds -> java.util.Optional.empty());
 
     service.getQuote("  sim-600000  ");
 
@@ -114,7 +115,8 @@ class SecurityDetailQueryServiceTest {
     RecordingKlineProvider provider = new RecordingKlineProvider(true);
     SecurityDetailQueryService service =
         new SecurityDetailQueryService(
-            new RecordingSnapshotProvider(snapshot("sim-600000")), provider, CALENDAR, CLOCK);
+            new RecordingSnapshotProvider(snapshot("sim-600000")), provider, CALENDAR, CLOCK,
+            securityIds -> java.util.Optional.empty());
 
     service.getKlines("sim-600000", "DAY", "2026-01-05", "2026-06-30", null);
 
@@ -126,7 +128,8 @@ class SecurityDetailQueryServiceTest {
     RecordingKlineProvider provider = new RecordingKlineProvider(true);
     SecurityDetailQueryService service =
         new SecurityDetailQueryService(
-            new RecordingSnapshotProvider(snapshot("sim-600000")), provider, CALENDAR, CLOCK);
+            new RecordingSnapshotProvider(snapshot("sim-600000")), provider, CALENDAR, CLOCK,
+            securityIds -> java.util.Optional.empty());
 
     service.getKlines("sim-600000", "day", "2026-01-05", "2026-06-30", "none");
 
@@ -189,7 +192,8 @@ class SecurityDetailQueryServiceTest {
     RecordingKlineProvider provider = new RecordingKlineProvider(true);
     SecurityDetailQueryService service =
         new SecurityDetailQueryService(
-            new RecordingSnapshotProvider(snapshot("sim-600000")), provider, CALENDAR, CLOCK);
+            new RecordingSnapshotProvider(snapshot("sim-600000")), provider, CALENDAR, CLOCK,
+            securityIds -> java.util.Optional.empty());
 
     service.getKlines("sim-600000", "WEEK", "2015-09-18", "2026-09-18", null);
 
@@ -221,7 +225,8 @@ class SecurityDetailQueryServiceTest {
     RecordingKlineProvider provider = new RecordingKlineProvider(true);
     SecurityDetailQueryService service =
         new SecurityDetailQueryService(
-            new RecordingSnapshotProvider(snapshot("sim-600000")), provider, CALENDAR, CLOCK);
+            new RecordingSnapshotProvider(snapshot("sim-600000")), provider, CALENDAR, CLOCK,
+            securityIds -> java.util.Optional.empty());
 
     service.getKlines("sim-600000", "DAY", null, null, null);
 
@@ -235,7 +240,8 @@ class SecurityDetailQueryServiceTest {
     RecordingKlineProvider provider = new RecordingKlineProvider(true);
     SecurityDetailQueryService service =
         new SecurityDetailQueryService(
-            new RecordingSnapshotProvider(snapshot("sim-600000")), provider, CALENDAR, CLOCK);
+            new RecordingSnapshotProvider(snapshot("sim-600000")), provider, CALENDAR, CLOCK,
+            securityIds -> java.util.Optional.empty());
 
     service.getKlines("sim-600000", "DAY", "2026-01-05", null, null);
 
@@ -248,7 +254,8 @@ class SecurityDetailQueryServiceTest {
     RecordingKlineProvider provider = new RecordingKlineProvider(true);
     SecurityDetailQueryService service =
         new SecurityDetailQueryService(
-            new RecordingSnapshotProvider(snapshot("sim-600000")), provider, CALENDAR, CLOCK);
+            new RecordingSnapshotProvider(snapshot("sim-600000")), provider, CALENDAR, CLOCK,
+            securityIds -> java.util.Optional.empty());
 
     service.getKlines("sim-600000", "week", "2026-01-05", "2026-06-30", "NONE");
 
@@ -269,7 +276,8 @@ class SecurityDetailQueryServiceTest {
         new RecordingSnapshotProvider(snapshot),
         new RecordingKlineProvider(klinePresent),
         CALENDAR,
-        CLOCK);
+        CLOCK,
+        securityIds -> java.util.Optional.empty());
   }
 
   private static SecuritySummary summary(String securityId) {

@@ -13,6 +13,7 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * M2-05 用例：个股快照（STK-04）与日/周/月 K 线（STK-07）。
@@ -39,6 +40,7 @@ public class SecurityDetailQueryService {
 
     private final QuoteSnapshotProvider quoteSnapshotProvider;
     private final KlineProvider klineProvider;
+    private final cn.zhishi.stock.market.domain.IntradayProvider intradayProvider;
     private final TradingCalendarProvider tradingCalendarProvider;
     private final Clock clock;
 
@@ -46,9 +48,11 @@ public class SecurityDetailQueryService {
             QuoteSnapshotProvider quoteSnapshotProvider,
             KlineProvider klineProvider,
             TradingCalendarProvider tradingCalendarProvider,
-            Clock clock) {
+            Clock clock,
+            cn.zhishi.stock.market.domain.IntradayProvider intradayProvider) {
         this.quoteSnapshotProvider = quoteSnapshotProvider;
         this.klineProvider = klineProvider;
+        this.intradayProvider = intradayProvider;
         this.tradingCalendarProvider = tradingCalendarProvider;
         this.clock = clock;
     }
@@ -82,6 +86,33 @@ public class SecurityDetailQueryService {
         KlineRequest request = new KlineRequest(
                 normalized, MARKET_CODE, parsedPeriod, start, end, parsedAdjustment);
         return klineProvider
+                .fetch(request)
+                .orElseThrow(() -> new SecurityNotFoundException(normalized));
+    }
+
+    private static final Set<Integer> INTRADAY_INTERVALS = Set.of(1, 5, 15, 30, 60);
+
+    /**
+     * STK-06：分时序列。
+     *
+     * <p>{@code interval} 的合法值是 1/5/15/30/60（分钟）；{@code tradeDate}
+     * 缺省为最近一个已完成交易日。请求参数的任何不合法都映射到
+     * {@code INVALID_REQUEST}（与 K 线同一口径）。
+     */
+    public cn.zhishi.stock.market.domain.IntradaySeries getIntraday(
+            String securityId,
+            LocalDate tradeDate,
+            Integer intervalMinutes) {
+        String normalized = normalizeSecurityId(securityId);
+        int resolvedInterval = intervalMinutes == null ? 1 : intervalMinutes;
+        if (!INTRADAY_INTERVALS.contains(resolvedInterval)) {
+            throw new InvalidSecurityQueryException("interval 仅支持 1、5、15、30、60 分钟");
+        }
+        LocalDate resolvedDate = tradeDate == null ? latestTradeDate() : tradeDate;
+
+        cn.zhishi.stock.market.domain.IntradayRequest request = new cn.zhishi.stock.market.domain.IntradayRequest(
+                normalized, MARKET_CODE, resolvedDate, resolvedInterval);
+        return intradayProvider
                 .fetch(request)
                 .orElseThrow(() -> new SecurityNotFoundException(normalized));
     }
